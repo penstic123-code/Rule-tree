@@ -1,6 +1,8 @@
 # Vibe Friend · 需求树 ReqTree
 
-**让 AI 编程助手记住你定下的规则：一条规则只放一处，改到哪个文件就带上哪条规则，你说过的长期要求自动记下来。**
+**一棵需求树，让你和 AI 都看清这个项目。**
+
+散在聊天里的需求和规则，整理成一棵看得见的树：项目现在是什么样、每个需求做到哪一步，一眼就知道；AI 改到哪个文件，只带上那里的规则；你说过的长期要求自动记下来，记错了能撤销。
 
 给 [Claude Code](https://claude.com/claude-code) 和 [OpenAI Codex](https://developers.openai.com/codex) 用，带一个 VS Code 插件。[English](README.en.md) | **中文**
 

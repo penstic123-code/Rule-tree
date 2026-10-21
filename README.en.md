@@ -1,6 +1,8 @@
 # Vibe Friend · ReqTree
 
-**Help your AI coding assistant remember the rules you set: every rule lives in one place, the assistant gets only the rules for the files it is editing, and the long-term requirements you mention in chat are recorded automatically.**
+**One requirement tree that keeps you and your AI on the same page.**
+
+The requirements and rules scattered across your chats become a tree you can see: what the project looks like now and how far along each requirement is, at a glance. The AI gets only the rules for the file it is editing. Long-term requirements you mention are recorded automatically, and every change can be undone.
 
 For [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex), with a VS Code extension. **English** | [中文](README.md)
 
