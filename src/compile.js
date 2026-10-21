@@ -1,0 +1,153 @@
+'use strict';
+// 把需求树编译成 Claude Code 原生的路径规则 .claude/rules/reqtree/<ID>.md。
+// 之后由 Claude Code 自己负责加载：改到匹配的文件才加载、子 agent 和上下文压缩后同样生效、
+// 会话中途改了规则会以"文件已变更"通知推给 AI。
+//
+// - 继承交给 glob 嵌套：C2 是 DataScience/**，C2.1 是 DataScience/ch01-*.html，改第1章时两份都会加载。
+//   所以每个节点只写自己的规则，不抄上级。
+// - 覆盖写成明确说明（"在本范围内以此为准，取代上级…"），否则两条矛盾时 Claude 可能任选一条。
+// - 没写文件对应的节点：沿用最近上级的范围。只有根节点的规则是全局的（不写 paths，每次都加载）；
+//   其他节点一路都没有文件对应就不编译——不然某门课的规则会在做别的课时也被加载。面板和 check 会提醒。
+const fs = require('fs');
+const path = require('path');
+const { parse, walk, pathOf } = require('./parser');
+const codex = require('./targets/codex');
+
+const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
+const MARK = '<!-- reqtree:generated -->';
+// 生成格式的版本，写在 _index.md 里。编译的输出或说明文字变了就加 1：ensureCompiled 只比时间，
+// 旧版本生成的文件可能比树还新，不看版本的话升级后会一直留着过时的说明（比如「标 🆕，等用户确认」）
+const FORMAT = '<!-- reqtree:format 3 -->';
+
+// 节点的生效范围：自己的 files，或最近上级的；都没有返回 null（全局）
+function scopeOf(node) {
+  for (let n = node; n && n.parent; n = n.parent) if (n.files.length) return n.files;
+  return null;
+}
+
+const isRoot = node => !node.parent || !node.parent.parent;
+
+// 这个节点的规则会不会自动加载给 AI：根节点全局加载；其他节点要自己或上级有文件对应。
+// 编译、面板提醒、check 三处共用，免得判断不一致
+const autoLoads = node => isRoot(node) || !!scopeOf(node);
+
+function compileNode(node, treeName) {
+  const own = node.rules;
+  if (!own.length || !autoLoads(node)) return null;
+  // 带键的规则覆盖最近上级里同键的生效规则
+  const overrides = new Map();
+  for (const r of own) {
+    if (!r.key) continue;
+    for (let p = node.parent; p && p.parent; p = p.parent) {
+      const hit = p.rules.find(x => x.key === r.key);
+      if (hit) { overrides.set(r.line, hit); break; }
+    }
+  }
+  const scope = scopeOf(node);
+  const where = pathOf(node).map(n => `${n.id} ${n.title}`).join(' → ');
+  const lines = [];
+  if (scope) lines.push('---', 'paths:', ...scope.map(g => `  - ${JSON.stringify(g)}`), '---');
+  lines.push(MARK, `## 需求 ${where}`, '');
+  for (const r of own) {
+    const o = overrides.get(r.line);
+    lines.push(`- ${r.text}` + (o ? `（在本范围内以此为准，取代上级 ${o.owner.id} 的「${o.text}」）` : ''));
+  }
+  lines.push('', `（由 ${treeName} 自动生成，不要手改；规则要改就改 ${treeName}。）`);
+  return lines.join('\n') + '\n';
+}
+
+// 全局说明：告诉 AI 这套东西怎么用。不写 paths，每次都加载，保持很短。
+function compileIndex(root, treeName) {
+  const doing = [...walk(root)].filter(n => n.status === 'doing').map(n => `${n.id} ${n.title}`);
+  return [
+    MARK,
+    FORMAT,
+    `## 需求树（${treeName}）`,
+    `本项目的需求和规则统一记在 ${treeName}：标题是需求，结尾 ✅完成 🔨正在做 ⏳待做 ❓待定；标题下的列表项是规则。各需求的规则会在你改到对应文件时自动加载。`,
+    doing.length ? `正在做：${doing.join('、')}。` : '',
+    '用户提出的长期要求由后台记录员在每轮结束后直接写进需求树（用户可以在面板上撤销），你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。',
+    '项目的长期要求和规则只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 CLAUDE.md，免得同一条规则记两处。',
+  ].filter(Boolean).join('\n') + '\n';
+}
+
+// 编译给哪些 AI 工具：装过 Codex（.reqtree/codex.json 或 AGENTS.md 里有托管块）就编 Codex；
+// Claude Code 在没装 Codex、或已经装过 Claude 的 hook / 生成过 .claude/rules/reqtree 时编（老项目照旧）
+function claudeInstalled(projectDir) {
+  if (fs.existsSync(path.join(projectDir, OUT_DIR))) return true;
+  for (const f of ['settings.local.json', 'settings.json']) {
+    try { if (/reqtree/i.test(fs.readFileSync(path.join(projectDir, '.claude', f), 'utf8'))) return true; } catch {}
+  }
+  return false;
+}
+function targetsOf(projectDir) {
+  const cx = codex.enabled(projectDir);
+  return { claude: !cx || claudeInstalled(projectDir), codex: cx };
+}
+
+// 生成全部规则文件；内容没变的不重写（免得触发无谓的"文件已变更"通知）；删掉已经不存在的节点的文件。
+// opts.targets = { claude, codex } 可以指定编译目标，不给就自动判断（targetsOf）。
+// 返回 { written: [], removed: [], dir, targets, warnings }；Codex 的文件名带 codex: 前缀
+function compile(treePath, opts = {}) {
+  const projectDir = path.dirname(treePath);
+  const targets = opts.targets || targetsOf(projectDir);
+  const res = targets.claude ? compileClaude(treePath) : { written: [], removed: [], dir: null };
+  res.targets = Object.keys(targets).filter(k => targets[k]);
+  res.warnings = [];
+  if (targets.codex) {
+    const c = codex.compile(treePath);
+    res.written.push(...c.written);
+    res.removed.push(...c.removed);
+    res.warnings.push(...c.warnings);
+    if (!res.dir) res.dir = c.dir;
+  }
+  return res;
+}
+
+function compileClaude(treePath) {
+  const projectDir = path.dirname(treePath);
+  const treeName = path.basename(treePath);
+  const dir = path.join(projectDir, OUT_DIR);
+  const root = parse(fs.readFileSync(treePath, 'utf8'));
+  const files = new Map([['_index.md', compileIndex(root, treeName)]]);
+  for (const n of walk(root)) {
+    const text = compileNode(n, treeName);
+    if (text) files.set(`${n.id}.md`, text);
+  }
+
+  fs.mkdirSync(dir, { recursive: true });
+  const written = [], removed = [];
+  for (const [name, text] of files) {
+    const p = path.join(dir, name);
+    let old = null;
+    try { old = fs.readFileSync(p, 'utf8'); } catch {}
+    if (old !== text) { fs.writeFileSync(p, text); written.push(name); }
+  }
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith('.md') || files.has(name)) continue;
+    // 只删自己生成的文件
+    const p = path.join(dir, name);
+    if (fs.readFileSync(p, 'utf8').includes(MARK)) { fs.unlinkSync(p); removed.push(name); }
+  }
+  return { written, removed, dir };
+}
+
+// 树比编译结果新、或编译结果是旧格式时才编译（hook 每次调用它，要便宜：先比时间，时间没问题才读一个小文件）。
+// 不加锁：要和写树互斥，走 store.compileTree
+function ensureCompiled(treePath) {
+  const projectDir = path.dirname(treePath);
+  const targets = targetsOf(projectDir);
+  const stamp = path.join(projectDir, OUT_DIR, '_index.md');
+  const claudeStale = () => {
+    try { return !(fs.statSync(stamp).mtimeMs >= fs.statSync(treePath).mtimeMs && fs.readFileSync(stamp, 'utf8').includes(FORMAT)); }
+    catch { return true; }
+  };
+  if (!(targets.claude && claudeStale()) && !(targets.codex && codex.stale(treePath))) return null;
+  const r = compile(treePath, { targets });
+  // 内容没变时也刷新时间戳，下次就不用再比
+  const now = new Date();
+  if (targets.claude) try { fs.utimesSync(stamp, now, now); } catch {}
+  if (targets.codex) try { fs.utimesSync(path.join(projectDir, codex.RULES_DIR, '_index.md'), now, now); } catch {}
+  return r;
+}
+
+module.exports = { compile, ensureCompiled, scopeOf, autoLoads, targetsOf };

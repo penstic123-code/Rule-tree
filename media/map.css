@@ -1,0 +1,146 @@
+/* 导图视图：在 view.css（颜色、圆角、间距变量，按钮）基础上补工具栏、画布和卡片。
+   卡片是中性的一种底色 + 细边；上两层的标题行有一条中性色的底；连线是一种灰色。
+   有颜色的只有：选中卡片的强调色边框、正在做的强调色圆点、AI 正在改的强调色徽章和光晕 */
+
+/* ---------- 工具栏：一行，四组，统一 24px 高 ---------- */
+.toolbar { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-3); border-bottom: 1px solid var(--c-border); flex-wrap: wrap; min-height: 40px; }
+.toolbar .title { flex: none; font-weight: 600; margin-right: var(--sp-2); }
+.tseg, .tzoom { display: inline-flex; align-items: stretch; height: var(--h-ctl); border: 1px solid var(--c-border); border-radius: var(--r-ctl); overflow: hidden; }
+.tseg button, .tzoom button { border: 0; background: none; padding: 0 10px; font-size: 12px; color: var(--c-muted); display: inline-flex; align-items: center; justify-content: center; }
+.tseg button + button, .tzoom button + button { border-left: 1px solid var(--c-border); }
+.tseg button:hover, .tzoom button:hover { background: var(--c-hover); color: var(--c-text); }
+.tseg button[aria-pressed="true"] { background: var(--c-raised); color: var(--c-text); font-weight: 600; }
+.tseg button:focus-visible, .tzoom button:focus-visible { outline-offset: -2px; }
+.tzoom button { padding: 0 var(--sp-2); }
+.tzoom .zpct { min-width: 52px; font-variant-numeric: tabular-nums; }
+.toolbar .ttog, .toolbar .follow { min-height: var(--h-ctl); }
+.toolbar .tmore { height: var(--h-ctl); }
+/* 记录员出错、规则没有生成：红色提示，样式沿用 view.css 的 .banner.err */
+#alerts { flex: none; }
+#alerts .banner { margin: var(--sp-2) var(--sp-3) 0; }
+/* 聚焦时顶部的路径条 */
+#focusbar { margin: var(--sp-2) var(--sp-3) 0; }
+
+.main { flex: 1; min-height: 0; display: flex; }
+/* 画布：很淡的点阵底纹，跟着平移缩放走（map.js 的 applyView） */
+#canvas {
+  flex: 1; min-width: 0; height: 100%; cursor: grab; display: block;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--c-text) 8%, transparent) 1px, transparent 1.3px);
+  background-size: 24px 24px;
+}
+#canvas.dragging { cursor: grabbing; }
+#side { flex: none; width: 340px; max-width: 45%; overflow: auto; padding: var(--sp-4) var(--sp-4) var(--sp-5); border-left: 1px solid var(--c-border); background: var(--c-bg); }
+@media (max-width: 640px) { .main { flex-direction: column; } #side { width: auto; max-width: none; height: 45%; border-left: 0; border-top: 1px solid var(--c-border); } }
+
+/* 顶部概况：每种状态的圆点和数字 */
+.summary { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin-right: auto; font-size: 12px; color: var(--c-muted); }
+.summary b { color: var(--c-text); font-weight: 600; }
+.sum { display: inline-flex; align-items: center; gap: 5px; }
+.sum.ai { color: var(--accent-text); }
+.summary .ico { flex: none; }
+
+/* ---------- 连线：一种灰色，细、圆头；连到已完成需求的更淡 ---------- */
+.link { fill: none; stroke: var(--c-line); stroke-width: 1.4; stroke-linecap: round; transition: opacity .3s; }
+.link.l-done { opacity: .5; }
+
+/* ---------- 卡片 ---------- */
+.card { cursor: pointer; outline: none; transition: opacity .3s; }
+.card .box { fill: var(--c-surface); stroke: var(--c-border); stroke-width: 1; rx: var(--r-card); filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--c-shadow) 60%, transparent)); }
+.card:hover .box { stroke: color-mix(in srgb, var(--c-text) 30%, var(--c-border)); }
+/* 上两层是「容器」：标题行带中性色的底 */
+.card .band { fill: var(--c-raised); }
+
+/* 字号层级：标题（根 16 / 第一层 14 / 更深 13）> 编号（11 等宽、灰）> 说明（11、灰） */
+.ctitle { font-size: 13px; font-weight: 600; fill: var(--c-text); }
+.card.d1 .ctitle { font-size: 16px; font-weight: 700; }
+.card.d2 .ctitle { font-size: 14px; font-weight: 600; }
+.cid { font-family: var(--mono); font-size: 11px; font-weight: 500; fill: var(--c-muted); }
+.cmeta { font-size: 11px; fill: var(--c-muted); }
+.cai-t { font-size: 11px; fill: var(--accent-text); font-weight: 600; }
+
+/* 状态点（单色）：正在做是强调色实心点；待做空心圈、完成一个勾、待定圈里问号，都是灰色 */
+.st-doing { fill: var(--st-doing); }
+.st-doing-ring { fill: none; stroke: color-mix(in srgb, var(--st-doing) 35%, transparent); stroke-width: 1.5; }
+.st-tick { fill: none; stroke: var(--st-done); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.st-q { fill: none; stroke: var(--st-question); stroke-width: 1.5; }
+.st-qm { font-size: 9px; font-weight: 700; fill: var(--st-question); text-anchor: middle; }
+.st-todo { fill: none; stroke: var(--st-todo); stroke-width: 1.5; }
+.st-none { fill: var(--c-muted); opacity: .7; }
+
+/* 已完成：安静下来（文字变灰、没有投影） */
+.card.done .ctitle { fill: var(--c-muted); }
+.card.done .box { filter: none; }
+
+/* 标题行右边：展开开关（› 2 条）是灰字，悬停变正文色 */
+.badge > rect, .rchip > rect { rx: var(--r-pill); }
+.rchip { cursor: pointer; color: var(--c-muted); }
+.rchip > rect { fill: transparent; }
+.rchip text { font-size: 11px; fill: currentColor; }
+.rchip:hover { color: var(--c-text); }
+.rchip:hover > rect { fill: var(--c-hover); }
+/* 徽章：AI 正在改是唯一亮的；久未动是灰色月亮 */
+.badge { color: var(--c-muted); }
+.badge.ai { color: var(--accent-text); }
+.badge.ai > rect { fill: var(--accent-soft); }
+.badge.stale > rect { fill: transparent; }
+
+/* 子需求的开关：卡片右边、标题行中线上的小圆圈；收起时写着有几个 */
+.toggle { cursor: pointer; }
+.toggle circle { fill: var(--c-surface); stroke: var(--c-line); stroke-width: 1.4; }
+.toggle text { font-size: 10px; font-weight: 600; text-anchor: middle; fill: var(--c-text); }
+.toggle path { stroke: var(--c-muted); stroke-width: 1.4; stroke-linecap: round; }
+.toggle:hover circle { fill: var(--c-hover); stroke: var(--c-muted); }
+
+/* 卡片里列出的规则：12px、行高 18，最多折两行，悬停看全文 */
+.sep { stroke: color-mix(in srgb, var(--c-border) 80%, transparent); stroke-width: 1; }
+.rl { font-size: 12px; fill: var(--c-soft); }
+.rl.more { fill: var(--c-muted); font-size: 11px; }
+
+/* 选中：强调色边框 */
+.card.sel .box { stroke: var(--accent); stroke-width: 1.5; }
+.card:focus-visible .box { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; }
+
+/* AI 正在改：卡片外一圈慢慢呼吸的强调色光晕；减少动态时保持静止 */
+.halo { fill: none; stroke: var(--ai); stroke-width: 5; rx: calc(var(--r-card) + 3px); opacity: .3; filter: blur(3px); animation: halo 2.8s ease-in-out infinite; pointer-events: none; }
+@keyframes halo { 0%, 100% { opacity: .12; } 50% { opacity: .45; } }
+.card.ai-on .box { stroke: color-mix(in srgb, var(--ai) 60%, var(--c-border)); }
+.card.ai-on.sel .box { stroke: var(--accent); }
+/* 跟随 AI 移过来时闪一下 */
+.card.flash .box { animation: cflash 1.2s ease-out 1; }
+@keyframes cflash { 0% { fill: color-mix(in srgb, var(--ai) 25%, var(--c-surface)); } }
+
+/* 聚焦：这一支以外淡出、隐藏、点不到；上级变淡、连线变虚，当路标 */
+.card.f-anc { opacity: .5; }
+.card.f-anc .box { filter: none; }
+.link.f-anc { opacity: .5; stroke-dasharray: 3 4; }
+.card.f-out, .link.f-out { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .3s, visibility 0s linear .3s; }
+
+/* 高对比度主题：投影看不见，改用主题的对比边框 */
+.vscode-high-contrast .card .box { stroke: var(--c-hc); filter: none; }
+.vscode-high-contrast .card.sel .box { stroke: var(--accent); stroke-width: 2; }
+
+@media (prefers-reduced-motion: reduce) {
+  .halo, .card.flash .box { animation: none; }
+  .halo { opacity: .3; }
+  .card, .link, .card.f-out, .link.f-out { transition: none; }
+}
+
+/* 选中后：不在这一支的卡片和连线变淡（还能点）；减少动态时直接变 */
+.card.dim, .link.dim { opacity: .35; }
+.card.dim .box { filter: none; }
+.rchip:focus-visible { outline: none; }
+.rchip:focus-visible > rect { stroke: var(--accent); stroke-width: 1.5; }
+
+/* 工具栏变窄时：先藏概况，再换短文字，再藏标题；700px 以内还是一行 */
+.toolbar .sh { display: none; }
+@media (max-width: 1180px) { .summary { display: none; } .toolbar .tmore { margin-left: 0; } .toolbar .tseg { margin-left: auto; } }
+@media (max-width: 900px) { .toolbar .lg { display: none; } .toolbar .sh { display: inline; } }
+@media (max-width: 760px) { .toolbar .title { display: none; } .toolbar .tseg { margin-left: 0; } }
+/* 窄的时候详情排在导图下面：没选中需求就收成一行 */
+@media (max-width: 640px) {
+  #side.none { height: auto; padding: var(--sp-2) var(--sp-4); overflow: hidden; }
+  #side.none .dp-empty { display: flex; align-items: center; gap: var(--sp-3); margin: 0; }
+  #side.none .dp-empty .empty { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #side.none .dp-empty .new-btn { margin-top: 0; flex: none; }
+  #side.none .sec { display: none; }
+}

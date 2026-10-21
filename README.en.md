@@ -1,16 +1,12 @@
 # Vibe Friend · ReqTree
 
-**One requirement tree that keeps you and your AI on the same page.**
+**Keep your project's requirements and AI rules in one living tree — see where things stand, and give your AI only the rules that apply.**
 
 The requirements and rules scattered across your chats become a tree you can see: what the project looks like now and how far along each requirement is, at a glance. The AI gets only the rules for the file it is editing. Long-term requirements you mention are recorded automatically, and every change can be undone.
 
 For [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex), with a VS Code extension. **English** | [中文](README.md)
 
-> 🚧 The code is getting its final cleanup and tests and will be uploaded here shortly. For now you can read the introduction and the test data.
-
-![ReqTree mind map](docs/images/ui-map.png)
-
-*The extension UI is currently in Chinese; an English UI is planned.*
+![ReqTree mind map](docs/images/en/ui-map.png)
 
 ## Sound familiar?
 
@@ -47,9 +43,15 @@ The author audited their own course project after a few months of work: 21 rule 
 
 ## Screenshots
 
-| Sidebar (dark theme) | Mind map (light theme) |
+| Sidebar (dark theme) | Mind map (light theme): select a requirement and the other branches fade |
 |---|---|
-| <img src="docs/images/ui-sidebar.png" width="300"> | <img src="docs/images/ui-map.png" width="560"> |
+| <img src="docs/images/en/ui-sidebar.png" width="300"> | <img src="docs/images/en/ui-map.png" width="560"> |
+
+| Focus: only this branch | Context meter: which rules this session loaded, and how big each is |
+|---|---|
+| <img src="docs/images/en/ui-focus.png" width="430"> | <img src="docs/images/en/ui-context.png" width="430"> |
+
+The UI follows VS Code's display language (English or Chinese).
 
 ## Getting started
 
@@ -122,11 +124,11 @@ Everything revolves around one file. While you chat, a background recorder write
 
 | Feature | Status |
 |---|---|
-| Rules load on demand, only when matching files are touched | ✅ |
+| Rules load on demand: they enter the context when the AI reads or edits a matching file | ✅ |
 | Hooks add nothing to the conversation | ✅ |
 | Old rules are rewritten instead of duplicated, so the tree doesn't keep growing | ✅ |
 | The recorder uses the inexpensive Haiku model in the background; short replies skip it | ✅ |
-| Context meter: which rules each session loaded, how many characters each, resident vs on demand | Logging done; panel view in progress |
+| Context meter: which rules each session loaded, how many characters each, resident vs on demand | ✅ |
 | Split CLAUDE.md: move requirement-specific content into the tree so it loads on demand | Planned |
 | Cross-file duplicate and contradiction check between the tree, CLAUDE.md and project docs | Planned (experiment script exists) |
 
@@ -153,7 +155,6 @@ Raw data and experiment conditions are in [`测试数据记录.md`](测试数据
 - Works with Claude Code and OpenAI Codex. Codex has no path-scoped rules, so ReqTree uses an index in `AGENTS.md` plus hooks that deliver the right rules (see docs/codex.md).
 - The recorder sometimes misses things, especially decisions about a single chapter's content ("open Chapter 1 with this story"). You can add those by hand in the panel.
 - Each turn costs one extra Haiku call, run in the background (about 6 seconds).
-- The extension UI is in Chinese for now.
 - Developed on Windows; macOS and Linux are covered by CI.
 
 ## Command line

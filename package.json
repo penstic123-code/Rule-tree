@@ -1,0 +1,107 @@
+{
+  "name": "reqtree",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.8.0",
+  "publisher": "shidipeng",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "bin": {
+    "reqtree": "./bin/reqtree.js"
+  },
+  "files": [
+    "bin/",
+    "hooks/",
+    "src/",
+    "media/",
+    "extension.js",
+    "README.md",
+    "LICENSE",
+    "package.nls.json",
+    "package.nls.zh-cn.json"
+  ],
+  "activationEvents": [
+    "workspaceContains:需求树.md",
+    "workspaceContains:*.tree.md"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "reqtree",
+          "title": "%view.container%",
+          "icon": "$(type-hierarchy)"
+        }
+      ]
+    },
+    "views": {
+      "reqtree": [
+        {
+          "type": "webview",
+          "id": "reqtree.panel",
+          "name": "%view.panel%"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "reqtree.create",
+        "title": "%cmd.create%"
+      },
+      {
+        "command": "reqtree.enable",
+        "title": "%cmd.enable%"
+      },
+      {
+        "command": "reqtree.refresh",
+        "title": "%cmd.refresh%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "reqtree.openMap",
+        "title": "%cmd.openMap%",
+        "icon": "$(type-hierarchy-sub)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "reqtree.openMap",
+          "when": "view == reqtree.panel",
+          "group": "navigation@0"
+        },
+        {
+          "command": "reqtree.refresh",
+          "when": "view == reqtree.panel",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "reqtree.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "zh",
+            "en"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "%config.language.auto%",
+            "%config.language.zh%",
+            "%config.language.en%"
+          ],
+          "description": "%config.language%"
+        }
+      }
+    }
+  }
+}

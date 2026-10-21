@@ -1,0 +1,413 @@
+'use strict';
+const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
+const { parse, walk, findById, effectiveRules, pathOf, relocate, nodeForFile } = require('./src/parser');
+const store = require('./src/store');
+const { samePath } = store;
+const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./src/viewmodel');
+const { suggest } = require('./src/guess');
+const reqtree = require('./bin/reqtree');
+const STRINGS = require('./media/strings');
+
+// 界面语言：设置 reqtree.language（auto / zh / en），auto 跟 VS Code 的显示语言走。插件的提示和网页用同一张文字表
+function lang() {
+  const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('reqtree') : null;
+  return STRINGS.pick(cfg ? cfg.get('language', 'auto') : 'auto', vscode.env && vscode.env.language);
+}
+const T = (k, ...a) => STRINGS.make(lang())(k, ...a);
+
+// 和 hook 用同一个规则：每个工作区文件夹根目录下的 需求树.md / *.tree.md
+function findTrees() {
+  return (vscode.workspace.workspaceFolders || [])
+    .filter(f => f.uri.scheme === 'file')
+    .map(f => store.findTree(f.uri.fsPath))
+    .filter(Boolean);
+}
+
+const openDoc = p => vscode.workspace.textDocuments.find(d => d.uri.scheme === 'file' && samePath(d.uri.fsPath, p));
+// 树现在的内容：编辑器里有没保存的改动就以编辑器为准
+const currentText = p => { const doc = openDoc(p); return doc && doc.isDirty ? doc.getText() : fs.readFileSync(p, 'utf8'); };
+
+// 写树：编辑器里有未保存的改动时改编辑器内容并保存（保留用户的改动），否则加锁写文件。
+// 插件里所有写树都走这里（store.applyChange/undoChange/flushQueue 的 write 参数也传它）。
+// 加锁用异步重试，不在插件宿主里同步等锁（见 store.updateTreeAsync）
+async function writeTree(treePath, update) {
+  const doc = openDoc(treePath);
+  if (doc && doc.isDirty) {
+    const updated = update(doc.getText());
+    if (updated === doc.getText()) return;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), updated);
+    await vscode.workspace.applyEdit(edit);
+    await doc.save();
+  } else {
+    await store.updateTreeAsync(treePath, update);
+  }
+}
+
+// 面板操作没改动时告诉用户为什么，按操作区分（文字在 strings.js 的 x.nc.<op>）
+const noChangeWhy = op => { const k = 'x.nc.' + op; return k in STRINGS.zh ? T(k) : T('x.noChangeAny'); };
+
+// 最近一周 AI 改过、但现在仍不属于任何需求的文件（面板上可以一键归到需求）
+function unmappedFiles(treePath) {
+  const root = parse(fs.readFileSync(treePath, 'utf8'));
+  const files = new Set(store.readActivity(treePath, 7 * 86400000).map(e => e.file));
+  return [...files].filter(f => !nodeForFile(root, f)).slice(-8);
+}
+
+class Panel {
+  constructor(context) {
+    this.context = context;
+    this.trees = [];
+    this.view = null;
+  }
+
+  load() {
+    this.trees = findTrees().map(p => {
+      // 树一变就编译成原生规则（内容没变不会重写）。不等锁：锁被占着说明别人正在写树，它释放前会编译
+      try { store.compileTree(p, { wait: false }); } catch (e) { console.error(e); }
+      // 记下开始跟踪的时间，顺便把旧版本拆开存的状态文件迁移进 state.json
+      let state;
+      try { state = store.ensureTracking(p); } catch (e) { console.error(e); state = store.readState(p); }
+      return {
+        path: p,
+        uri: vscode.Uri.file(p).toString(),
+        name: vscode.workspace.asRelativePath(p),
+        text: fs.readFileSync(p, 'utf8'),
+        activity: store.readActivity(p, ACTIVE_FOR_MS).filter(e => e.node),
+        config: store.readConfig(p),
+        since: state.since,
+        touched: state.touched,
+        recorder: state.recorder,
+        compile: state.compile,
+        changes: store.readChanges(p, 8),
+        unmapped: unmappedFiles(p),
+        context: store.readContext(p, CONTEXT_WINDOW_MS),
+      };
+    });
+    this.push();
+  }
+
+  // 侧栏和导图收到同一份数据
+  push() {
+    const data = viewData(this.trees);
+    if (this.view) {
+      const err = data.files.some(f => f.recorder && !f.recorder.ok);
+      this.view.badge = err ? { value: 1, tooltip: T('x.recorderBadge') } : undefined;
+      this.view.webview.postMessage(data);
+    }
+    if (this.map) this.map.webview.postMessage(data);
+  }
+
+  // 两个网页共用：只允许自己的样式和带 nonce 的脚本。分支颜色靠元素上的 style="--branch:…"，所以样式要放行 inline。
+  setHtml(webview, styles, scripts, body) {
+    const media = vscode.Uri.joinPath(this.context.extensionUri, 'media');
+    webview.options = { enableScripts: true, localResourceRoots: [media] };
+    const u = f => webview.asWebviewUri(vscode.Uri.joinPath(media, f));
+    const nonce = Math.random().toString(36).slice(2);
+    const lg = lang();
+    webview.html = `<!doctype html><html lang="${lg === 'en' ? 'en' : 'zh-CN'}"><head><meta charset="utf-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+      ${styles.map(s => `<link rel="stylesheet" href="${u(s)}">`).join('')}</head>
+      <body data-lang="${lg}">${body}${['strings.js', ...scripts].map(s => `<script nonce="${nonce}" src="${u(s)}"></script>`).join("")}</body></html>`;
+    if (!webview.__reqtreeListening) {
+      webview.__reqtreeListening = true;
+      webview.onDidReceiveMessage(msg => this.handle(msg).catch(e => vscode.window.showErrorMessage(T('x.error', e.message))));
+    }
+  }
+
+  resolveWebviewView(view) {
+    this.view = view;
+    this.setHtml(view.webview, ...VIEW_HTML);
+    view.onDidChangeVisibility(() => view.visible && this.push());
+  }
+
+  // 导图：编辑区里的大视图，可以拖出去成为独立窗口
+  openMap() {
+    if (this.map) { this.map.reveal(); return; }
+    this.map = vscode.window.createWebviewPanel('reqtree.map', T('x.mapTitle'), vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+    this.map.iconPath = new vscode.ThemeIcon('type-hierarchy');
+    this.setHtml(this.map.webview, ...MAP_HTML);
+    this.map.onDidDispose(() => { this.map = null; });
+  }
+
+  // 改了界面语言：两个网页按新语言重新生成（网页自己记的状态还在），再推一次数据
+  relang() {
+    if (this.view) this.setHtml(this.view.webview, ...VIEW_HTML);
+    if (this.map) { this.map.title = T('x.mapTitle'); this.setHtml(this.map.webview, ...MAP_HTML); }
+  }
+
+  treeOf(uri) { return this.trees.find(t => t.uri === uri); }
+
+  // 面板上的编辑操作（树行和详情面板都发 edit 消息）。按需求 ID 定位（不怕文件被改过导致行号错位），
+  // 输入用 VS Code 自带的输入框和文件选择框。这些改动都记进改动记录，面板上可以撤销。
+  async edit(treePath, msg) {
+    const root = parse(currentText(treePath));
+    const node = msg.node && findById(root, msg.node);
+    const ask = (prompt, value = '') => vscode.window.showInputBox({ prompt, value, ignoreFocusOut: true, validateInput: v => (v.trim() ? null : T('x.notEmpty')) });
+    const apply = async ops => {
+      const done = await store.applyChange(treePath, ops, { source: '你', write: writeTree });
+      if (!done.length) vscode.window.showInformationMessage(T('x.noChange', noChangeWhy(ops[0].op)));
+      this.load();
+      return done;
+    };
+    switch (msg.action) {
+      case 'addChild': {
+        const title = await ask(T('x.askNew', node ? node.title : T('x.top')));
+        if (!title) return;
+        const [added] = await apply([{ op: 'add_node', parent: msg.node, title }]);
+        if (added) await this.offerFiles(treePath, added.id, apply);
+        return;
+      }
+      case 'rename': {
+        // 面板里直接改名时带着新名字（msg.title）；空名字不收。没带就弹输入框
+        if (typeof msg.title === 'string') {
+          const title = msg.title.trim();
+          if (node && title) await apply([{ op: 'rename_node', node: node.id, title }]);
+          return;
+        }
+        const title = node && await ask(T('x.askRename'), node.title);
+        if (title) await apply([{ op: 'rename_node', node: node.id, title }]);
+        return;
+      }
+      case 'delete': {
+        if (!node) return;
+        const count = [...walk(node)].length;
+        const ok = await vscode.window.showWarningMessage(T('x.confirmDelete', node.title, count), { modal: true }, T('x.delete'));
+        if (ok === T('x.delete')) await apply([{ op: 'delete_node', node: node.id }]);
+        return;
+      }
+      case 'setStatus': return node && apply([{ op: 'set_status', node: node.id, status: msg.status || null }]);
+      case 'addRule': {
+        const text = node && await ask(T('x.askAddRule', node.title));
+        if (text) await apply([{ op: 'add_rule', node: node.id, text }]);
+        return;
+      }
+      case 'editRule': {
+        const text = node && await ask(T('x.askEditRule'), msg.text);
+        if (text) await apply([{ op: 'replace_rule', node: node.id, old: msg.text, text }]);
+        return;
+      }
+      case 'deleteRule': return node && apply([{ op: 'remove_rule', node: node.id, text: msg.text }]);
+      case 'overrideRule': {
+        const text = node && await ask(T('x.askOverride', node.title), msg.text);
+        if (text) await apply([{ op: 'override_rule', node: node.id, from: msg.from, text: msg.text, new: text }]);
+        return;
+      }
+      case 'setFiles': {
+        if (!node) return;
+        const globs = await this.pickFiles(treePath, node);
+        if (globs) await apply([{ op: 'set_files', node: node.id, globs }]);
+        return;
+      }
+      case 'assignFile': {
+        // AI 改了还没归属的文件：选它属于哪个需求，再选只要这个文件还是整个文件夹
+        const items = [...walk(root)].map(n => ({ label: `${n.id} ${n.title}`, description: n.files.join(', '), id: n.id }));
+        const pick = await vscode.window.showQuickPick(items, { placeHolder: T('x.whichNode', msg.file) });
+        if (!pick) return;
+        const dir = path.posix.dirname(msg.file);
+        const scope = await vscode.window.showQuickPick([
+          { label: `${dir === '.' ? '' : dir + '/'}**`, description: T('x.wholeFolder') },
+          { label: msg.file, description: T('x.onlyFile') },
+        ], { placeHolder: T('x.scopePick') });
+        if (scope) await apply([{ op: 'add_files', node: pick.id, globs: [scope.label] }]);
+      }
+    }
+  }
+
+  // 选文件夹或文件，转成相对项目根目录的路径规则；也可以手写或清空
+  async pickFiles(treePath, node) {
+    const projectDir = path.dirname(treePath);
+    const how = await vscode.window.showQuickPick([
+      { label: T('x.pickFiles'), id: 'pick' },
+      { label: T('x.typeGlob'), description: T('x.typeGlobEg'), id: 'type' },
+      ...(node.files.length ? [{ label: T('x.clear'), description: T('x.now', node.files.join(', ')), id: 'clear' }] : []),
+    ], { placeHolder: T('x.filesFor', node.title) });
+    if (!how) return null;
+    if (how.id === 'clear') return [];
+    if (how.id === 'type') {
+      const v = await vscode.window.showInputBox({ prompt: T('x.globPrompt'), value: node.files.join(', ') });
+      return v == null ? null : v.split(/[,，\s]+/).filter(Boolean);
+    }
+    return this.pickDialog(projectDir);
+  }
+
+  // 新建的需求还没有文件对应：按名字猜一个（第3章 → ch03-*.html，英文词对上文件夹名），让用户一键用上。
+  // 在上级的范围里猜；上级都没有文件对应就在项目顶层文件夹里猜。猜不到就不打扰（不设时沿用上级的范围）
+  async offerFiles(treePath, id, apply) {
+    const n = findById(parse(currentText(treePath)), id);
+    if (!n || n.files.length) return;
+    const scope = pathOf(n).slice(0, -1).reverse().find(a => a.files.length);
+    const projectDir = path.dirname(treePath);
+    let guesses = [];
+    try { guesses = suggest(projectDir, n.title, scope ? scope.files : []); } catch (e) { console.error(e); }
+    if (!guesses.length) return;
+    const pick = await vscode.window.showQuickPick([
+      ...guesses.map(g => ({ label: T('x.useGuess', g), description: T('x.guessed'), globs: [g] })),
+      { label: T('x.pickFolder'), id: 'pick' },
+      { label: T('x.later'), description: scope ? T('x.inherit', scope.title) : T('x.laterTip'), id: 'none' },
+    ], { placeHolder: T('x.filesFor', n.title) });
+    if (!pick || pick.id === 'none') return;
+    const globs = pick.globs || await this.pickDialog(projectDir);
+    if (globs) await apply([{ op: 'set_files', node: id, globs }]);
+  }
+
+  // 系统的文件选择框：选文件夹或文件，转成相对项目根目录的路径规则
+  async pickDialog(projectDir) {
+    const uris =await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: true, canSelectMany: true, defaultUri: vscode.Uri.file(projectDir), openLabel: T('x.pickThese') });
+    if (!uris) return null;
+    const globs = [];
+    for (const u of uris) {
+      const rel = path.relative(projectDir, u.fsPath).split(path.sep).join('/');
+      if (rel.startsWith('..')) { vscode.window.showWarningMessage(T('x.outside', u.fsPath)); continue; }
+      globs.push(fs.statSync(u.fsPath).isDirectory() ? (rel ? `${rel}/**` : '**') : rel);
+    }
+    return globs.length ? globs : null;
+  }
+
+  // 网页发来的消息。改树的操作都走 edit（进改动记录、可撤销）；没列出的消息类型一律忽略
+  async handle(msg) {
+    const t = msg.uri && this.treeOf(msg.uri);
+    const p = t && t.path;
+    switch (msg.type) {
+      case 'ready': return this.push();
+      case 'openMap': return this.openMap();
+      case 'create': return create();
+      case 'open': {
+        if (!p) return;
+        // 面板上的行号可能已经过时（记录员刚改过文件）：按当时那一行的原文找回来，找不到就用原行号
+        const l = relocate(currentText(p), msg.line, msg.expect);
+        const line = l < 0 ? msg.line : l;
+        await vscode.window.showTextDocument(vscode.Uri.file(p), { selection: new vscode.Range(line, 0, line, 0) });
+        return;
+      }
+      case 'setConfig':
+        // 只有「每轮记录 / 暂停记录员」一个开关（writeConfig 只认 recorder）。只影响记录员下一次怎么做，不用重编
+        // 写不进去（state.lock 一直被占）时要告诉用户，不然点了没反应、菜单还停在旧选项
+        if (!p) return;
+        try { store.writeConfig(p, msg.patch || {}); }
+        catch (e) { vscode.window.showWarningMessage(T('x.saveFail', e.message)); }
+        this.load();
+        return;
+      case 'edit': return p && this.edit(p, msg);
+      case 'undo':
+        if (p && !(await store.undoChange(p, msg.id, { write: writeTree }))) vscode.window.showWarningMessage(T('x.undoFail'));
+        return this.load();
+      case 'copy': {
+        const [uri, id] = msg.key.split('#');
+        const tree = this.treeOf(uri);
+        const n = tree && findById(parse(tree.text), id);
+        if (!n) return;
+        const lines = [`# ${pathOf(n).map(x => x.id + ' ' + x.title).join(' → ')}`, ''];
+        for (const r of effectiveRules(n)) lines.push(`- ${r.key ? `[${r.key}] ` : ''}${r.text}`);
+        await vscode.env.clipboard.writeText(lines.join('\n'));
+        vscode.window.showInformationMessage(T('x.copied', n.id));
+      }
+    }
+  }
+}
+
+// 导图页面骨架；预览工具 tools/preview.js 用同一份
+const MAP_BODY = require('./media/map-body');
+const VIEW_HTML = [['view.css', 'detail.css'], ['detail.js', 'view.js'], '<div id="app" style="display:contents"></div>'];
+const MAP_HTML = [['view.css', 'detail.css', 'map.css'], ['detail.js', 'map.js'], MAP_BODY];
+
+async function create() {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
+  const uri = vscode.Uri.joinPath(folder.uri, '需求树.md');
+  try { await vscode.workspace.fs.stat(uri); } catch {
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(store.TEMPLATE, 'utf8'));
+  }
+  await vscode.window.showTextDocument(uri);
+}
+
+function activate(context) {
+  const panel = new Panel(context);
+  let timer = null;
+  // 连续多次文件变化合并成一次刷新
+  const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { try { panel.load(); } catch (e) { console.error(e); } }, 150); };
+  const isTree = doc => doc.uri.scheme === 'file' && panel.trees.some(t => samePath(t.path, doc.uri.fsPath));
+
+  const watchers = (vscode.workspace.workspaceFolders || []).flatMap(f => [
+    vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(f, '{需求树.md,*.tree.md}')),
+    vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(f, '.reqtree/*.{json,jsonl}')),
+  ]);
+  for (const w of watchers) { w.onDidChange(refresh); w.onDidCreate(refresh); w.onDidDelete(refresh); }
+  // 定时刷新，让"AI 正在改"过期消失
+  const tick = setInterval(refresh, 60 * 1000);
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('reqtree.panel', panel, { webviewOptions: { retainContextWhenHidden: true } }),
+    ...watchers, { dispose: () => { clearInterval(tick); clearTimeout(timer); } },
+    // 用户有未保存改动时告诉记录员排队；保存后把排队的改动写进去
+    vscode.workspace.onDidChangeTextDocument(e => { if (isTree(e.document)) store.setEditing(e.document.uri.fsPath, e.document.isDirty); }),
+    vscode.workspace.onDidSaveTextDocument(doc => {
+      if (!isTree(doc)) return;
+      store.setEditing(doc.uri.fsPath, false);
+      Promise.resolve().then(() => store.flushQueue(doc.uri.fsPath, { write: writeTree }))
+        .catch(e => vscode.window.showErrorMessage(T('x.error', e.message)));
+    }),
+    vscode.workspace.onDidCloseTextDocument(doc => { if (isTree(doc)) store.setEditing(doc.uri.fsPath, false); }),
+    vscode.workspace.onDidChangeWorkspaceFolders(refresh),
+    vscode.commands.registerCommand('reqtree.refresh', refresh),
+    vscode.commands.registerCommand('reqtree.openMap', () => panel.openMap()),
+    vscode.commands.registerCommand('reqtree.create', create),
+    vscode.commands.registerCommand('reqtree.enable', () => enableCommand(panel)),
+  );
+  // 改了 reqtree.language：界面马上换语言
+  if (vscode.workspace.onDidChangeConfiguration) {
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('reqtree.language')) { panel.relang(); panel.load(); }
+    }));
+  }
+  panel.load();
+  // 插件升级后，~/.reqtree/runtime 里的 hook 程序还是旧版：悄悄换成新的（从没启用过就不建）
+  try { reqtree.refreshRuntimeIfOlder(); } catch (e) { console.error(e); }
+  const prompted = offerEnable(context, panel).catch(e => console.error(e));
+  return { prompted }; // 测试用：等提示走完
+}
+
+// ---------- 一键启用：在项目里装 hook（和命令行 init 同一套逻辑） ----------
+
+const fileFolders = () => (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file');
+const neverKey = dir => `reqtree.neverOfferEnable:${store.pathKey(dir)}`;
+
+async function enableIn(dir, panel) {
+  try { reqtree.init(dir, { log: () => {} }); }
+  catch (e) { vscode.window.showErrorMessage(T('x.enableFail', e.message)); return false; }
+  try { panel.load(); } catch (e) { console.error(e); }
+  vscode.window.showInformationMessage(T('x.enabled'));
+  return true;
+}
+
+// 工作区里没装需求树 hook 的项目：弹一次不挡操作的提示。「不再提示」按工作区记住；直接关掉下次还问
+async function offerEnable(context, panel) {
+  const state = context.workspaceState;
+  const folders = fileFolders();
+  for (const f of folders) {
+    const dir = f.uri.fsPath;
+    if (reqtree.hasHooks(dir) || (state && state.get(neverKey(dir)))) continue;
+    const where = folders.length > 1 ? (lang() === 'en' ? ` (${path.basename(dir)})` : `（${path.basename(dir)}）`) : '';
+    const pick = await vscode.window.showInformationMessage(T('x.askEnable', where), T('x.enable'), T('x.never'));
+    if (pick === T('x.enable')) await enableIn(dir, panel);
+    else if (pick === T('x.never') && state) await state.update(neverKey(dir), true);
+    return; // 一次只问一个
+  }
+}
+
+// 命令「需求树：在本项目启用」：多个工作区文件夹时先选一个
+async function enableCommand(panel) {
+  const folders = fileFolders();
+  if (!folders.length) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
+  let dir = folders[0].uri.fsPath;
+  if (folders.length > 1) {
+    const pick = await vscode.window.showQuickPick(folders.map(f => ({ label: path.basename(f.uri.fsPath), description: f.uri.fsPath, dir: f.uri.fsPath })), { placeHolder: T('x.whichProject') });
+    if (!pick) return;
+    dir = pick.dir;
+  }
+  await enableIn(dir, panel);
+}
+
+module.exports = { activate, deactivate() {} };

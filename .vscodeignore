@@ -1,0 +1,4 @@
+test/**
+tools/**
+.gitignore
+*.vsix

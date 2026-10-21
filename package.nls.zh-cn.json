@@ -1,0 +1,15 @@
+{
+  "displayName": "需求树 ReqTree",
+  "description": "给 AI 编程用的需求树：规则分层继承，按分支取规则，看得见正在做哪条。",
+  "view.container": "需求树",
+  "view.panel": "需求树",
+  "cmd.create": "需求树：新建",
+  "cmd.enable": "需求树：在本项目启用",
+  "cmd.refresh": "需求树：刷新",
+  "cmd.openMap": "需求树：打开导图",
+  "config.title": "需求树",
+  "config.language": "需求树面板和提示用什么语言。",
+  "config.language.auto": "跟 VS Code 的显示语言走",
+  "config.language.zh": "中文",
+  "config.language.en": "英文"
+}

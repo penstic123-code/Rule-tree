@@ -1,0 +1,147 @@
+/* 需求详情面板（detail.js）的样式：侧栏和导图共用，容器加 class="dp"。颜色、圆角、间距都用 view.css 开头定义的变量。
+   层级：需求标题 18 加粗、正文色 > 分节小标题 15 加粗、正文色 > 内容 13、柔和色 > 条数和说明 12、灰色 */
+
+/* ---------- 头部：编号和操作 / 大标题（点它改名）/ 路径 ---------- */
+.dp .sh { margin-bottom: var(--sp-3); }
+.sid { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--c-muted); }
+.sh-acts { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
+.sh-title { display: flex; align-items: center; gap: var(--sp-1); }
+.sh-title strong { min-width: 0; font-size: 18px; font-weight: 600; line-height: 1.35; color: var(--c-text); overflow-wrap: anywhere; cursor: text; border-radius: var(--r-ctl); }
+.sh-title strong:hover { text-decoration: underline dotted var(--c-muted); text-underline-offset: 3px; }
+.sh-title .pen .ico { opacity: 0; }
+.sh-title:hover .pen .ico, .sh-title:focus-within .pen .ico { opacity: 1; }
+.dp .sh .crumbs { margin-top: 2px; font-size: 12px; }
+
+/* 小按钮（铅笔、⋯、规则上的改和删）：透明底、灰色图标，悬停才有底色 */
+.dp .ib { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1); min-height: var(--h-ib); min-width: var(--h-ib); border: 0; background: none; color: var(--c-muted); border-radius: var(--r-ctl); padding: 0 var(--sp-1); line-height: 18px; }
+.dp .ib:hover { background: var(--c-hover); color: var(--c-text); }
+.dp .ib.wide { font-size: 12px; white-space: nowrap; color: var(--accent-text); }
+
+/* ---------- 状态：细的分段按钮，只有选中的一格有底色 ---------- */
+.seg { display: flex; border: 1px solid var(--c-border); border-radius: var(--r-ctl); overflow: hidden; }
+.seg button { flex: 1; min-height: var(--h-ctl); border: 0; background: none; padding: 0 2px; color: var(--c-muted); font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.seg button + button { border-left: 1px solid var(--c-border); }
+.seg button:hover { background: var(--c-hover); color: var(--c-text); }
+.seg button:focus-visible { outline-offset: -2px; }
+.seg button.on { background: var(--c-raised); color: var(--c-text); font-weight: 600; }
+.seg .st { transform: scale(.85); }
+
+/* ---------- 分节：本需求的规则 / 继承的规则 / 子需求 / 最近改动 / 未归属的文件 ----------
+   节奏到处一样：小标题 → 第一条 8，条与条 6，最后一条 → 分隔线 12，分隔线 → 下一个小标题 16。
+   每节结尾一根很淡的线；条与条之间不画线，靠前面的小圆点分开 */
+.dp .seg { margin-bottom: var(--sp-4); }
+.dp .hint { display: flex; align-items: flex-start; gap: 6px; margin: calc(-1 * var(--sp-1)) 0 var(--sp-4); }
+.dp .hint .ico { margin-top: .15em; color: var(--c-muted); }
+.dp .sec { padding-bottom: var(--sp-3); margin-bottom: var(--sp-4); border-bottom: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent); }
+.dp .gh { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; min-height: 22px; font-size: 15px; font-weight: 600; line-height: 22px; color: var(--c-text); }
+.dp .gh .gn { font-size: 12px; font-weight: 400; color: var(--c-muted); font-variant-numeric: tabular-nums; }
+.dp .gh .ico-chev { margin-left: auto; align-self: center; color: var(--c-muted); transition: transform .12s; }
+/* 小标题右边的「+ 添加」：每节一样 */
+.dp .gh .gh-act { margin-left: auto; align-self: center; font-size: 12px; font-weight: 400; }
+/* 小标题下面没有内容时（比如没有子需求），结尾的空也一样 */
+.dp .sec > .gh:last-child, .dp .sec > .inh-tg[aria-expanded="false"] { margin-bottom: 0; }
+.dp .empty.sm { margin-top: var(--sp-2); padding: 0; color: var(--c-muted); font-size: 12px; }
+
+/* 继承的规则：按来自哪一级分组 */
+.gsub { margin: var(--sp-3) 0 0; font-size: 12px; line-height: 18px; color: var(--c-muted); }
+.inh-body > .gsub:first-child { margin-top: var(--sp-2); }
+.dp .inh-tg { width: 100%; padding: 0; border: 0; border-radius: var(--r-ctl); background: none; text-align: left; font-family: inherit; }
+.dp .inh-tg:hover .gt { text-decoration: underline; text-underline-offset: 3px; }
+.dp .inh-tg[aria-expanded="true"] .ico-chev { transform: rotate(90deg); }
+
+/* 列表（规则、子需求、改动）：比小标题往里缩 12，前面一个灰色小圆点，折行时和第一行的字对齐 */
+.dp .rules, .dp .kids, .dp .chgs { list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
+.dp .rules > li + li, .dp .kids > li + li, .dp .chgs > li + li { margin-top: 6px; }
+.dp .rule { position: relative; display: flex; align-items: flex-start; padding: 0 0 0 var(--sp-3); margin: 0; font-size: 13px; line-height: 20px; color: var(--c-soft); cursor: default; }
+.dp .rule::before { content: ""; position: absolute; left: 2px; top: 8.5px; width: 3px; height: 3px; border-radius: var(--r-pill); background: var(--c-muted); }
+.dp .rule .tx { flex: 1; min-width: 0; }
+/* 小标签（覆盖上级、被本需求覆盖）：和文字行垂直居中 */
+.tag { display: inline-flex; align-items: center; height: 18px; margin: 1px 0 1px 6px; padding: 0 6px; border: 1px solid var(--c-border); border-radius: var(--r-pill); font-size: 11px; line-height: 16px; color: var(--c-muted); vertical-align: top; white-space: nowrap; }
+.r-overridden .rt { color: var(--c-muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--c-muted) 70%, transparent); }
+/* 规则上的「改」「删」「在这里改写」悬停时浮在右边，不占宽度 */
+.dp .rule .rb { display: none; gap: 2px; position: absolute; right: 0; top: -1px; padding-left: var(--sp-2); background: var(--c-bg); }
+.dp .rule:hover .rb, .dp .rule:focus-within .rb { display: inline-flex; }
+
+/* 子需求：状态点 + 名字，点了选中 */
+.kid { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: 20px; padding: 0 0 0 var(--sp-3); border: 0; border-radius: var(--r-ctl); background: none; text-align: left; color: var(--c-soft); font-size: 13px; line-height: 20px; }
+.kid .st { margin-left: -3px; transform: scale(.85); }
+.kid:hover .kid-t { color: var(--c-text); text-decoration: underline; text-underline-offset: 3px; }
+.kid-id { flex: none; font-family: var(--mono); font-size: 12px; color: var(--c-muted); }
+.kid-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 可以收起的一节：最近改动、未归属的文件 */
+.dp .sec > summary { list-style: none; cursor: pointer; }
+.dp .sec > summary::-webkit-details-marker { display: none; }
+.dp .sec[open] > summary .ico-chev { transform: rotate(90deg); }
+.dp .sec:not([open]) { padding-bottom: var(--sp-3); }
+.chg { position: relative; padding-left: var(--sp-3); }
+.chg::before { content: ""; position: absolute; left: 2px; top: 7.5px; width: 3px; height: 3px; border-radius: var(--r-pill); background: var(--c-muted); }
+.chg.undone .cs { color: var(--c-muted); }
+.chg .cw { display: flex; align-items: center; gap: var(--sp-1); font-size: 12px; line-height: 18px; color: var(--c-muted); }
+.chg .cw .lnk { margin-left: auto; }
+.chg .who { color: var(--c-text); font-weight: 600; }
+.chg .cs { display: flex; align-items: center; gap: var(--sp-2); font-size: 13px; line-height: 20px; color: var(--c-soft); }
+.chg .cs code { font-family: var(--mono); font-size: 12px; }
+.chg .cs .lnk { margin-left: auto; }
+
+/* 生效范围：最下面一行，标签、值、「修改」在同一条基线上，不折行 */
+.dp .files { display: flex; align-items: baseline; gap: 6px; flex-wrap: nowrap; margin: 0; font-size: 12px; color: var(--c-muted); line-height: 18px; white-space: nowrap; }
+.dp .files .fk { color: var(--c-muted); flex: none; }
+:lang(zh) .dp .files .fk { margin-right: -5px; } /* 中文冒号自带空白 */
+.dp .files .fv { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--c-soft); }
+.dp .files .fsep { flex: none; color: var(--c-muted); }
+.dp .files .lnk { flex: none; }
+.dp .files code { font-family: var(--mono); font-size: 12px; color: var(--c-soft); }
+.dp .files.warn .warn-t { color: var(--c-text); }
+
+/* 没选中需求时：一行说明，下面隔 12 一个「新需求」（侧栏和导图一样） */
+.dp-empty { margin-bottom: var(--sp-4); }
+.dp-empty .empty { color: var(--c-muted); padding: 0; font-size: 13px; line-height: 20px; }
+.dp-empty .new-btn { margin-top: var(--sp-3); }
+
+@media (prefers-reduced-motion: reduce) { .dp .gh .ico-chev { transition: none; } }
+
+/* ---------- 在面板里改名：标题变成同样大小的输入框 ---------- */
+.title-in {
+  flex: 1; min-width: 0; font: inherit; font-size: 18px; font-weight: 600; line-height: 1.35; color: var(--c-text);
+  background: var(--vscode-input-background, var(--c-surface)); border: 1px solid var(--accent); border-radius: var(--r-ctl);
+  padding: 0 var(--sp-1); margin: -1px 0; outline: none;
+}
+.title-in[aria-invalid="true"] { border-color: var(--danger); }
+.title-in::placeholder { color: var(--c-muted); font-weight: 400; }
+.sh-title.editing .pen { display: none; }
+
+/* ---------- 上下文用量浮层 ---------- */
+.ctx-ov { position: fixed; inset: 0; z-index: 20; display: flex; justify-content: center; align-items: flex-start; padding: var(--sp-4) var(--sp-2);
+  background: color-mix(in srgb, var(--c-bg) 55%, transparent); overflow: auto; }
+.ctx { width: 100%; max-width: 560px; background: var(--vscode-editorWidget-background, var(--c-surface)); color: var(--c-text); border: 1px solid var(--c-border); border-radius: var(--r-card);
+  box-shadow: 0 8px 28px var(--c-shadow); padding: var(--sp-4); outline: none; }
+.ctx-head { display: flex; align-items: baseline; gap: var(--sp-2); }
+.ctx-t { font-size: 18px; font-weight: 600; }
+.ctx-head .lnk { margin-left: auto; }
+.ctx-sub { margin: var(--sp-1) 0 var(--sp-4); font-size: 12px; line-height: 18px; color: var(--c-muted); }
+.ctx-empty { padding: var(--sp-5) 0; text-align: center; font-size: 13px; color: var(--c-soft); }
+.ctx-pick { display: flex; align-items: center; gap: var(--sp-2); font-size: 12px; color: var(--c-muted); }
+.ctx-pick select { flex: 1; min-width: 0; height: var(--h-ctl); font: inherit; font-size: 12px; color: var(--vscode-dropdown-foreground, var(--c-text));
+  background: var(--vscode-dropdown-background, var(--c-surface)); border: 1px solid var(--vscode-dropdown-border, var(--c-border)); border-radius: var(--r-ctl); padding: 0 var(--sp-1); }
+.ctx-pick select:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* 一根横条：常驻（深）+ 按需（浅），都是中性色 */
+.ctx-bar { display: flex; height: 10px; margin: var(--sp-4) 0 var(--sp-2); border-radius: var(--r-pill); overflow: hidden; background: var(--c-raised); }
+.cb-r { background: color-mix(in srgb, var(--c-text) 60%, var(--c-surface)); }
+.cb-d { background: color-mix(in srgb, var(--c-text) 28%, var(--c-surface)); }
+.ctx-nums { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: 13px; color: var(--c-soft); }
+.ctx-nums b { color: var(--c-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ctx-nums .dot-sep { color: var(--c-muted); }
+.sw { display: inline-block; width: 8px; height: 8px; border-radius: var(--r-pill); margin-right: 5px; vertical-align: 0; }
+.sw-r { background: color-mix(in srgb, var(--c-text) 60%, var(--c-surface)); }
+.sw-d { background: color-mix(in srgb, var(--c-text) 28%, var(--c-surface)); }
+.ctx-note { margin-top: 2px; font-size: 12px; color: var(--c-muted); }
+.ctx-gh { display: flex; align-items: baseline; gap: var(--sp-2); margin: var(--sp-5) 0 var(--sp-1); font-size: 15px; font-weight: 600; }
+.ctx-gh .gn { font-size: 12px; font-weight: 400; color: var(--c-muted); }
+.ctx-row { padding: var(--sp-2) 0; }
+.ctx-row + .ctx-row { border-top: 1px solid color-mix(in srgb, var(--c-border) 70%, transparent); }
+.ctx-main { display: flex; align-items: baseline; gap: var(--sp-3); }
+.ctx-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--c-text); }
+.ctx-main .lnk { font-size: 13px; min-width: 0; padding: 0; overflow: hidden; text-overflow: ellipsis; }
+.ctx-chars { margin-left: auto; flex: none; font-size: 12px; color: var(--c-soft); font-variant-numeric: tabular-nums; }
+.ctx-why { margin-top: 2px; font-size: 12px; color: var(--c-muted); }

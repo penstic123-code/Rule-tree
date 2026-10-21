@@ -1,0 +1,237 @@
+/* 需求树面板（侧栏）。整个界面（侧栏、详情、导图）的颜色、圆角、间距都在下面这一块里定义，别处只引用变量。
+   颜色只为好读：主题的中性色 + 一个强调色（焦点色，用在选中、焦点、唯一的主按钮、正在做、AI 正在改），
+   再加一个出错用的红色，一共两种非中性色。全部取 VS Code 主题变量，深浅色和高对比度主题自动适配 */
+:root {
+  /* ---- 中性色 ---- */
+  --c-bg: var(--vscode-sideBar-background, var(--vscode-editor-background, #1e1e1e));
+  --c-surface: var(--vscode-editor-background, var(--c-bg));
+  --c-text: var(--vscode-foreground, #cccccc);
+  --c-muted: var(--vscode-descriptionForeground, #9d9d9d);
+  --c-raised: color-mix(in srgb, var(--c-text) 6%, var(--c-surface));
+  --c-soft: color-mix(in srgb, var(--c-text) 78%, var(--c-bg)); /* 内容文字：比标题柔和，对比度仍 ≥ 4.5 */
+  --c-border: var(--vscode-widget-border, rgba(128, 128, 128, .3));
+  --c-line: var(--vscode-tree-indentGuidesStroke, rgba(128, 128, 128, .4));
+  --c-hover: var(--vscode-list-hoverBackground, rgba(128, 128, 128, .1));
+  --c-sel: var(--vscode-list-inactiveSelectionBackground, rgba(128, 128, 128, .2));
+  --c-sel-fg: var(--vscode-list-inactiveSelectionForeground, var(--c-text));
+  --c-shadow: var(--vscode-widget-shadow, rgba(0, 0, 0, .3));
+  --c-hc: var(--vscode-contrastBorder, transparent); /* 只有高对比度主题有，平时透明 */
+  /* ---- 强调色（唯一） ---- */
+  --accent: var(--vscode-focusBorder, #0078d4);
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-text: color-mix(in srgb, var(--accent) 55%, var(--c-text)); /* 写字用：往正文色混一点，对比度才够 */
+  /* ---- 出错 ---- */
+  --danger: var(--vscode-errorForeground, var(--vscode-charts-red, #f14c4c));
+  /* ---- 状态：单色。正在做用强调色，其余是灰色的形状（空心圈、勾、问号） ---- */
+  --st-todo: var(--c-muted);
+  --st-doing: var(--accent);
+  --st-done: var(--c-muted);
+  --st-question: var(--c-muted);
+  --ai: var(--accent);
+  /* ---- 按钮：VS Code 自己的按钮颜色 ---- */
+  --btn: var(--vscode-button-background, var(--accent));
+  --btn-fg: var(--vscode-button-foreground, #ffffff);
+  --btn-hover: var(--vscode-button-hoverBackground, var(--btn));
+  --btn2: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, .2));
+  --btn2-fg: var(--vscode-button-secondaryForeground, var(--c-text));
+  --btn2-hover: var(--vscode-button-secondaryHoverBackground, color-mix(in srgb, var(--btn2) 85%, var(--c-text)));
+  --btn-border: var(--vscode-button-border, transparent);
+  /* ---- 旧名字（各文件里还在用），指到上面的变量 ---- */
+  --fg: var(--c-text); --muted: var(--c-muted); --bg: var(--c-bg); --border: var(--c-border); --line: var(--c-line);
+  --hover: var(--c-hover); --sel: var(--c-sel); --sel-fg: var(--c-sel-fg); --focus: var(--accent); --shadow: var(--c-shadow);
+  --red: var(--danger); --blue: var(--accent); --hc-border: var(--c-hc); --card: var(--c-surface);
+  --mono: var(--vscode-editor-font-family, Consolas, monospace);
+
+  /* 圆角只有三种：卡片和面板 / 按钮等控件 / 胶囊 */
+  --r-card: 6px;
+  --r-ctl: 4px;
+  --r-pill: 999px;
+  /* 间距：4 / 8 / 12 / 16 / 24 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  /* 控件高度 */
+  --h-btn: 26px;
+  --h-ctl: 24px;
+  --h-ib: 22px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; padding: 0;
+  background: var(--c-bg); color: var(--c-text);
+  font-family: var(--vscode-font-family); font-size: var(--vscode-font-size, 13px);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
+
+/* ---------- 线条图标（detail.js 的 ReqDetail.icon）：颜色跟随文字，和文字垂直居中 ---------- */
+.ico { flex: none; vertical-align: -0.18em; }
+
+/* ---------- 顶部：出错提示（记录员出错、规则没有生成） ---------- */
+.banner {
+  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+  margin: var(--sp-2) var(--sp-3) var(--sp-1); padding: 6px var(--sp-2) 6px var(--sp-3); font-size: .92em;
+  border-radius: var(--r-card);
+}
+.banner.err { border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.statusbar { display: flex; align-items: center; gap: 2px; margin: 6px 6px 2px var(--sp-3); min-height: var(--h-ctl); }
+.status { flex: 1; min-width: 0; font-size: 11px; color: var(--c-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: var(--sp-1); }
+.ibtn.gear { flex: none; padding: 2px var(--sp-1); }
+.chip.stale { color: color-mix(in srgb, var(--c-muted) 75%, var(--c-text)); }
+.hint { margin: var(--sp-2) 0 2px; padding: 6px var(--sp-2); border-radius: var(--r-ctl); font-size: 12px; background: var(--c-raised); color: var(--c-text); }
+
+/* ---------- 按钮：VS Code 的按钮颜色，统一高度、悬停、焦点环 ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: var(--h-btn); padding: 0 var(--sp-3); line-height: 18px; white-space: nowrap;
+  border: 1px solid var(--btn-border); border-radius: var(--r-ctl);
+  background: var(--btn); color: var(--btn-fg);
+}
+.btn:hover { background: var(--btn-hover); }
+.btn.ghost { background: var(--btn2); color: var(--btn2-fg); }
+.btn.ghost:hover { background: var(--btn2-hover); }
+/* 链接样式的按钮：次要操作（修改、撤销、子需求、只看这一支） */
+.lnk {
+  display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 0 2px; border-radius: var(--r-ctl);
+  color: var(--accent-text); font-size: 12px; line-height: 18px; white-space: nowrap;
+}
+.lnk:hover { text-decoration: underline; }
+/* 焦点环：强调色，外扩 2px，不压住文字 */
+.btn:focus-visible, .ibtn:focus-visible, .dp .ib:focus-visible, .seg button:focus-visible, .inh-tg:focus-visible, .lnk:focus-visible, .kid:focus-visible,
+.menu button:focus-visible, .follow:focus-visible, .crumb:focus-visible, .tseg button:focus-visible, .tzoom button:focus-visible, .ttog:focus-visible,
+.dp .sec > summary:focus-visible, .sh-title strong:focus-visible {
+  outline: 1px solid var(--accent); outline-offset: 2px;
+}
+.row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+/* 开关（跟随 AI、隐藏已完成）：打开时是强调色的淡底，关掉时是灰字 */
+.follow, .ttog {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; background: none;
+  padding: 0 var(--sp-2); min-height: 22px; border-radius: var(--r-pill); color: var(--c-muted); font-size: 12px; line-height: 18px; white-space: nowrap;
+}
+.follow:hover, .ttog:hover { color: var(--c-text); background: var(--c-hover); }
+.follow[aria-pressed="true"], .ttog[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); }
+.follow .fdot { width: 6px; height: 6px; border-radius: var(--r-pill); border: 1.5px solid currentColor; }
+.follow[aria-pressed="true"] .fdot { background: currentColor; }
+
+/* ---------- 只看这一支：顶部一条路径，「显示全部」退出 ---------- */
+.focusbar { flex: none; display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-1) var(--sp-2) 0; padding: 3px 3px 3px var(--sp-2);
+  border-radius: var(--r-card); background: var(--c-raised); border: 1px solid var(--c-border); }
+.focusbar .fl { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; font-size: 12px; overflow: hidden; white-space: nowrap; }
+.focusbar .fl > span.sepr { color: var(--c-muted); padding: 0 2px; }
+.crumb { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; border: 0; background: none; padding: 1px var(--sp-1); border-radius: var(--r-ctl); color: var(--c-muted); }
+.crumb:hover { color: var(--c-text); background: var(--c-hover); }
+.crumb.cur { color: var(--c-text); font-weight: 600; cursor: default; }
+.crumb.cur:hover { background: none; }
+.focusbar .btn { min-height: 22px; padding: 0 var(--sp-2); font-size: 12px; }
+
+/* ---------- 需求树 ---------- */
+/* 树跟着内容走，最多占 55%；详情紧贴在下面，占剩下的高度 */
+.tree { flex: 0 0 auto; max-height: 55%; overflow: auto; padding: var(--sp-1) 0 var(--sp-2); min-height: 80px; }
+.tree ul { list-style: none; margin: 0; padding: 0; }
+.tree ul ul { margin-left: 15px; border-left: 1px solid var(--c-line); }
+
+.row {
+  position: relative; display: flex; align-items: center; gap: 7px;
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 6px; cursor: pointer; border-radius: var(--r-ctl); margin: 1px var(--sp-1);
+  outline: none; border: 1px solid transparent;
+}
+.row:hover { background: var(--c-hover); }
+.row.sel { background: var(--c-sel); color: var(--c-sel-fg); border-color: var(--c-hc); }
+.row.sel::before { content: ""; position: absolute; left: -1px; top: var(--sp-1); bottom: var(--sp-1); width: 2px; border-radius: var(--r-pill); background: var(--accent); }
+
+/* AI 正在改的那一行：强调色的淡描边，慢慢呼吸；减少动态时保持静止 */
+.row.ai-on { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ai) 40%, transparent); animation: breathe 2.8s ease-in-out infinite; }
+@keyframes breathe {
+  0%, 100% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ai) 20%, transparent); }
+  50% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ai) 65%, transparent), 0 0 6px color-mix(in srgb, var(--ai) 25%, transparent); }
+}
+/* 跟随 AI 跳过来时闪一下 */
+.row.flash { animation: flash 1.2s ease-out 1; }
+@keyframes flash { 0% { background: color-mix(in srgb, var(--ai) 30%, transparent); } 100% { background: transparent; } }
+
+/* 只看这一支时，上面的祖先行缩小、变灰，当路标用 */
+.row.anc { padding-top: 1px; padding-bottom: 1px; }
+.row.anc .title { font-size: 12px !important; font-weight: 400 !important; color: var(--c-muted); }
+
+/* 细线 chevron */
+.twisty { width: 12px; height: 12px; flex: none; position: relative; transition: transform .12s; }
+.twisty::before { content: ""; position: absolute; left: 3px; top: 3px; width: 5px; height: 5px; border-right: 1.5px solid var(--c-muted); border-bottom: 1.5px solid var(--c-muted); transform: rotate(-45deg); }
+.twisty.open { transform: rotate(90deg); }
+.twisty.none { visibility: hidden; }
+
+/* 层级：标题 > 编号 > 标签。编号是灰色的小号等宽字，和导图一致 */
+.id { flex: none; font-family: var(--mono); font-size: 11.5px; font-weight: 500; line-height: 16px; color: color-mix(in srgb, var(--c-muted) 85%, var(--c-text)); }
+/* 标题至少留 4 个字，右侧标签先缩 */
+.title { flex: 1 1 auto; min-width: 4.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.d1 > .row { padding-top: 6px; padding-bottom: 6px; margin-top: var(--sp-1); }
+.d1 > .row .title { font-size: 15px; font-weight: 600; }
+.d2 > .row .title { font-size: 13px; font-weight: 600; }
+.d3 > .row .title, .d4 > .row .title { font-weight: 400; }
+.d2 { margin-top: var(--sp-1); }
+/* 完成的安静下来 */
+.done > .row .title { color: var(--c-muted); }
+
+/* 状态点（侧栏、详情、导图概况共用；导图卡片里的是同样画法的 SVG） */
+.st { flex: none; width: 14px; height: 14px; display: inline-grid; place-items: center; border-radius: var(--r-pill); font-size: 9px; font-weight: 700; line-height: 1; color: var(--c-muted); }
+.st.st-todo { border: 1.5px solid var(--st-todo); width: 11px; height: 11px; margin: 0 1.5px; }
+.st.st-doing { background: radial-gradient(circle, var(--st-doing) 0 3.5px, transparent 4px); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--st-doing) 35%, transparent); }
+.st.st-done { color: var(--st-done); }
+.st.st-question { border: 1.5px solid var(--st-question); width: 12px; height: 12px; margin: 0 1px; color: var(--st-question); }
+.st.st-none { width: 4px; height: 4px; margin: 0 5px; background: var(--c-muted); opacity: .7; }
+
+/* 右侧小标签 */
+.meta { flex: 0 1 auto; min-width: 0; display: flex; gap: var(--sp-1); align-items: center; overflow: hidden; }
+/* 图标 + 文字；文字太长时只省略文字，图标留着 */
+.chip { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; padding: 0 6px; border-radius: var(--r-pill); line-height: 16px; white-space: nowrap; overflow: hidden; }
+.chip .ct { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* AI 正在改：界面里唯一亮的标记 */
+.chip.ai { max-width: 110px; background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+
+.ibtn { display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 1px var(--sp-1); border-radius: var(--r-ctl); color: var(--c-muted); line-height: 18px; }
+.ibtn:hover { color: var(--c-text); background: var(--c-hover); }
+/* 操作按钮浮在行的右端，不占布局宽度 */
+.acts { display: none; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); padding-left: var(--sp-2); background: var(--c-hover); border-radius: var(--r-ctl); }
+.row:hover .acts, .row:focus-within .acts { display: flex; }
+.row.sel .acts { background: var(--c-sel); }
+
+/* ---------- 下面的需求详情 ---------- */
+.splitter { flex: none; height: 4px; cursor: row-resize; border-top: 1px solid var(--c-border); }
+.splitter:hover { background: var(--accent); }
+.detail { flex: 1 1 0; min-height: 120px; overflow: auto; padding: var(--sp-3) var(--sp-3) var(--sp-4); }
+.detail > .empty { color: var(--c-muted); padding: 14px 2px; }
+/* 只看这一支时树变短，详情占剩下的地方 */
+.app-focus .tree { max-height: 40%; }
+
+.crumbs { color: var(--c-muted); font-size: 11px; margin-top: 2px; }
+.actions { display: flex; gap: 6px; margin: var(--sp-3) 0 6px; flex-wrap: wrap; }
+.gh { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--c-muted); margin-bottom: var(--sp-1); }
+.gh .line { flex: 1; height: 1px; background: var(--c-border); }
+
+/* 浮动菜单（⋯、改状态、设置） */
+.menu { position: fixed; z-index: 10; background: var(--vscode-menu-background, var(--c-surface)); color: var(--vscode-menu-foreground, var(--c-text)); border: 1px solid var(--vscode-menu-border, var(--c-border)); border-radius: var(--r-card); padding: var(--sp-1); box-shadow: 0 4px 14px var(--c-shadow); min-width: 150px; }
+.menu button { display: flex; align-items: center; width: 100%; gap: var(--sp-2); border: 0; background: none; padding: 5px var(--sp-2); border-radius: var(--r-ctl); text-align: left; font-size: 13px; }
+.menu button:hover, .menu button:focus-visible { background: var(--vscode-menu-selectionBackground, var(--c-hover)); color: var(--vscode-menu-selectionForeground, inherit); }
+.menu button.danger { color: var(--danger); }
+.menu .tick { width: 12px; display: inline-flex; color: var(--c-text); }
+
+.welcome { padding: 18px 14px; color: var(--c-muted); line-height: 1.6; }
+
+/* 减少动态：不呼吸、不闪（闪改成静止的底色，由脚本按时移除） */
+@media (prefers-reduced-motion: reduce) {
+  .row.ai-on { animation: none; }
+  .twisty { transition: none; }
+  .row.flash { animation: none; background: color-mix(in srgb, var(--ai) 20%, transparent); }
+}
+
+/* 选中后，不在这一支的行稍微变淡（还能点）；减少动态时直接变 */
+.row { transition: opacity .2s; }
+.row.dim { opacity: .55; }
+.row.dim:hover { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .row { transition: none; } }

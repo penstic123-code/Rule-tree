@@ -1,0 +1,15 @@
+{
+  "displayName": "ReqTree",
+  "description": "A requirement tree for AI coding: rules inherit down the tree, the AI gets only the rules for the branch it is working on, and you can see what it is working on.",
+  "view.container": "ReqTree",
+  "view.panel": "Requirement tree",
+  "cmd.create": "ReqTree: Create",
+  "cmd.enable": "ReqTree: Enable in this project",
+  "cmd.refresh": "ReqTree: Refresh",
+  "cmd.openMap": "ReqTree: Open map",
+  "config.title": "ReqTree",
+  "config.language": "Language of the ReqTree panels and messages.",
+  "config.language.auto": "Follow the VS Code display language",
+  "config.language.zh": "Chinese",
+  "config.language.en": "English"
+}

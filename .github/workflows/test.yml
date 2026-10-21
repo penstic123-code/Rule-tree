@@ -1,0 +1,65 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22]
+    defaults:
+      run:
+        # Windows 上也用 bash：test/*.test.js 靠 shell 展开（pwsh 不展开，Node 20 自己也不认 glob）
+        shell: bash
+    env:
+      # 界面测试用全局 WebSocket：Node 22 自带，Node 20 要这个开关（不会往 stderr 打警告）
+      NODE_OPTIONS: --experimental-websocket
+      # 找不到浏览器时界面测试应当失败而不是跳过（test/ui.test.js 读这个变量）
+      REQTREE_REQUIRE_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 界面测试要量中文文字宽度；Ubuntu 镜像没有中文字体，会画成方块
+      - name: Install CJK fonts (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk
+
+      # GitHub 的三种镜像都预装了 Chrome（Windows 还有 Edge）；找到的路径交给 test/ui.test.js
+      - name: Locate browser
+        run: |
+          for p in \
+            "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" \
+            "C:/Program Files/Google/Chrome/Application/chrome.exe" \
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+            "/usr/bin/google-chrome" \
+            "/usr/bin/google-chrome-stable" \
+            "/usr/bin/chromium" \
+            "/usr/bin/chromium-browser"; do
+            if [ -f "$p" ]; then
+              echo "REQTREE_BROWSER=$p" >> "$GITHUB_ENV"
+              echo "browser: $p"
+              exit 0
+            fi
+          done
+          echo "::warning::no Chrome/Edge found"
+
+      - name: Test
+        run: node --test test/*.test.js
+
+      - name: Upload screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-${{ matrix.os }}-node${{ matrix.node }}
+          path: test/out/*.png
+          if-no-files-found: ignore

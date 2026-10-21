@@ -6,8 +6,6 @@
 
 给 [Claude Code](https://claude.com/claude-code) 和 [OpenAI Codex](https://developers.openai.com/codex) 用，带一个 VS Code 插件。[English](README.en.md) | **中文**
 
-> 🚧 代码正在做最后的整理和测试，很快上传到这个仓库。现在你看到的是介绍和测试数据。
-
 ![需求树导图](docs/images/ui-map.png)
 
 ## 你是不是也遇到过
@@ -45,9 +43,15 @@
 
 ## 看一眼
 
-| 侧栏（深色主题） | 导图（浅色主题） |
+| 侧栏（深色主题） | 导图（浅色主题）：点一个需求，别的分支淡下去 |
 |---|---|
 | <img src="docs/images/ui-sidebar.png" width="300"> | <img src="docs/images/ui-map.png" width="560"> |
+
+| 聚焦：只看这一支 | 上下文用量：这个会话加载了哪些规则、各多少字 |
+|---|---|
+| <img src="docs/images/ui-focus.png" width="430"> | <img src="docs/images/ui-context.png" width="430"> |
+
+界面跟随 VS Code 的显示语言，中文和英文都有。
 
 ## 怎么用
 
@@ -120,11 +124,11 @@ npx github:penstic123-code/Vibe-Friend init <你的项目目录> --tool codex # 
 
 | 功能 | 状态 |
 |---|---|
-| 规则按需加载：只在改到对应文件时进入上下文 | ✅ |
+| 规则按需加载：AI 读或改到对应文件时，规则才进入上下文 | ✅ |
 | hook 不往对话里加内容 | ✅ |
 | 改写旧规则而不是新增，树不会越堆越长 | ✅ |
 | 记录员用便宜的 Haiku，在后台跑；短回复不调用模型 | ✅ |
-| 上下文用量表：每个会话加载了哪些规则、各多少字、哪些常驻哪些按需 | 记录已完成，面板显示开发中 |
+| 上下文用量表：每个会话加载了哪些规则、各多少字、哪些常驻哪些按需 | ✅ |
 | 从 CLAUDE.md 拆分：把只属于某个需求的内容搬进树里按需加载 | 计划中 |
 | 跨文件查重查矛盾：需求树和 CLAUDE.md、项目文档之间 | 计划中（已有实验脚本） |
 
