@@ -4,15 +4,26 @@ on:
   push:
   pull_request:
 
+# 同一分支又推了新提交时，取消还在跑的旧运行，免得旧运行占着 Windows / macOS 机器
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
+    # 浏览器卡死时整个任务最多跑 25 分钟（默认 6 小时）
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node: [20, 22]
+        # GitHub 的 macOS 机器常排不上队，只留一个 macOS 任务
+        exclude:
+          - os: macos-latest
+            node: 20
     defaults:
       run:
         # Windows 上也用 bash：test/*.test.js 靠 shell 展开（pwsh 不展开，Node 20 自己也不认 glob）
@@ -35,16 +46,19 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q fonts-noto-cjk
 
       # GitHub 的三种镜像都预装了 Chrome（Windows 还有 Edge）；找到的路径交给 test/ui.test.js
+      # 三个系统都先用 Chrome（Ubuntu 上一直用它、一直通过）；Edge 只在没有 Chrome 时兜底
       - name: Locate browser
         run: |
           for p in \
-            "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" \
             "C:/Program Files/Google/Chrome/Application/chrome.exe" \
+            "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe" \
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
             "/usr/bin/google-chrome" \
             "/usr/bin/google-chrome-stable" \
             "/usr/bin/chromium" \
-            "/usr/bin/chromium-browser"; do
+            "/usr/bin/chromium-browser" \
+            "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" \
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
             if [ -f "$p" ]; then
               echo "REQTREE_BROWSER=$p" >> "$GITHUB_ENV"
               echo "browser: $p"
@@ -53,18 +67,21 @@ jobs:
           done
           echo "::warning::no Chrome/Edge found"
 
+      # --test-timeout 在多文件模式下也管整个文件（ui.test.js 本地就要 2–3 分钟），所以给 10 分钟；
+      # 单个界面测试自己设了 60–90 秒。整步最多 15 分钟，超时算失败，下面两步照样跑
       - name: Test
+        timeout-minutes: 15
         run: |
           set -o pipefail
-          node --test --test-reporter=tap test/*.test.js 2>&1 | tee test-output.txt
+          node --test --test-timeout=600000 --test-reporter=tap test/*.test.js 2>&1 | tee test-output.txt
 
       # 日志要登录才能看；失败的测试写成注释，公开可见
       - name: Annotate failures
-        if: failure()
+        if: failure() || cancelled()
         run: node tools/ci-annotate.js test-output.txt
 
       - name: Upload screenshots
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: ui-${{ matrix.os }}-node${{ matrix.node }}

@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const url = require('url');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const { build } = require('../tools/preview');
 
 // 找一个 Chromium 内核的浏览器：环境变量优先，再按 Windows、macOS、Linux 的常见位置找
@@ -57,37 +57,146 @@ const TREE = `# P 示例项目
 ## C4 英语课 ✅
 `;
 
+// 还开着的浏览器：测试超时时 finally 不会执行，靠文件结束（after）和进程退出时统一关掉，免得 node --test 一直等着
+const LIVE = new Set();
+const closeAll = () => { for (const b of [...LIVE]) b.close(); };
+test.after(closeAll);
+process.on('exit', closeAll);
+
+// 等某件事成立，超时返回 false；每一轮最多等 step 毫秒
+async function until(fn, ms, step = 100) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(step)) {
+    try { if (await fn()) return true; } catch {}
+  }
+  return false;
+}
+// fetch 加超时（Node 20 / 22 都有 AbortSignal.timeout）
+const getJson = (u, method = 'GET') => fetch(u, { method, signal: AbortSignal.timeout(3000) }).then(r => r.json());
+
 class Browser {
+  // 打开一个全新的无头浏览器（独立的临时配置目录），连上它唯一的空白页
   async open(width) {
-    const port = 9300 + Math.floor(Math.random() * 500);
-    this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-edge-'));
-    const args = ['--headless=new', '--disable-gpu', `--remote-debugging-port=${port}`, `--user-data-dir=${this.dir}`, '--no-first-run'];
+    LIVE.add(this);
+    this.logs = []; // 页面报错、控制台错误，失败时附在报错信息里
+    this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-browser-'));
+    this.stderr = path.join(this.dir, 'stderr.log');
+    // 端口给 0：浏览器自己挑空闲端口，写进配置目录下的 DevToolsActivePort，不会和别的进程撞端口
+    const args = ['--headless=new', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${this.dir}`,
+      '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync', '--disable-default-apps',
+      '--disable-background-networking', '--disable-component-update', '--mute-audio'];
     if (process.platform === 'linux') args.push('--no-sandbox'); // CI 容器里没有沙箱权限
-    this.proc = spawn(BROWSER, [...args, 'about:blank'], { stdio: 'ignore' });
-    let ws;
-    for (let i = 0; i < 60 && !ws; i++) {
-      try { const l = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); ws = l.find(t => t.type === 'page')?.webSocketDebuggerUrl; } catch {}
-      if (!ws) await sleep(250);
+    const err = fs.openSync(this.stderr, 'w');
+    // macOS / Linux 上放进单独的进程组，关的时候整组杀掉（Windows 用 taskkill /T）
+    this.proc = spawn(BROWSER, [...args, 'about:blank'], { stdio: ['ignore', 'ignore', err], detached: process.platform !== 'win32' });
+    fs.closeSync(err);
+    this.proc.on('error', e => { this.dead = true; this.logs.push('启动失败：' + e.message); });
+    this.proc.on('exit', () => (this.dead = true));
+    this.proc.unref();
+
+    const portFile = path.join(this.dir, 'DevToolsActivePort');
+    let port;
+    await until(() => {
+      port = fs.existsSync(portFile) && Number(fs.readFileSync(portFile, 'utf8').split(/\r?\n/)[0]);
+      return port > 0 || this.dead;
+    }, 30000);
+    if (!(port > 0)) throw new Error(`浏览器没有起来（${this.dead ? '进程已退出，退出码 ' + this.proc.exitCode : '等了 30 秒'}）${this.diag()}`);
+    this.base = `http://127.0.0.1:${port}`;
+
+    // 只连 about:blank 那一页：Edge 还有内置扩展的后台页，有时还有别的内部页面，连错了就会在错的页面上找元素
+    let target;
+    await until(async () => {
+      const list = await getJson(`${this.base}/json/list`);
+      this.targets = list.map(t => `${t.type} ${t.url}`);
+      target = list.find(t => t.type === 'page' && t.url === 'about:blank');
+      return target;
+    }, 15000, 250);
+    if (!target) { // 没有空白页就自己开一个
+      try { target = await getJson(`${this.base}/json/new?about:blank`, 'PUT'); } catch (e) { this.logs.push('新建标签页失败：' + e.message); }
     }
-    this.ws = new WebSocket(ws);
-    await new Promise(r => (this.ws.onopen = r));
+    if (!target?.webSocketDebuggerUrl) throw new Error(`找不到可用的页面${this.diag()}`);
+
     this.id = 0; this.pending = new Map();
-    this.ws.onmessage = m => { const d = JSON.parse(m.data); if (this.pending.has(d.id)) { this.pending.get(d.id)(d); this.pending.delete(d.id); } };
+    this.ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`连不上浏览器调试接口${this.diag()}`)), 15000);
+      this.ws.onopen = () => { clearTimeout(t); resolve(); };
+      this.ws.onerror = e => { clearTimeout(t); reject(new Error(`连接浏览器调试接口出错：${e.message || e.type}${this.diag()}`)); };
+    });
+    this.ws.onmessage = m => {
+      const d = JSON.parse(m.data);
+      if (this.pending.has(d.id)) { this.pending.get(d.id).resolve(d); this.pending.delete(d.id); return; }
+      const p = d.params || {};
+      if (d.method === 'Runtime.exceptionThrown') this.logs.push('页面异常：' + (p.exceptionDetails?.exception?.description || p.exceptionDetails?.text));
+      else if (d.method === 'Runtime.consoleAPICalled' && /error|warn/.test(p.type)) this.logs.push(`console.${p.type}：` + (p.args || []).map(a => a.value ?? a.description).join(' '));
+      else if (d.method === 'Log.entryAdded' && /error|warning/.test(p.entry?.level)) this.logs.push(`${p.entry.source}：${p.entry.text} ${p.entry.url || ''}`);
+      else if (d.method === 'Inspector.targetCrashed') this.logs.push('页面崩溃了');
+      if (this.logs.length > 40) this.logs.splice(0, this.logs.length - 40);
+    };
+    this.ws.onclose = () => { for (const [, p] of this.pending) p.reject(new Error(`浏览器连接断了${this.diag()}`)); this.pending.clear(); };
     await this.send('Page.enable');
+    await this.send('Runtime.enable');
+    await this.send('Log.enable');
     await this.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 2, mobile: false });
   }
-  send(method, params = {}) { return new Promise(r => { const id = ++this.id; this.pending.set(id, r); this.ws.send(JSON.stringify({ id, method, params })); }); }
-  async load(file) { await this.send('Page.navigate', { url: url.pathToFileURL(file).href }); await sleep(700); }
+  // 发一条调试命令；30 秒没回音就报错（不让测试一直挂着）
+  send(method, params = {}, ms = 30000) {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== 1) return reject(new Error(`浏览器没连上，不能发 ${method}${this.diag()}`));
+      const id = ++this.id;
+      const t = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} ${ms / 1000} 秒没有回应${this.diag()}`)); }, ms);
+      this.pending.set(id, { resolve: d => { clearTimeout(t); resolve(d); }, reject: e => { clearTimeout(t); reject(e); } });
+      this.ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+  // 打开预览页，等页面真的加载完、脚本跑起来（发出 ready）再继续；超时报出页面当时的状态
+  async load(file) {
+    const href = url.pathToFileURL(file).href;
+    const nav = await this.send('Page.navigate', { url: href });
+    if (nav.error || nav.result?.errorText) throw new Error(`打开 ${href} 失败：${nav.error?.message || nav.result.errorText}${this.diag()}`);
+    const name = encodeURIComponent(path.basename(file));
+    let st;
+    const ok = await until(async () => {
+      const r = await this.send('Runtime.evaluate', { returnByValue: true, expression: `({ href: location.href, ready: document.readyState, data: typeof window.__data,
+        posted: (window.__posted || []).map(m => m.type).join(','), errors: window.__errors || [], body: document.body ? document.body.children.length : -1 })` });
+      st = r.result?.result?.value || r.result?.exceptionDetails || r.error;
+      return st && st.ready === 'complete' && st.data === 'object' && st.href.endsWith('/' + name) && /\bready\b/.test(st.posted);
+    }, 20000, 150);
+    if (!ok) throw new Error(`页面 20 秒内没有加载完：${JSON.stringify(st)}${this.diag()}`);
+    await sleep(700); // 和原来一样留出渲染、动画的时间
+  }
   async eval(expr) {
     const r = await this.send('Runtime.evaluate', { expression: `(()=>{${expr}})()`, returnByValue: true, awaitPromise: true });
-    if (r.result.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || 'eval 出错');
+    if (r.error) throw new Error(`eval 出错：${r.error.message}${this.diag()}`);
+    if (r.result.exceptionDetails) {
+      const e = new Error((r.result.exceptionDetails.exception?.description || 'eval 出错') + this.diag());
+      throw e;
+    }
     return r.result.result.value;
   }
   async shot(file) {
     const r = await this.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     fs.writeFileSync(file, Buffer.from(r.result.data, 'base64'));
   }
-  close() { try { this.ws.close(); } catch {} this.proc.kill(); }
+  // 出错时附上的现场：浏览器路径、页面列表、页面报错、浏览器 stderr 的最后几行
+  diag() {
+    let err = '';
+    try { err = fs.readFileSync(this.stderr, 'utf8').trim().split(/\r?\n/).slice(-8).join('\n    '); } catch {}
+    return `\n  浏览器：${BROWSER}` + (this.targets ? `\n  页面列表：${this.targets.join(' | ')}` : '') +
+      (this.logs?.length ? `\n  页面日志：\n    ${this.logs.slice(-15).join('\n    ')}` : '') + (err ? `\n  浏览器 stderr：\n    ${err}` : '');
+  }
+  close() {
+    LIVE.delete(this);
+    try { this.ws?.close(); } catch {}
+    const p = this.proc;
+    if (p && p.exitCode === null && p.signalCode === null) {
+      // Windows 上 kill 只杀主进程，渲染进程会留下来；用 taskkill /T 连子进程一起杀
+      if (process.platform === 'win32') { try { execFileSync('taskkill', ['/pid', String(p.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000 }); } catch {} }
+      else { try { process.kill(-p.pid, 'SIGKILL'); } catch {} }
+      try { p.kill('SIGKILL'); } catch {}
+    }
+    // 删掉临时配置目录（Windows 上进程刚退出时文件可能还锁着，重试几次，删不掉就算了）
+    if (this.dir) { try { fs.rmSync(this.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {} this.dir = null; }
+  }
 }
 
 // 页面内：算一个元素文字对背景的对比度
@@ -1349,4 +1458,51 @@ test('导图变窄：工具栏到 700px 还是一行；自动适应不小于 0.8
       else assert.ok(r.gap >= 11.5, `${w}px：「新需求」和说明贴在一起（${r.gap}px）`);
     } finally { b.close(); }
   }
+});
+
+test('英文界面：新的改动记录、记录员状态、出错提示都按英文显示（没有中文）；旧记录（只有存下的文字）照样显示', { skip, timeout: 90000 }, async () => {
+  const tree = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
+  const now = Date.now();
+  // 新记录：带 ops（结构化），summary 是中文；旧记录：只有中文 summary、ops 认不出
+  const changes = [
+    { id: 'n1', time: now - 60000, source: '记录员', summary: ['给 R3.2 加规则「x」', 'R3.2 标为正在做'], undone: false,
+      ops: [{ op: 'add_rule', node: 'R3.2', text: 'Suspense within the first screen', undo: [{ op: 'remove_rule', node: 'R3.2', text: 'Suspense within the first screen' }] },
+            { op: 'set_status', node: 'R3.2', status: 'doing', undo: [{ op: 'set_status', node: 'R3.2', status: null }] }] },
+    { id: 'n2', time: now - 120000, source: '你', summary: ['R4 改名为「第2章」'], undone: false,
+      ops: [{ op: 'rename_node', node: 'R4', title: 'Chapter 2', undo: [{ op: 'rename_node', node: 'R4', title: 'Chapter Two' }] },
+            { op: 'delete_node', node: 'R9', undo: [{ op: 'restore_node', parent: 'P', before: null, at: 30, lines: ['## R9 Old idea ⏳', '- something'] }] }] },
+    { id: 'n3', time: now - 180000, source: '升级', summary: ['清掉旧版本留下的待确认标记（3 处）'], event: { k: 'chg.legacy', a: [3] }, undone: false, ops: [] },
+    { id: 'old', time: now - 240000, source: '记录员', summary: ['old entry kept as stored'], undone: false, ops: [{ op: 'reject_pending', node: 'R1' }] },
+  ];
+  const recorder = { ok: true, time: now - 30000, message: '记下 2 条；R3.2 标为正在做', parts: [{ k: 'rec.rules', a: [2] }, { k: 'rec.doing', a: [['R3.2']] }] };
+  const compile = { ok: false, time: now, message: '需求树被占用，5 秒内没拿到锁', t: { k: 'err.busy', a: [5] } };
+  const b = await openPage2('en-changes.html', { lang: 'en', selId: 'R3.2', changes, recorder, compile }, 320, { tree });
+  try {
+    const r = await b.eval(`
+      const CJK = /[\\u4e00-\\u9fff]/;
+      const lines = [...document.querySelectorAll('.chg .cs')].map(e => e.textContent);
+      return { lines, who: [...document.querySelectorAll('.chg .who')].map(e => e.textContent), status: document.querySelector('.status').textContent,
+        banner: document.querySelector('.banner.err')?.textContent || '', cjk: [...lines, document.querySelector('.status').textContent, document.querySelector('.banner.err')?.textContent || ''].filter(t => CJK.test(t)) };`);
+    assert.deepStrictEqual(r.lines, [
+      'Added rule "Suspense within the first screen" to "Opening story"', 'Marked "Opening story" as In progress',
+      'Renamed "Chapter Two" to "Chapter 2"', 'Deleted requirement "Old idea"',
+      'Cleared 3 leftover pending marks from an old version',
+      'old entry kept as stored',
+    ]);
+    assert.deepStrictEqual(r.who, ['Recorder', 'You', 'Upgrade', 'Recorder']);
+    assert.match(r.status, /^Recorder · .* · Recorded 2 rules; marked "Opening story" in progress$/);
+    assert.match(r.banner, /The requirement tree is busy; couldn't get the lock within 5 s/);
+    assert.deepStrictEqual(r.cjk, [], '英文界面里还有中文');
+  } finally { b.close(); }
+  // 记录员出错：带 t 的按英文显示；旧的只有中文 message 的照样显示
+  for (const [rec, want] of [
+    [{ ok: false, time: now, message: '调用模型超时（90 秒没有返回）', t: { k: 'rec.err.timeout', a: [90] } }, /Recorder error \(.*\): The model timed out \(no reply in 90 s\)/],
+    [{ ok: false, time: now, message: '旧版本的出错文字' }, /Recorder error \(.*\): 旧版本的出错文字/],
+  ]) {
+    const e = await openPage2('en-rec-err.html', { lang: 'en', recorder: rec }, 320, { tree });
+    try { assert.match(await e.eval(`return document.querySelector('.banner.err').textContent`), want); } finally { e.close(); }
+  }
+  // 中文界面：同样的新记录用中文写出来，名字用需求标题
+  const z = await openPage2('zh-changes.html', { selId: 'C2.2', changes: [{ ...changes[0], ops: [{ op: 'add_rule', node: 'C2.2', text: '例子要足' }] }] }, 320);
+  try { assert.deepStrictEqual(await z.eval(`return [...document.querySelectorAll('.chg .cs')].map(e => e.textContent)`), ['给「英文版」加规则「例子要足」']); } finally { z.close(); }
 });

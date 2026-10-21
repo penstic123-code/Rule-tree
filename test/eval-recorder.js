@@ -58,6 +58,19 @@ const CASES = [
     if (r.some(x => x.key !== '段落')) return `没用 [段落] 键覆盖：${JSON.stringify(r.map(x => [x.key, x.text]))}`;
     return rulesOf(t, 'P').some(x => x.key === '段落' && /4 行/.test(x.text)) ? null : '把全局的 4 行改掉了';
   }],
+  // 在课程项目里聊的是需求树插件自己的界面（2026-10-22 真实会话里被记进了课程的根节点）：不是这个项目的需求
+  ['别的工具的要求不记', '界面颜色只用来增加可读性', '好，需求树插件面板的配色我改成只用来区分层级、提高可读性', (ops, t) => (t === TREE ? null : `不该改树：${JSON.stringify(ops)}`)],
+  // 真实对话回放里的主要错误：正在改第1章时顺口说的通用偏好被挂到了课程下面。第 5 项是这一轮 AI 改过的需求
+  ['做第1章时说的通用偏好挂根节点', '你给我的反馈太含糊了，以后拿不准就先问清楚再动手', '好，以后拿不准先问你', (ops, t) => {
+    if (rulesOf(t, 'P').some(x => /问清|先问/.test(x.text))) return null;
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /问清|先问/.test(x.text)));
+    return where ? `挂到了 ${where.id}` : '没记下来';
+  }, ['C2.1']],
+  ['做第1章时说的内容决定挂第1章', '第1章的例子都换成伦敦本地的数据', '好，第1章例子改用伦敦数据', (ops, t) => {
+    if (rulesOf(t, 'C2.1').some(x => /伦敦/.test(x.text))) return null;
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /伦敦/.test(x.text)));
+    return where ? `挂到了 ${where.id}` : '没记下来';
+  }, ['C2.1']],
 ];
 
 function ask(prompt) {
@@ -97,7 +110,7 @@ const SWEEP_CASES = [
     return { name, ok: !why, why, ops };
   });
   const results = await Promise.all([
-    ...CASES.flatMap(([name, user, ai, check]) => one(name, buildPrompt(TREE, [{ user, ai }], [], []), check)),
+    ...CASES.flatMap(([name, user, ai, check, touched = []]) => one(name, buildPrompt(TREE, [{ user, ai }], touched, []), check)),
     ...SWEEP_CASES.flatMap(([name, msgs, check]) => one(name, buildSweepPrompt(TREE, msgs), check, SWEEP_OPS)),
   ]);
   let pass = 0;

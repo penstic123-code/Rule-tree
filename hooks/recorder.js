@@ -105,12 +105,14 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
    - 对某一章、某个页面或模块的内容、结构、风格做的决定（以后还成立），也是长期要求，挂在那个需求上；树里还没有这个需求，就在对应的上级下 add_node 再加规则。AI 这一轮已经照做了也要记。
      例：「第5章用地铁线路图来举例」→ 记到第5章；「把第5章的地铁图改大一点」→ 一次性，不记。
    - 只有针对这次改动、做完就结束的指令（"把这段改短""修一下这个 bug"）、提问、闲聊不算。
+   - 只记这个项目自己的需求：在讨论别的工具、别的项目（比如正在用的插件、另一个程序）时提的要求不记。
    - **先在树里找同一主题的已有规则**（同一件事，哪怕措辞不同）：
      · 意思已经包含 → 什么都不做；
      · 用户改了它的内容 → replace_rule（old 填树里原文，不含 [键]），不要另加一条；
      · 用户否决它 → remove_rule。
      只有树里确实没有这个主题时才 add_rule。宁可改一条，不要加一条相似的。
-   - 规则挂在它管辖范围最小的节点上；用户说"以后都""所有章节""每次"之类时，挂到覆盖这个范围的最高节点。
+   - 规则挂在它管辖范围最小的节点上；用户说"以后都""所有章节""每次"之类时，挂到覆盖这个范围的最高节点。最顶上那个需求只放明确对整个项目都成立的规则。
+   - 这个项目整体怎么做事、怎么写、怎么沟通的偏好（如"交流用中文""反馈含糊先问清""文风要平实"），不是某门课、某个模块内容特有的，挂到最顶上那个需求——哪怕说的时候正在做某一章。只有那一块内容本身的决定才挂在那一块上。
    - 子需求要在本范围内推翻上级的规则时，用 add_rule 并写上和上级同一个 [键]（上级没有键就别加）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
 2. 需求状态：只有用户明确说某需求做完了、或 AI 说做完而用户认可时，才 set_status 为 done。
@@ -203,18 +205,38 @@ function runModel(prompt) {
   });
 }
 
+// 出错时除了中文 message，再带上结构化的 t（{ k: 文字表的键, a: 参数 }），面板按当前语言显示
+const fail = (message, k, ...a) => Object.assign(new Error(message), { t: { k, a } });
+
 async function askModel(prompt) {
   const res = await runModel(prompt);
-  if (res.timedOut) throw new Error(`调用模型超时（${Math.round(TIMEOUT_MS / 1000)} 秒没有返回）`);
-  if (res.error) throw new Error(`调用模型失败：${res.error.message}`);
-  if (res.status !== 0) throw new Error(`模型返回错误：${(res.stderr || res.stdout || '').trim().slice(0, 200) || '退出码 ' + res.status}`);
+  if (res.timedOut) throw fail(`调用模型超时（${Math.round(TIMEOUT_MS / 1000)} 秒没有返回）`, 'rec.err.timeout', Math.round(TIMEOUT_MS / 1000));
+  if (res.error) throw fail(`调用模型失败：${res.error.message}`, 'rec.err.spawn', res.error.message);
+  if (res.status !== 0) {
+    const out = (res.stderr || res.stdout || '').trim().slice(0, 200);
+    throw fail(`模型返回错误：${out || '退出码 ' + res.status}`, 'rec.err.model', out || String(res.status));
+  }
   const m = (res.stdout || '').match(/\{[\s\S]*\}/);
-  if (!m) throw new Error(`模型没有返回 JSON：${(res.stdout || '').slice(0, 120)}`);
+  if (!m) throw fail(`模型没有返回 JSON：${(res.stdout || '').slice(0, 120)}`, 'rec.err.noJson', (res.stdout || '').slice(0, 120));
   const ops = JSON.parse(m[0]).ops;
-  if (!Array.isArray(ops)) throw new Error('模型返回的 JSON 里没有 ops');
+  if (!Array.isArray(ops)) throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
   const ok = ops.filter(o => o && ALLOWED_OPS.has(o.op));
   if (ok.length < ops.length) log(`丢掉模型给的不允许的操作：${JSON.stringify(ops.filter(o => !ok.includes(o)))}`);
   return ok;
+}
+
+// 和 describe 同样的内容，写成结构化的几段（{ k, a }），面板按当前语言拼
+function describeParts(applied, queued) {
+  const count = op => applied.filter(o => o.op === op).length;
+  const parts = [];
+  const rules = count('add_rule') + count('replace_rule') + count('remove_rule') + count('add_node') + count('add_files');
+  if (rules) parts.push({ k: 'rec.rules', a: [rules] });
+  const done = applied.filter(o => o.op === 'set_status' && o.status === 'done').map(o => o.node);
+  const doing = applied.filter(o => o.op === 'set_status' && o.status === 'doing').map(o => o.node);
+  if (done.length) parts.push({ k: 'rec.done', a: [done] });
+  if (doing.length) parts.push({ k: 'rec.doing', a: [doing] });
+  if (queued) parts.push({ k: 'rec.queued', a: [queued] });
+  return parts.length ? parts : [{ k: 'rec.none', a: [] }];
 }
 
 function describe(applied, queued) {
@@ -251,8 +273,8 @@ async function main(jobPath) {
     let turns = (job.turns || []).filter(t => t && t.user).map(t => ({ user: clip(clean(t.user), 2000), ai: clip(t.ai || '', 2500) }));
     if (!turns.length && !job.sweepOnly) {
       try { turns = lastTurns(job.transcriptPath, 2); }
-      catch (e) { throw new Error(`拿不到这一轮的对话：hook 没收到用户原话，读对话记录也失败了（${e.message}）`); }
-      if (!turns.length) throw new Error('拿不到这一轮的对话：hook 没收到用户原话，对话记录里也没找到');
+      catch (e) { throw fail(`拿不到这一轮的对话：hook 没收到用户原话，读对话记录也失败了（${e.message}）`, 'rec.err.noTurnRead', e.message); }
+      if (!turns.length) throw fail('拿不到这一轮的对话：hook 没收到用户原话，对话记录里也没找到', 'rec.err.noTurn');
     }
     const latest = turns.length ? turns[turns.length - 1].user : '';
     const config = store.readConfig(treePath);
@@ -266,11 +288,12 @@ async function main(jobPath) {
 
     let { applied, queued } = ops.length ? store.submitOps(treePath, ops) : { applied: [], queued: 0 };
     let message = config.recorder === 'off' ? '已暂停（只标正在做，不记新要求）' : describe(applied, queued);
+    let parts = config.recorder === 'off' ? [{ k: 'rec.paused', a: [] }] : describeParts(applied, queued);
 
     // 3. 补漏：这一轮记完以后，拿最新的树对照最近几轮的原话（hook 每 sweepEvery 轮、压缩前才给）
     const sweep = (job.sweep || []).filter(m => typeof m === 'string' && m.trim()).map(m => clip(clean(m), 1000));
     if (sweep.length && config.recorder !== 'off') {
-      let note;
+      let note, notePart;
       try {
         const now = fs.readFileSync(treePath, 'utf8');
         const tree = now.split(/\r?\n/).length > BIG_TREE_LINES ? outline(now, touched) : now;
@@ -279,20 +302,24 @@ async function main(jobPath) {
         const r = sops.length ? store.submitOps(treePath, sops) : { applied: [], queued: 0 };
         const n = r.applied.length + r.queued;
         note = n ? `补漏记下 ${n} 条` : `补漏查了 ${sweep.length} 句，没有漏的`;
+        notePart = n ? { k: 'rec.sweep', a: [n] } : { k: 'rec.sweepNone', a: [sweep.length] };
         log(`补漏 ${sweep.length} 句｜${JSON.stringify(r.applied)}`);
         applied = applied.concat(r.applied); queued += r.queued;
       } catch (e) {
         // 这一轮的记录已经写进树了，补漏失败不能把它说成整轮出错
         if (job.sweepOnly) throw e;
         note = `补漏失败：${e.message}`;
+        notePart = { k: 'rec.sweepFail', a: [e.message] };
         log('补漏出错：' + e.stack);
       }
-      message = job.sweepOnly || message === '这一轮没有新要求' ? note : `${message}；${note}`;
+      const alone = job.sweepOnly || message === '这一轮没有新要求';
+      message = alone ? note : `${message}；${note}`;
+      parts = alone ? [notePart] : parts.concat(notePart);
     }
-    status = { ok: true, asked, message };
+    status = { ok: true, asked, message, parts };
     log(`${message}｜${JSON.stringify(applied)}`);
   } catch (e) {
-    status = { ok: false, message: e.message };
+    status = { ok: false, message: e.message, ...(e.t ? { t: e.t } : {}) };
     log('出错：' + e.stack);
   }
   // 状态只是给面板看的。树已经改好了、只是状态写不进去（state.lock 一直被占）时，不能把这一轮说成出错
@@ -304,4 +331,4 @@ if (require.main === module) {
   // 做完就退出：超时被杀掉的子进程万一留下了句柄，也不让记录员一直挂着
   main(process.argv[2]).catch(e => log('出错：' + e.stack)).finally(() => process.exit(0));
 }
-module.exports = { lastTurns, isTrivial, buildPrompt, buildSweepPrompt, SWEEP_OPS, describe, splitCommand, filterAddFiles };
+module.exports = { lastTurns, isTrivial, buildPrompt, buildSweepPrompt, SWEEP_OPS, describe, describeParts, splitCommand, filterAddFiles };

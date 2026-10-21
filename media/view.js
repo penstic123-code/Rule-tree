@@ -77,10 +77,11 @@
     }
 
     let html = data.files.map(f => D.alertsHtml(f, data.now)).join('');
-    const last = data.files.map(f => f.recorder).filter(r => r && r.ok).sort((a, b) => b.time - a.time)[0];
+    const lastFile = data.files.filter(f => f.recorder && f.recorder.ok).sort((a, b) => b.recorder.time - a.recorder.time)[0];
+    const last = lastFile && lastFile.recorder;
     const cfg = data.files[0].config || {};
     const paused = cfg.recorder === 'off';
-    html += `<div class="statusbar"><span class="status" title="${T('v.recTip')}">${paused ? T('v.recPaused') : last ? esc(T('v.recLast', ago(last.time), last.message)) : T('v.recNever')}</span>
+    html += `<div class="statusbar"><span class="status" title="${T('v.recTip')}">${paused ? T('v.recPaused') : last ? esc(T('v.recLast', ago(last.time), D.recorderText(last, lastFile, showIds))) : T('v.recNever')}</span>
       <button class="follow" data-act="follow" aria-pressed="${follow}" title="${T('v.followTip')}"><span class="fdot" aria-hidden="true"></span>${T('follow')}</button>
       <button class="ibtn mapbtn" data-act="openMap" title="${T('v.mapTip')}">${D.icon('map', 14)}${T('v.map')}</button>
       <button class="ibtn gear" data-act="settings" data-uri="${esc(data.files[0].uri)}" title="${T('v.settings')}" aria-label="${T('v.settings')}">${D.icon('gear', 15)}</button></div>`;

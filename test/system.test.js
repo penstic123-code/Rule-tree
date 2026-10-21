@@ -9,7 +9,8 @@ const store = require('../src/store');
 const P = require('../src/parser');
 
 // 测试用独立的临时目录，别把日志和状态写进真实环境（会混淆排查）
-const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-sandbox-'));
+// 真实路径：Windows CI 上 os.tmpdir() 是 8.3 短路径（RUNNER~1），hook 记的是 realpath，两边要一致
+const SANDBOX = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-sandbox-')));
 process.env.TEMP = process.env.TMP = process.env.TMPDIR = SANDBOX;
 // init 把 hook 复制到 ~/.reqtree/runtime；测试里换到沙盒，别碰真实的用户目录
 process.env.REQTREE_HOME = path.join(SANDBOX, 'home', '.reqtree');
@@ -1059,10 +1060,14 @@ test('插件：点「不再提示」后这个工作区不再问；点叉关掉�
   assert.ok(!fs.existsSync(path.join(dir, '.claude', 'settings.local.json')), '没点启用却装了');
 });
 
-test('插件：.claude/settings.json 里已经有需求树的 hook（哪怕指向旧位置）就不提示；「需求树：在本项目启用」命令随时可用', async () => {
+test('插件：.claude/settings.json 里已经有需求树的 hook（哪怕指向旧位置，只要脚本还在）就不提示；「需求树：在本项目启用」命令随时可用', async () => {
   const dir = project();
   fs.mkdirSync(path.join(dir, '.claude'));
-  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node "C:/Users/me/Desktop/reqtree/hooks/hook.js"' }] }] } }));
+  // 旧位置（git clone 的仓库）的脚本还在：算装过。脚本已经不在的情况见 review.test.js 的 hasHooks
+  const old = path.join(SANDBOX, 'Desktop', 'reqtree', 'hooks', 'hook.js');
+  fs.mkdirSync(path.dirname(old), { recursive: true });
+  fs.writeFileSync(old, '');
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: `node "${old.replace(/\\/g, '/')}"` }] }] } }));
   const fake = promptFake(dir);
   const { api, dispose } = activateWith(fake, { workspaceState: memento() });
   try {
@@ -1282,5 +1287,35 @@ test('插件：界面语言——设置 reqtree.language 优先，auto 跟 VS Co
       assert.match(webview.html, new RegExp(`<body data-lang="${want}">`));
       assert.match(webview.html, /strings\.js/);
     } finally { dispose(); }
+  }
+});
+
+test('界面语言：记录员状态、锁的错误、升级清理都带结构化文字（键都在文字表里），旧的中文 message 照样保留', () => {
+  const S = require('../media/strings');
+  const { describe, describeParts } = require('../hooks/recorder');
+  const applied = [{ op: 'add_rule', node: 'C2' }, { op: 'replace_rule', node: 'C2' }, { op: 'set_status', node: 'C2.1', status: 'done' }, { op: 'set_status', node: 'C2.2', status: 'doing' }];
+  assert.strictEqual(describe(applied, 1), '记下 2 条；C2.1 标为完成；C2.2 标为正在做；1 条改动等你保存需求树后写入', '中文说明不变');
+  const parts = describeParts(applied, 1);
+  assert.deepStrictEqual(parts.map(p => p.k), ['rec.rules', 'rec.done', 'rec.doing', 'rec.queued']);
+  for (const p of parts) assert.ok(p.k in S.zh && p.k in S.en, p.k);
+  // 用文字表拼出来，中文和 describe 一样
+  const zh = S.make('zh');
+  assert.strictEqual(parts.map(p => (p.k === 'rec.done' || p.k === 'rec.doing') ? zh(p.k, p.a[0].join(zh('rec.join')) + ' ') : zh(p.k, ...p.a)).join(zh('rec.sep')), describe(applied, 1)); // 面板里写编号时后面补一个空格
+  assert.deepStrictEqual(describeParts([], 0), [{ k: 'rec.none', a: [] }]);
+  // 锁：拿不到时错误带 t
+  const dir = project();
+  const tree = path.join(dir, '需求树.md');
+  const lock = path.join(dir, '.reqtree', 'tree.lock');
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.writeFileSync(lock, 'x');
+  let err;
+  try { store.updateTree(tree, t => t + '\n', { waitMs: 50 }); } catch (e) { err = e; }
+  fs.unlinkSync(lock);
+  assert.ok(err, '锁被占着时应该报错');
+  {
+    assert.strictEqual(err.code, 'REQTREE_BUSY');
+    assert.deepStrictEqual(err.t && err.t.k, 'err.busy');
+    assert.ok(err.t.k in S.en);
+    assert.match(err.message, /需求树被占用/, '命令行和旧版本看的中文 message 还在');
   }
 });

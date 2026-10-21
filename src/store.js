@@ -100,6 +100,7 @@ function withLock(lock, fn, waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS) {
   if (fd === null) {
     const e = new Error(`需求树被占用，${Math.round(waitMs / 1000)} 秒内没拿到锁`);
     e.code = 'REQTREE_BUSY';
+    e.t = { k: 'err.busy', a: [Math.round(waitMs / 1000)] }; // 给界面按语言显示（strings.js），message 留给命令行和旧版本
     throw e;
   }
   try { return fn(); }
@@ -207,12 +208,13 @@ const readTouched = treePath => readState(treePath).touched || {};
 // 编译必须和写树在同一把锁里：不然两个写入方各自编译时，拿旧内容的那个可能后写，
 // 盖掉新规则、删掉新节点的 .md，而时间戳已经刷新，之后也不会再重编。
 // 结果记进 state.json 的 compile（{ ok, message, time }），面板据此提示「规则没有生成」。
-function setCompileStatus(treePath, ok, message) {
+// t：结构化的错误（{ k: 文字表的键, a: 参数 }），界面按当前语言显示；没有就显示 message
+function setCompileStatus(treePath, ok, message, t = null) {
   const prev = readState(treePath).compile;
   // 成功时只在之前没记过或失败过才写；同样的错误不重写：插件监视 .reqtree/*.json，每写一次就刷新、刷新又会重试编译，会转圈
   if (prev && (ok ? prev.ok : !prev.ok && prev.message === message)) return;
   // 编译结果只是给面板看的提示，记不下来不能影响写树
-  try { updateState(treePath, s => ({ ...s, compile: { ok, message, time: Date.now() } })); } catch {}
+  try { updateState(treePath, s => ({ ...s, compile: { ok, message, ...(t ? { t } : {}), time: Date.now() } })); } catch {}
 }
 
 function compileUnlocked(treePath, force) {
@@ -221,7 +223,7 @@ function compileUnlocked(treePath, force) {
     setCompileStatus(treePath, true, '');
     return r;
   } catch (e) {
-    setCompileStatus(treePath, false, e.message);
+    setCompileStatus(treePath, false, e.message, e.t || null);
     return null;
   }
 }
@@ -235,7 +237,7 @@ function cleanupLegacyUnlocked(treePath) {
   const before = fs.readFileSync(treePath, 'utf8');
   const { text, applied } = applyOps(before, legacyCleanupOps(before));
   if (text !== before) atomicWrite(treePath, text);
-  if (applied.length) logChange(treePath, { id: newChangeId(), time: Date.now(), source: '升级', summary: [`清掉旧版本留下的待确认标记（${applied.length} 处）`], ops: applied });
+  if (applied.length) logChange(treePath, { id: newChangeId(), time: Date.now(), source: '升级', summary: [`清掉旧版本留下的待确认标记（${applied.length} 处）`], event: { k: 'chg.legacy', a: [applied.length] }, ops: applied });
   // 标记记不下来也没关系：下次再跑一遍，清理过的树里已经没有可清的东西
   try { updateState(treePath, s => ({ ...s, legacyCleaned: Date.now() })); } catch {}
   return text !== before;
@@ -322,7 +324,8 @@ function setEditing(treePath, on) {
 }
 
 // ---------- 改动记录：记录员和面板的每次改动都记一条，带反操作，可以撤销 ----------
-// 每行 { id, time, source, summary, ops: [applied 带 undo] } 或 { undone: id, time }
+// 每行 { id, time, source, summary, ops: [applied 带 undo] } 或 { undone: id, time }。
+// summary 是中文说明（命令行和旧版本用）；界面按 ops（结构化）用当前语言重新写，特殊的一条带 event: { k, a }
 function describeOp(o) {
   const q = s => `「${s}」`;
   switch (o.op) {

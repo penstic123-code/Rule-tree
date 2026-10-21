@@ -7,7 +7,8 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-mention-'));
+// 真实路径：Windows CI 上 os.tmpdir() 是 8.3 短路径（RUNNER~1），hook 记的是 realpath，两边要一致
+const SANDBOX = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-mention-')));
 process.env.TEMP = process.env.TMP = process.env.TMPDIR = SANDBOX;
 process.env.REQTREE_HOME = path.join(SANDBOX, 'home', '.reqtree');
 
@@ -54,7 +55,8 @@ const ids = p => M.mentionedNodes(root, p).map(n => n.id);
 test('匹配：标题、编号、第N章（含中文数字、chapter、文件里的 ch02）', () => {
   assert.deepStrictEqual(ids('相关与因果那章怎么开场'), ['C1.2']);
   assert.deepStrictEqual(ids('C1.2 的例子换一个'), ['C1.2']);
-  assert.deepStrictEqual(ids('第二章怎么设计'), ['C1.2'], '第二章 ↔ 文件 ch02，正在做的那门优先');
+  assert.deepStrictEqual(ids('第二章怎么设计'), [], '第二章是弱匹配：两门课，没说哪门');
+  assert.deepStrictEqual(M.mentionedNodes(root, '第二章怎么设计', { active: ['C1.1'] }).map(n => n.id), ['C1.2'], '第二章 ↔ 文件 ch02，最近在数据科学课干活');
   assert.deepStrictEqual(ids('英语课 chapter 1 写什么'), ['C2.1']);
   assert.deepStrictEqual(ids('今天先不写了'), []);
   assert.deepStrictEqual(ids('一'), [], '标题短于 2 个字不匹配');
@@ -62,10 +64,11 @@ test('匹配：标题、编号、第N章（含中文数字、chapter、文件里
   assert.deepStrictEqual(ids('C1.21 是什么'), [], '编号要整词');
 });
 
-test('匹配：上下级都命中只给下级；重名时上级被提到的优先，否则正在做的优先；最多 3 个', () => {
+test('匹配：上下级都命中只给下级；重名时上级被提到的优先，否则看最近在哪门课干活；最多 3 个', () => {
   assert.deepStrictEqual(ids('数据科学课第1章开头用什么'), ['C1.1']);
   assert.deepStrictEqual(ids('英语课第1章开头用什么'), ['C2.1']);
-  assert.deepStrictEqual(ids('第1章开头用什么'), ['C1.1'], '两门课都有第1章：数据科学课 🔨');
+  assert.deepStrictEqual(ids('第1章开头用什么'), [], '两门课都有第1章，没说哪门');
+  assert.deepStrictEqual(M.mentionedNodes(root, '第1章开头用什么', { active: ['C2'] }).map(n => n.id), ['C2.1']);
   assert.ok(M.mentionedNodes(root, 'C1.1、C1.2、C2.1、C1.1.1 都看看').length <= 3);
 });
 
@@ -97,16 +100,16 @@ const ctx = o => o && o.hookSpecificOutput && o.hookSpecificOutput.additionalCon
 test('Claude hook：提到第1章就补上它的规则，每会话一次；压缩后重送；别的会话照送；可以关掉', () => {
   const dir = project();
   const ask = (session, prompt, env) => run(HOOK, { hook_event_name: 'UserPromptSubmit', session_id: session, cwd: dir, prompt }, env);
-  const first = ask('a', '第1章开场段落最多几行？');
+  const first = ask('a', '数据科学课第1章开场段落最多几行？');
   assert.strictEqual(first.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
   assert.match(ctx(first), /开场段落可以到 6 行/);
   assert.ok(!/例句全英文/.test(ctx(first)), '英语课的不送');
-  assert.strictEqual(ask('a', '那第1章的练习呢'), null, '同一会话不再送');
+  assert.strictEqual(ask('a', '那数据科学课第1章的练习呢'), null, '同一会话不再送');
   assert.match(ctx(ask('a', '相关与因果那章呢')), /冰淇淋/, '新提到的照送');
   run(HOOK, { hook_event_name: 'PreCompact', session_id: 'a', cwd: dir, trigger: 'auto' }, { REQTREE_SWEEP_EVERY: '0' });
-  assert.match(ctx(ask('a', '第1章再看一下')), /霍乱/, '压缩后重送');
-  assert.match(ctx(ask('b', '第1章开场')), /霍乱/);
-  assert.strictEqual(ask('c', '第1章开场', { REQTREE_NO_MENTION: '1' }), null);
+  assert.match(ctx(ask('a', '数据科学课第1章再看一下')), /霍乱/, '压缩后重送');
+  assert.match(ctx(ask('b', '数据科学课第1章开场')), /霍乱/);
+  assert.strictEqual(ask('c', '数据科学课第1章开场', { REQTREE_NO_MENTION: '1' }), null);
   assert.strictEqual(ask('d', '今天先这样'), null);
 });
 

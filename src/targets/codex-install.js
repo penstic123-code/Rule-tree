@@ -1,6 +1,6 @@
 'use strict';
 // 在项目里为 OpenAI Codex 装好需求树：
-// - <项目>/.codex/hooks.json：合并写入 4 个 hook（重复运行不重复；先删掉旧的再写；用户自己的 hook 不动）
+// - <项目>/.codex/hooks.json：合并写入 5 个 hook（重复运行不重复；已有的原地换成新命令；用户自己的 hook 不动）
 // - <项目>/.reqtree/codex.json：装过 Codex 的标记 + 记录员的模型设置（已有就保留用户改过的值）
 // - 编译：.reqtree/rules/<ID>.md + AGENTS.md 托管块
 // 不碰用户的 ~/.codex/config.toml。Codex 要求用户在 /hooks 里信任项目 hook 才会运行（见 docs/codex.md）；
@@ -34,15 +34,31 @@ function hookCommand(runtimeDir) {
 function mergeHooks(existing, command) {
   const cfg = existing && typeof existing === 'object' ? existing : {};
   const hooks = cfg.hooks && typeof cfg.hooks === 'object' ? cfg.hooks : {};
+  const wanted = new Map(EVENTS.map(([ev, matcher, timeout]) => [ev, { matcher, handler: { type: 'command', command, timeout, statusMessage: '需求树' } }]));
+  // 原地替换：Codex 的信任键是「hooks.json 路径:事件:组序号:序号」，把我们的组挪到末尾会改变用户自己 hook 的序号，
+  // 用户就得在 /hooks 里重新信任。所以已有的我们的 hook 留在原位换成新命令，多出来的删掉，没有的才加在末尾
   for (const ev of Object.keys(hooks)) {
     if (!Array.isArray(hooks[ev])) continue;
-    hooks[ev] = hooks[ev].map(g => ({ ...g, hooks: (g.hooks || []).filter(h => !isOurs(h)) })).filter(g => g.hooks.length);
+    const want = wanted.get(ev);
+    let placed = false;
+    hooks[ev] = hooks[ev].map(g => {
+      if (!g || !Array.isArray(g.hooks) || !g.hooks.some(isOurs)) return g;
+      const rest = g.hooks.filter(h => !isOurs(h));
+      if (!want || placed) return { ...g, hooks: rest };
+      placed = true;
+      const i = g.hooks.findIndex(isOurs);
+      const next = { ...g, hooks: [...rest.slice(0, i), want.handler, ...rest.slice(i)] };
+      // 整组只有我们的 hook 时，matcher 也按当前版本写
+      if (!rest.length) { if (want.matcher) next.matcher = want.matcher; else delete next.matcher; }
+      return next;
+    }).filter(g => !g || !Array.isArray(g.hooks) || g.hooks.length);
+    if (placed) wanted.delete(ev);
     if (!hooks[ev].length) delete hooks[ev];
   }
-  for (const [ev, matcher, timeout] of EVENTS) {
-    const group = { hooks: [{ type: 'command', command, timeout, statusMessage: '需求树' }] };
+  for (const [ev, { matcher, handler }] of wanted) {
+    const group = { hooks: [handler] };
     if (matcher) group.matcher = matcher;
-    (hooks[ev] = hooks[ev] || []).push(group);
+    (hooks[ev] = Array.isArray(hooks[ev]) ? hooks[ev] : []).push(group);
   }
   return { ...cfg, hooks };
 }

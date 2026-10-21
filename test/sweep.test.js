@@ -7,7 +7,8 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-sweep-'));
+// 真实路径：Windows CI 上 os.tmpdir() 是 8.3 短路径（RUNNER~1），hook 记的是 realpath，两边要一致
+const SANDBOX = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-sweep-')));
 process.env.TEMP = process.env.TMP = process.env.TMPDIR = SANDBOX;
 process.env.REQTREE_HOME = path.join(SANDBOX, 'home', '.reqtree');
 

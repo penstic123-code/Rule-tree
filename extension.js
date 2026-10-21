@@ -2,7 +2,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { parse, walk, findById, effectiveRules, pathOf, relocate, nodeForFile } = require('./src/parser');
+const { parse, walk, findById, effectiveRules, pathOf, relocate, nodeForFile, splitGlobs } = require('./src/parser');
 const store = require('./src/store');
 const { samePath } = store;
 const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./src/viewmodel');
@@ -16,6 +16,8 @@ function lang() {
   return STRINGS.pick(cfg ? cfg.get('language', 'auto') : 'auto', vscode.env && vscode.env.language);
 }
 const T = (k, ...a) => STRINGS.make(lang())(k, ...a);
+// 出错文字：带结构化 t（{ k, a }）的按当前语言写，没有就用 message（Node 自己的错误本来就是英文）
+const errText = e => (e && e.t && e.t.k in STRINGS.zh ? T(e.t.k, ...(e.t.a || [])) : (e && e.message) || String(e));
 
 // 和 hook 用同一个规则：每个工作区文件夹根目录下的 需求树.md / *.tree.md
 function findTrees() {
@@ -113,7 +115,7 @@ class Panel {
       <body data-lang="${lg}">${body}${['strings.js', ...scripts].map(s => `<script nonce="${nonce}" src="${u(s)}"></script>`).join("")}</body></html>`;
     if (!webview.__reqtreeListening) {
       webview.__reqtreeListening = true;
-      webview.onDidReceiveMessage(msg => this.handle(msg).catch(e => vscode.window.showErrorMessage(T('x.error', e.message))));
+      webview.onDidReceiveMessage(msg => this.handle(msg).catch(e => vscode.window.showErrorMessage(T('x.error', errText(e)))));
     }
   }
 
@@ -228,7 +230,7 @@ class Panel {
     if (how.id === 'clear') return [];
     if (how.id === 'type') {
       const v = await vscode.window.showInputBox({ prompt: T('x.globPrompt'), value: node.files.join(', ') });
-      return v == null ? null : v.split(/[,，\s]+/).filter(Boolean);
+      return v == null ? null : splitGlobs(v); // 花括号里的逗号不拆（{ch18,ch19}-*.html）
     }
     return this.pickDialog(projectDir);
   }
@@ -287,7 +289,7 @@ class Panel {
         // 写不进去（state.lock 一直被占）时要告诉用户，不然点了没反应、菜单还停在旧选项
         if (!p) return;
         try { store.writeConfig(p, msg.patch || {}); }
-        catch (e) { vscode.window.showWarningMessage(T('x.saveFail', e.message)); }
+        catch (e) { vscode.window.showWarningMessage(T('x.saveFail', errText(e))); }
         this.load();
         return;
       case 'edit': return p && this.edit(p, msg);
@@ -347,7 +349,7 @@ function activate(context) {
       if (!isTree(doc)) return;
       store.setEditing(doc.uri.fsPath, false);
       Promise.resolve().then(() => store.flushQueue(doc.uri.fsPath, { write: writeTree }))
-        .catch(e => vscode.window.showErrorMessage(T('x.error', e.message)));
+        .catch(e => vscode.window.showErrorMessage(T('x.error', errText(e))));
     }),
     vscode.workspace.onDidCloseTextDocument(doc => { if (isTree(doc)) store.setEditing(doc.uri.fsPath, false); }),
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
@@ -376,7 +378,7 @@ const neverKey = dir => `reqtree.neverOfferEnable:${store.pathKey(dir)}`;
 
 async function enableIn(dir, panel) {
   try { reqtree.init(dir, { log: () => {} }); }
-  catch (e) { vscode.window.showErrorMessage(T('x.enableFail', e.message)); return false; }
+  catch (e) { vscode.window.showErrorMessage(T('x.enableFail', errText(e))); return false; }
   try { panel.load(); } catch (e) { console.error(e); }
   vscode.window.showInformationMessage(T('x.enabled'));
   return true;

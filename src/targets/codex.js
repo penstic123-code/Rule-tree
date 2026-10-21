@@ -26,6 +26,9 @@ const END = '<!-- reqtree:end -->';
 const CONFIG = path.join('.reqtree', 'codex.json');
 // Codex 默认只读 AGENTS.md 合计 32 KiB（project_doc_max_bytes），托管块超过这个数就提醒
 const BLOCK_WARN_BYTES = 16 * 1024;
+// hook 往 Codex 上下文里加的内容上限：Codex 默认 additionalContextLimit 2500 token，按 4 字节一个 token 估算
+// （codex-rs/hooks/src/output_spill.rs、codex-rs/utils/string/src/truncate.rs approx_token_count），超过的存进文件、只给预览。留点余量
+const CONTEXT_LIMIT = 9000;
 
 const isRoot = node => !node.parent || !node.parent.parent;
 
@@ -100,19 +103,35 @@ function renderBlock(root, treeName, us) {
   return lines.join('\n');
 }
 
-// 把托管块放进文本：已有就原地替换，没有就加在末尾。用户的其他内容不动
+// 找托管块：标记要单独占一行（行内提到的不算），END 只在 BEGIN 后面找。
+// 返回 { start, end }（end 是 END 标记之后的位置）；没有块返回 null；有 BEGIN 没有 END 返回 { broken: true }
+function findBlock(text) {
+  const marker = m => new RegExp(`^[ \\t]*${m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*$`, 'm');
+  const b = marker(BEGIN).exec(text);
+  if (!b) return null;
+  const start = b.index + b[0].indexOf(BEGIN);
+  const after = b.index + b[0].length;
+  const e = marker(END).exec(text.slice(after));
+  if (!e) return { broken: true };
+  return { start, end: after + e.index + e[0].indexOf(END) + END.length };
+}
+
+// 把托管块放进文本：已有就原地替换，没有就加在末尾。用户的其他内容不动。
+// 块不完整（用户删了结束标记）时原样返回：不知道块到哪里结束，写了会吞掉用户的内容（compile 会提醒）
 function upsertBlock(text, block) {
   const eol = /\r\n/.test(text) ? '\r\n' : '\n';
   const b = block.replace(/\r?\n/g, eol);
-  const i = text.indexOf(BEGIN), j = text.indexOf(END);
-  if (i >= 0 && j > i) return text.slice(0, i) + b + text.slice(j + END.length);
+  const at = findBlock(text);
+  if (at && at.broken) return text;
+  if (at) return text.slice(0, at.start) + b + text.slice(at.end);
   if (!text.trim()) return b + eol;
   return text.replace(/\s*$/, '') + eol + eol + b + eol;
 }
 
 function removeBlock(text) {
-  const i = text.indexOf(BEGIN), j = text.indexOf(END);
-  if (i < 0 || j < i) return text;
+  const at = findBlock(text);
+  if (!at || at.broken) return text;
+  const i = at.start, j = at.end - END.length;
   const eol = /\r\n/.test(text) ? '\r\n' : '\n';
   const before = text.slice(0, i).replace(/\s*$/, ''), after = text.slice(j + END.length).replace(/^\s*/, '');
   if (before && after) return before + eol + eol + after;
@@ -136,7 +155,7 @@ function readConfig(projectDir) {
 function enabled(projectDir) {
   if (readConfig(projectDir)) return true;
   for (const f of ['AGENTS.md', 'AGENTS.override.md']) {
-    try { if (fs.readFileSync(path.join(projectDir, f), 'utf8').includes(BEGIN)) return true; } catch {}
+    try { if (findBlock(fs.readFileSync(path.join(projectDir, f), 'utf8'))) return true; } catch {}
   }
   return false;
 }
@@ -171,6 +190,8 @@ function compile(treePath) {
   let before = '';
   try { before = fs.readFileSync(agents, 'utf8'); } catch {}
   const block = renderBlock(root, treeName, us);
+  const found = findBlock(before);
+  if (found && found.broken) warnings.push(`${path.basename(agents)} 里需求树的部分不完整（有开始标记 ${BEGIN}，没有结束标记 ${END}），没有更新它；补上结束标记或删掉开始标记后再编译`);
   const after = upsertBlock(before, block);
   if (after !== before) { fs.writeFileSync(agents, after); written.push('codex:' + path.basename(agents)); }
   if (Buffer.byteLength(block) > BLOCK_WARN_BYTES) warnings.push(`AGENTS.md 里需求树的部分有 ${Buffer.byteLength(block)} 字节，Codex 默认只读 AGENTS.md 合计 32 KiB，全局规则太多会被截掉`);
@@ -185,7 +206,8 @@ function stale(treePath) {
     const stamp = stampPath(projectDir);
     if (fs.statSync(stamp).mtimeMs < fs.statSync(treePath).mtimeMs) return true;
     if (!fs.readFileSync(stamp, 'utf8').includes(FORMAT)) return true;
-    return !fs.readFileSync(agentsFile(projectDir), 'utf8').includes(BEGIN);
+    const at = findBlock(fs.readFileSync(agentsFile(projectDir), 'utf8'));
+    return !at || !!at.broken;
   } catch { return true; }
 }
 
@@ -194,7 +216,7 @@ function stale(treePath) {
 // apply_patch 的补丁文本（tool_input.command）里改了哪些文件：Add/Update/Delete File 和 Move to
 function patchFiles(patch) {
   const out = [];
-  for (const m of String(patch || '').matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*$/gm)) out.push(m[1]);
+  for (const m of String(patch || '').matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*$/gm)) out.push(m[1].replace(/^(["'])(.*)\1$/, '$2'));
   return [...new Set(out)];
 }
 
@@ -287,8 +309,8 @@ function sessionFile(projectDir, session) {
 }
 
 module.exports = {
-  RULES_DIR, CONFIG, BEGIN, END, FORMAT, DEFAULT_MODEL,
-  units, renderUnit, renderBlock, upsertBlock, removeBlock, agentsFile,
+  RULES_DIR, CONFIG, BEGIN, END, FORMAT, DEFAULT_MODEL, CONTEXT_LIMIT,
+  units, renderUnit, renderBlock, findBlock, upsertBlock, removeBlock, agentsFile,
   readConfig, enabled, compile, stale,
   patchFiles, shellPaths, isWriteCommand, relTo, matchesGlobs, unitsForFiles, readRuleIds, hash,
   findCodex, recorderCommand, sessionFile,

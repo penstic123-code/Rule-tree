@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const { parse, nodeForFile, findById, pathOf } = require('../src/parser');
 const store = require('../src/store');
 const codex = require('../src/targets/codex');
-const { mentionContext } = require('../src/mention');
+const { mentionContext, isMachinePrompt } = require('../src/mention');
 
 const HOOK = path.join(__dirname, 'hook.js');
 const LOG_DIR = () => path.join(os.tmpdir(), 'reqtree');
@@ -38,8 +38,8 @@ function readSession(file) {
 }
 
 const blockOf = text => {
-  const i = text.indexOf(codex.BEGIN), j = text.indexOf(codex.END);
-  return i >= 0 && j > i ? text.slice(i, j + codex.END.length) : '';
+  const at = codex.findBlock(text);
+  return at && !at.broken ? text.slice(at.start, at.end) : '';
 };
 const readBlock = projectDir => { try { return blockOf(fs.readFileSync(codex.agentsFile(projectDir), 'utf8')); } catch { return ''; } };
 
@@ -54,6 +54,15 @@ function delegate(payload, projectDir, trace) {
   if (payload.hook_event_name === 'UserPromptSubmit') env.REQTREE_NO_MENTION = '1';
   const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(payload), env, windowsHide: true, timeout: 20000 });
   if (r.error) trace.delegateError = r.error.message;
+}
+
+const fits = text => Buffer.byteLength(text) <= codex.CONTEXT_LIMIT;
+// 兜底：仍然超过就截断（按字符截，留出提示）
+function clip(text) {
+  if (fits(text)) return text;
+  let t = text;
+  while (!fits(t + '\n…（截断）')) t = t.slice(0, Math.floor(t.length * 0.9));
+  return t + '\n…（截断）';
 }
 
 function context(event, text) {
@@ -84,19 +93,23 @@ function main(input, trace) {
   }
 
   if (event === 'UserPromptSubmit') {
-    delegate({ ...input, cwd: projectDir }, projectDir, trace); // 编译 + 记下用户原话
+    delegate({ ...input, cwd: projectDir }, projectDir, trace); // 编译 + 记下用户原话（通知类的 hook.js 自己会跳过）
+    // 后台通知、子 agent 回报、命令输出不是用户的话：什么都不送
+    if (input.prompt && isMachinePrompt(input.prompt)) { trace.machine = true; return ''; }
     const block = readBlock(projectDir);
-    const parts = [];
+    let global = null;
     if (block && st.seen && codex.hash(block) !== st.seen) {
-      parts.push(`需求树（${treeName}）的全局规则或索引刚更新过，以这一版为准：\n\n${block}`);
+      global = `需求树（${treeName}）的全局规则或索引刚更新过，以这一版为准：\n\n${block}`;
       trace.injected = ['global'];
     }
     if (block) st.seen = codex.hash(block);
+    let mention = null;
     // 这句话明确提到的需求（标题、编号、第N章）：送它的规则。记在 sent 里键加 @；提到的正好是一个单元的主人时，单元也记成已送
     if (input.prompt) {
       const root = parse(fs.readFileSync(treePath, 'utf8'));
       const mine = Object.fromEntries(Object.entries(st.sent).filter(([k]) => k.startsWith('@')).map(([k, v]) => [k.slice(1), v]));
-      const m = mentionContext(root, input.prompt, mine, codex.hash);
+      const active = store.readActivity(treePath, 2 * 3600000).filter(e => e.session === input.session_id && e.node).map(e => e.node);
+      const m = mentionContext(root, input.prompt, mine, codex.hash, { active });
       if (m) {
         const units = codex.units(root);
         for (const { id, hash } of m.ids) {
@@ -109,12 +122,20 @@ function main(input, trace) {
             if (self || ancestor) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName));
           }
         }
-        parts.push(m.text);
+        mention = m.text;
         trace.injected = [...(trace.injected || []), ...m.ids.map(x => '@' + x.id)];
       }
     }
     store.writeJson(sf, st);
-    return parts.length ? context(event, parts.join('\n\n')) : '';
+    // Codex 的附加上下文超过上限（默认 2500 token ≈ 1 万字节）会被存进文件、只给 AI 一段预览。
+    // 全局那段太长时换成一句提示，让 AI 自己重读 AGENTS.md
+    const parts = [global, mention].filter(Boolean);
+    if (!parts.length) return '';
+    if (global && !fits(parts.join('\n\n'))) {
+      parts[0] = `需求树（${treeName}）的全局规则或索引刚更新过，内容较长，请重新读项目根 ${path.basename(codex.agentsFile(projectDir))} 里需求树那一段（会话开始时读到的是旧版）。`;
+      trace.injected.push('global-pointer');
+    }
+    return context(event, clip(parts.join('\n\n')));
   }
 
   if (event === 'PostToolUse') {
@@ -150,7 +171,13 @@ function main(input, trace) {
     const due = codex.unitsForFiles(root, rels).filter(u => st.sent[u.id] !== codex.hash(codex.renderUnit(u, treeName)));
     if (due.length) {
       for (const u of due) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName));
-      out = context(event, `需求树：你正在处理的文件属于下面的需求，照这些规则做（每份本会话只发一次，后面不再重复）。\n\n${due.map(u => unitText(u, treeName)).join('\n\n')}`);
+      // 放不下的单元换成「去读规则文件」
+      let body = '需求树：你正在处理的文件属于下面的需求，照这些规则做（每份本会话只发一次，后面不再重复）。';
+      for (const u of due) {
+        const t = unitText(u, treeName);
+        body += fits(`${body}\n\n${t}`) ? `\n\n${t}` : `\n\n${u.id} ${u.owner.title} 的规则较长，请读 .reqtree/rules/${u.id}.md。`;
+      }
+      out = context(event, clip(body));
       trace.injected = due.map(u => u.id);
     }
     store.writeJson(sf, st);

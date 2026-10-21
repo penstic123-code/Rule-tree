@@ -68,7 +68,7 @@ function parse(text) {
     const node = stack[stack.length - 1];
     const f = raw.match(FILES_RE);
     if (f && node !== root) {
-      node.files.push(...f[1].split(/[,，\s]+/).filter(Boolean));
+      node.files.push(...splitGlobs(f[1]));
       return;
     }
     const r = raw.match(RULE_RE);
@@ -84,11 +84,21 @@ function parse(text) {
   return root;
 }
 
-// 没写 ID 的节点按位置补一个，保证每个节点都能被引用
+// 没写 ID 的节点按位置补一个，保证每个节点都能被引用。跳过树里任何地方已经用掉的 ID
+// （手写的 C3.1…C3.5 和自动补的 C3.1 撞了，编译出的 C3.1.md 会互相覆盖）
 function assignIds(root) {
+  const taken = new Set();
+  const collect = n => n.children.forEach(c => { if (c.id) taken.add(c.id); collect(c); });
+  collect(root);
   const walk = (node, prefix) => {
     node.children.forEach((c, i) => {
-      if (!c.id) { c.id = prefix ? `${prefix}.${i + 1}` : `N${i + 1}`; c.autoId = true; }
+      if (!c.id) {
+        let k = i + 1;
+        const make = () => (prefix ? `${prefix}.${k}` : `N${k}`);
+        while (taken.has(make())) k++;
+        c.id = make(); c.autoId = true;
+        taken.add(c.id);
+      }
       walk(c, c.id);
     });
   };
@@ -257,6 +267,19 @@ function writeFiles(lines, node, globs) {
 // 标题行里标题文字之前的部分（# 和 ID）。手写的无编号标题用的是自动 ID，行里没有 ID
 const headPrefix = node => (node.autoId ? /^(#{1,6}\s+)(.*)$/ : new RegExp(`^(#{1,6}\\s+${ID_SRC}\\s+)(.*)$`));
 
+// 一个 op 里的文字、标题、键、文件对应都只能占一行：换行压成空格，
+// 免得模型或面板传来的「好\n## X 注入」凭空多出一个需求（restore_node 的 lines 本来就是多行，不动）
+const ONE_LINE_FIELDS = ['text', 'old', 'new', 'title', 'key', 'from'];
+const flat = s => (typeof s === 'string' ? s.replace(/[\r\n]+/g, ' ') : s);
+function oneLine(op) {
+  if (!op || typeof op !== 'object') return op;
+  const out = { ...op };
+  for (const k of ONE_LINE_FIELDS) out[k] = flat(out[k]);
+  for (const k of ONE_LINE_FIELDS) if (out[k] === undefined) delete out[k];
+  if (Array.isArray(out.globs)) out.globs = out.globs.map(flat);
+  return out;
+}
+
 // ops（记录员和面板共用），都直接改成最终样子：
 //   {op:'add_rule', node, key?, text, index?}  新规则；和本节点或上级已有规则几乎一样就跳过；本节点已有同键规则就改写它（记成 replace_rule）。force 时都不查
 //   {op:'replace_rule', node, old, text}       改写已有规则，沿用旧的键
@@ -272,11 +295,12 @@ const headPrefix = node => (node.autoId ? /^(#{1,6}\s+)(.*)$/ : new RegExp(`^(#{
 //   {op:'restore_node', parent, before, at, lines}    放回删掉的需求：放在上级下面、原来的下一个兄弟之前
 //   {op:'set_key', node, text, key}                    还原 override_rule 给上级规则自动补的键
 // 返回 { text, applied[] }。每个 applied 带 undo：能把这一步撤回去的反操作。做不到的操作跳过。
-// 不改调用方传进来的 op。
+// 不改调用方传进来的 op。文字、标题、键、文件对应里的换行一律压成空格（oneLine）。
 function applyOps(text, ops) {
   const nl = lineEnding(text);
   const applied = [];
-  for (const op of ops || []) {
+  for (const raw of ops || []) {
+    const op = oneLine(raw);
     const lines = text.split(/\r?\n/);
     const root = parse(text);
     const node = op.node && findById(root, op.node);
@@ -470,7 +494,8 @@ function outline(text, keepIds) {
   return out.join('\n');
 }
 
-function globToRegExp(glob) {
+// glob 片段 → 正则片段。支持 **、*、?、{a,b}（可嵌套；没配对的花括号按普通字符）
+function globBody(glob) {
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
@@ -481,10 +506,40 @@ function globToRegExp(glob) {
     }
     else if (c === '*') re += '[^/]*';
     else if (c === '?') re += '[^/]';
+    else if (c === '{') {
+      // 找配对的 }，按顶层逗号分成几个选项
+      let depth = 0, j = i, parts = [], from = i + 1;
+      for (; j < glob.length; j++) {
+        if (glob[j] === '{') depth++;
+        else if (glob[j] === '}' && --depth === 0) break;
+        else if (glob[j] === ',' && depth === 1) { parts.push(glob.slice(from, j)); from = j + 1; }
+      }
+      if (j >= glob.length) { re += '\\{'; continue; }
+      parts.push(glob.slice(from, j));
+      re += `(?:${parts.map(globBody).join('|')})`;
+      i = j;
+    }
     else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
+  return re;
+}
+function globToRegExp(glob) {
   // Windows 和 macOS 的文件系统默认不分大小写，Linux 区分
-  return new RegExp('^' + re + '$', process.platform === 'win32' || process.platform === 'darwin' ? 'i' : '');
+  return new RegExp('^' + globBody(glob) + '$', process.platform === 'win32' || process.platform === 'darwin' ? 'i' : '');
+}
+
+// 「> 文件：」一行拆成几个 glob：按逗号和空白拆，花括号里的逗号不拆（{ch18,ch19}-*.html 是一个 glob）
+function splitGlobs(s) {
+  const out = [];
+  let cur = '', depth = 0;
+  for (const c of s) {
+    if (c === '{') depth++;
+    else if (c === '}' && depth) depth--;
+    if (!depth && /[,，\s]/.test(c)) { if (cur) out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
 }
 
 // 找出管这个文件的最深节点；relPath 用 / 分隔、相对于树文件所在目录
@@ -500,6 +555,6 @@ function nodeForFile(root, relPath) {
 
 module.exports = {
   STATUS_EMOJI, STATUS_LABEL, parse, walk, findById, pathOf, effectiveRules, check,
-  setStatusInText, nodeForFile, applyOps, legacyCleanupOps, stripLegacyMarks, outline, relocate,
+  setStatusInText, nodeForFile, applyOps, legacyCleanupOps, stripLegacyMarks, outline, relocate, splitGlobs, globToRegExp,
   similarity, DUPLICATE, // 测试校准去重门槛用
 };

@@ -350,3 +350,23 @@ test('猜文件：候选从上级范围里列（上级没有文件对应时列�
   assert.deepStrictEqual(G.suggest(dir, 'Apostles', []), ['apostles-course/**']);
   assert.deepStrictEqual(G.candidates(dir, ['不存在/**']), []);
 });
+
+test('文件对应：花括号里的逗号不拆开，{a,b} 能匹配（education-course/{ch18,ch19}-*.html）', () => {
+  const root = P.parse('# P 项目\n## C1 课\n> 文件：education-course/{ch18,ch19}-*.html, notes/**\n- 规则\n');
+  const c1 = P.findById(root, 'C1');
+  assert.deepStrictEqual(c1.files, ['education-course/{ch18,ch19}-*.html', 'notes/**']);
+  assert.strictEqual(P.nodeForFile(root, 'education-course/ch18-a.html'), c1);
+  assert.strictEqual(P.nodeForFile(root, 'education-course/ch19-b.html'), c1);
+  assert.strictEqual(P.nodeForFile(root, 'education-course/ch20-c.html'), null);
+  assert.strictEqual(P.nodeForFile(root, 'notes/x.md'), c1);
+  const nested = P.parse('# P 项目\n## C1 课\n> 文件：a/{b,c/{d,e}}.md\n');
+  assert.ok(['a/b.md', 'a/c/d.md', 'a/c/e.md'].every(f => P.nodeForFile(nested, f)));
+  assert.strictEqual(P.nodeForFile(nested, 'a/c.md'), null);
+});
+
+test('没写编号的标题自动补的 ID 不和树里任何手写 ID 撞（撞了编译会互相覆盖）', () => {
+  const root = P.parse('# P 项目\n## C3 课\n### 没写编号的小节\n### C3.1 手写\n### C3.2 手写\n### 又一个没编号的\n## 没编号的课\n## N1 手写的 N1\n');
+  const all = [...P.walk(root)].map(n => n.id);
+  assert.strictEqual(new Set(all).size, all.length, `有重复：${all.join(',')}`);
+  assert.deepStrictEqual(['C3.1', 'C3.2', 'N1'].map(id => P.findById(root, id).title), ['手写', '手写', '手写的 N1']);
+});

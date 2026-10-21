@@ -58,6 +58,9 @@ async function runSuite(suite) {
   const ws = makeWs(suite, suite === 'main');
   const userData = path.join(S, 'user-data-' + suite);
   fs.rmSync(path.join(userData, 'logs'), { recursive: true, force: true });
+  // 测试 VS Code 是英文环境；断言按中文界面写，所以固定界面语言
+  fs.mkdirSync(path.join(userData, 'User'), { recursive: true });
+  fs.writeFileSync(path.join(userData, 'User', 'settings.json'), JSON.stringify({ 'reqtree.language': 'zh' }, null, 2));
   const extDir = path.join(S, 'extensions');
   fs.mkdirSync(extDir, { recursive: true });
   console.log(`\n=== ${suite}：工作区 ${ws}`);

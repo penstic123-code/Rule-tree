@@ -16,7 +16,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { parse, nodeForFile } = require('../src/parser');
-const { mentionContext } = require('../src/mention');
+const { mentionContext, isMachinePrompt } = require('../src/mention');
 const store = require('../src/store');
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -86,7 +86,7 @@ function readSession(file) {
   const ok = t => t && typeof t.user === 'string';
   return {
     turns: Array.isArray(s.turns) ? s.turns.filter(ok) : [], recent: Array.isArray(s.recent) ? s.recent.filter(ok) : [],
-    sent: s.sent && typeof s.sent === 'object' ? s.sent : {}, sentAt: s.sentAt || 0,
+    sent: s.sent && typeof s.sent === 'object' ? s.sent : {}, sentAt: s.sentAt || 0, machineAt: s.machineAt || 0,
   };
 }
 
@@ -152,6 +152,14 @@ function main(input, trace) {
     const f = stateFile(treePath, input.session_id);
     const st = readSession(f);
     st.turns = withReply(st.turns, store.readJson(stateFile(treePath, input.session_id, '.ai'), null));
+    // 后台任务通知、子 agent 回报、命令输出也走 UserPromptSubmit，但不是用户的话：不进对话、不算补漏、不送规则。
+    // 记下时间，这之后的 Stop 也跳过（那一轮 AI 回应的是通知）
+    if (input.prompt && isMachinePrompt(input.prompt)) {
+      st.machineAt = Date.now();
+      trace.machine = true;
+      store.writeJson(f, st);
+      return '';
+    }
     if (input.prompt) {
       const start = Date.now();
       st.turns = [...st.turns, { user: input.prompt, ai: '', start }].slice(-2);
@@ -163,7 +171,9 @@ function main(input, trace) {
       const compacted = (store.readJson(stateFile(treePath, input.session_id, '.compact'), null) || {}).time || 0;
       if (compacted > st.sentAt) st.sent = {};
       const md5 = t => crypto.createHash('md5').update(t).digest('hex').slice(0, 12);
-      const m = mentionContext(parse(fs.readFileSync(treePath, 'utf8')), input.prompt, st.sent, md5);
+      // 这个会话最近两小时 AI 改过的需求：只说「第1章」时用来判断是哪门课
+      const active = store.readActivity(treePath, 2 * 3600000).filter(e => e.session === input.session_id && e.node).map(e => e.node);
+      const m = mentionContext(parse(fs.readFileSync(treePath, 'utf8')), input.prompt, st.sent, md5, { active });
       if (m) {
         for (const { id, hash } of m.ids) st.sent[id] = hash;
         st.sentAt = Date.now();
@@ -204,8 +214,15 @@ function main(input, trace) {
   if (event === 'Stop' && !input.stop_hook_active) {
     // 只读会话状态，不写（见 stateFile 的说明）
     const replyFile = stateFile(treePath, input.session_id, '.ai');
-    const turns = withReply(readSession(stateFile(treePath, input.session_id)).turns, store.readJson(replyFile, null));
+    const session = readSession(stateFile(treePath, input.session_id));
+    const turns = withReply(session.turns, store.readJson(replyFile, null));
     const turn = turns[turns.length - 1];
+    // 这一轮是在回应通知，不是用户的话：不交给记录员，也不把回复记到上一轮用户的话下面
+    if (session.machineAt && (!turn || session.machineAt > turn.start)) {
+      trace.skip = 'machine-prompt';
+      store.trimActivity(treePath);
+      return;
+    }
     if (turn) {
       turn.ai = input.last_assistant_message || '';
       store.writeJson(replyFile, { start: turn.start, ai: turn.ai });

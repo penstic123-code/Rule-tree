@@ -8,7 +8,8 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 // 独立的临时目录：hook 的会话状态和日志写在 os.tmpdir() 下
-const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-codex-'));
+// 真实路径：Windows CI 上 os.tmpdir() 是 8.3 短路径（RUNNER~1），hook 记的是 realpath，两边要一致
+const SANDBOX = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-codex-')));
 process.env.TEMP = process.env.TMP = process.env.TMPDIR = SANDBOX;
 process.env.REQTREE_HOME = path.join(SANDBOX, 'home', '.reqtree');
 
@@ -300,7 +301,8 @@ test('hook：Stop 交给 hook.js 启动记录员，记录员用配置的命令�
   const base = { session_id: 'sess-c', cwd: path.join(dir, 'DataScience') }; // 在子目录启动也能找到树
   runHook({ ...base, hook_event_name: 'UserPromptSubmit', prompt: '以后每章结尾都加一道思考题' }, env);
   runHook({ ...base, hook_event_name: 'Stop', stop_hook_active: false, last_assistant_message: '好的，已加上。' }, env);
-  for (let i = 0; i < 300 && !read(dir, '需求树.md').includes('思考题'); i++) await new Promise(r => setTimeout(r, 100));
+  // 树先写盘、AGENTS.md 随后编译：两样都等到（只等树的话，负载高时会读到还没重编的 AGENTS.md）
+  for (let i = 0; i < 300 && !(read(dir, '需求树.md').includes('思考题') && read(dir, 'AGENTS.md').includes('思考题')); i++) await new Promise(r => setTimeout(r, 100));
   assert.match(read(dir, '需求树.md'), /- 每章结尾加一道思考题/);
   assert.match(read(dir, 'AGENTS.md'), /- 每章结尾加一道思考题/, '写树后自动重编 AGENTS.md');
   const sent = JSON.parse(read(dir, 'fake.log').trim().split('\n')[0]);

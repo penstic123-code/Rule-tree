@@ -66,13 +66,66 @@
     return `<svg class="ico ico-${name}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"${attrs ? ' ' + attrs : ''}>${ICONS[name] || ''}</svg>`;
   }
 
+  // 结构化的文字（{ k: 文字表的键, a: 参数 }）按当前语言写出来；没有、或者键不认识，就用存下来的旧文字（旧记录、命令行写的）
+  const tx = (t, fallback) => (t && t.k && window.ReqStrings && t.k in window.ReqStrings.zh ? T(t.k, ...(t.a || [])) : fallback);
+  // 记录员的状态：新版本记了 parts（几段），按语言拼；旧版本只有 message
+  function recorderText(r, file, showIds) {
+    if (!r) return '';
+    if (!r.ok) return tx(r.t, r.message);
+    if (!Array.isArray(r.parts) || !r.parts.length || !r.parts.every(p => p && p.k && window.ReqStrings && p.k in window.ReqStrings.zh)) return r.message;
+    const name = nodeNamer(file, showIds);
+    return r.parts.map(p => ((p.k === 'rec.done' || p.k === 'rec.doing') ? T(p.k, (p.a[0] || []).map(name).map(x => x.trim()).join(T('rec.join')) + (T.lang === 'zh' && !/」$/.test(name((p.a[0] || []).slice(-1)[0]).trim()) ? ' ' : '')) : T(p.k, ...(p.a || []))).trim()).join(T('rec.sep'));
+  }
+  // 提到某个需求时写它的名字（打开「显示编号」时写编号）；树里已经没有了（删掉的）就写编号
+  function nodeNamer(file, showIds) {
+    const byId = {};
+    walkNodes((file && file.nodes) || [], x => { byId[x.id] = x; });
+    // 中文句子里名字带「」不用空格；写编号时前后补空格（拼好后再去掉首尾空格）
+    const bare = id => (T.lang === 'zh' ? ` ${id} ` : id);
+    return id => (showIds || !byId[id] ? bare(id) : T('d.quote', byId[id].title));
+  }
+  // 一次改动的说明：新旧版本都记了 ops（结构化），按当前语言重新写；认不出的（旧格式）用存下来的 summary
+  function changeLines(c, file, showIds) {
+    if (c.event) { const t = tx(c.event, null); if (t) return [t]; }
+    const name = nodeNamer(file, showIds);
+    const st = x => (x ? (STATUS_LABEL[x] || x) : T('op.noStatus'));
+    const g = o => (o.globs || []).join(', ');
+    const one = o => {
+      switch (o && o.op) {
+        case 'add_rule': return T('op.add_rule', name(o.node), o.text);
+        case 'replace_rule': return T('op.replace_rule', name(o.node), o.old, o.text);
+        case 'remove_rule': return T('op.remove_rule', name(o.node), o.text);
+        case 'add_node': return T('op.add_node', showIds ? `${o.id} ${o.title}` : T('d.quote', o.title));
+        case 'add_files': return T('op.add_files', name(o.node), g(o));
+        case 'set_files': return (o.globs || []).length ? T('op.set_files', name(o.node), g(o)) : T('op.clear_files', name(o.node));
+        case 'set_status': return T('op.set_status', name(o.node), st(o.status));
+        case 'rename_node': {
+          const old = (o.undo || []).find(u => u.op === 'rename_node');
+          return T('op.rename_node', old && !showIds ? T('d.quote', old.title) : name(o.node), o.title);
+        }
+        case 'delete_node': {
+          const head = ((o.undo || []).find(u => u.op === 'restore_node') || {}).lines;
+          const m = head && /^#+\s+\S+\s+(.+?)\s*(?:[\u2705\u{1F528}\u23F3\u2753]\uFE0F?)?\s*$/u.exec(head[0] || '');
+          return T('op.delete_node', m && !showIds ? T('d.quote', m[1]) : o.node);
+        }
+        case 'override_rule': return T('op.override_rule', name(o.node), o.text, o.new);
+        default: return null;
+      }
+    };
+    if (Array.isArray(c.ops) && c.ops.length) {
+      const lines = c.ops.map(one);
+      if (lines.every(Boolean)) return lines.map(l => l.trim().replace(/ {2,}/g, ' '));
+    }
+    return c.summary || [];
+  }
+
   // 顶部红色提示：记录员出错、规则没有生成。出错不能静悄悄，否则用户以为规则在生效
   function alertsHtml(file, now) {
     let h = '';
     const r = file.recorder;
-    if (r && !r.ok) h += `<div class="banner err" role="alert"><span>${esc(T('alert.recorder', ago(r.time, now), r.message))}</span></div>`;
+    if (r && !r.ok) h += `<div class="banner err" role="alert"><span>${esc(T('alert.recorder', ago(r.time, now), tx(r.t, r.message)))}</span></div>`;
     const c = file.compile;
-    if (c && c.ok === false) h += `<div class="banner err" role="alert"><span>${esc(T('alert.compile', c.message))}</span></div>`;
+    if (c && c.ok === false) h += `<div class="banner err" role="alert"><span>${esc(T('alert.compile', tx(c.t, c.message)))}</span></div>`;
     return h;
   }
 
@@ -98,7 +151,7 @@
   function html(file, n, data = {}) {
     const now = data.now;
     const U = `data-uri="${esc(file.uri)}"`;
-    const recent = recentHtml(file, now) + unmappedHtml(file);
+    const recent = recentHtml(file, now, !!data.showIds) + unmappedHtml(file);
     if (!n) {
       return `<div class="dp-empty"><div class="empty">${T('d.empty')}</div>
         <button class="btn ghost new-btn" data-act="edit" data-a="addChild" data-node="${esc(file.nodes[0]?.id || '')}" ${U}>${icon('plus', 12)}${T('d.newReq')}</button></div>${recent}`;
@@ -176,14 +229,14 @@
 
   // 最近改动：记录员和你的改动都在这里，记错了点「撤销」。
   // undoable === false 是旧版本留下、反操作已经翻译不了的改动：不给撤销按钮，免得点了没反应
-  function recentHtml(file, now) {
+  function recentHtml(file, now, showIds) {
     const list = (file.changes || []).slice(0, 6);
     if (!list.length) return '';
     return foldSection('s-recent', T('d.recent'), list.length, list.map(c => {
       const fixed = !c.undone && c.undoable === false;
       return `<li class="chg${c.undone ? ' undone' : ''}">
-      <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
-      ${c.summary.map(s => `<div class="cs">${esc(s)}</div>`).join('')}</li>`;
+      <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source === '升级' ? T('x.upgradeName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
+      ${changeLines(c, file, showIds).map(s => `<div class="cs">${esc(s)}</div>`).join('')}</li>`;
     }).join(''));
   }
 
@@ -393,5 +446,5 @@
       default: return null;
     }
   }
-  window.ReqDetail = { T, html, message, local, isEditing, showContext, refreshContext, closeContext, contextHtml, showMenu, closeMenu, dot, alertsHtml, placeMenu, icon, esc, ago, walkNodes, hasActive, staleSpan, STATUS_LABEL, pathTo, reducedMotion };
+  window.ReqDetail = { T, tx, recorderText, changeLines, html, message, local, isEditing, showContext, refreshContext, closeContext, contextHtml, showMenu, closeMenu, dot, alertsHtml, placeMenu, icon, esc, ago, walkNodes, hasActive, staleSpan, STATUS_LABEL, pathTo, reducedMotion };
 })();

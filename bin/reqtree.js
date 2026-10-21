@@ -17,8 +17,9 @@ const VERSION = require('../package.json').version;
 // ---------- 运行时副本 ~/.reqtree/runtime ----------
 // hook 命令不指向这个仓库或插件的安装目录：插件升级后目录名会变（shidipeng.reqtree-0.8.0 → 0.9.0），
 // npx 的缓存目录也随时会被清掉。所以 init 把 hook 运行要用的 hooks/ 和 src/ 复制到固定位置，hook 命令指向那里。
-// 每次 init（以及插件发现副本比自己旧时）整个覆盖，并写下版本号。
-const RUNTIME_PARTS = ['hooks', 'src'];
+// 每次 init（以及插件发现副本比自己旧时）整个覆盖，并写下版本号；副本比自己新（别的项目用新版装过）时不降级。
+// 先复制 src 再复制 hooks：复制到一半时正在运行的 hook 是「新 src + 旧 hook」，旧 hook 用到的 src 接口不会消失
+const RUNTIME_PARTS = ['src', 'hooks'];
 const reqtreeHome = () => process.env.REQTREE_HOME || path.join(os.homedir(), '.reqtree');
 const runtimeDir = () => path.join(reqtreeHome(), 'runtime');
 
@@ -78,12 +79,29 @@ function hookCommand(file, platform = process.platform) {
 // 或 Vibe-Friend / Vibecoding-Friend（git clone 下来的仓库名，仓库改过名）。不要求两者紧挨着；用户自己别的 hook.js 不算
 const isOurs = h => { const c = String((h && h.command) || '').replace(/\\/g, '/'); return /hooks\/+hook\.js/.test(c) && /reqtree|vibe(coding)?-friend/i.test(c); };
 
-// 项目的 .claude/settings.json 或 settings.local.json 里有没有需求树的 hook（哪怕指向旧位置）
+// 读 Claude Code 的 settings：文件不在返回 fallback；带 BOM（记事本另存的）照读；解析不了就抛错——
+// 绝不能当成空对象再写回去，那会清掉用户的 permissions 等全部设置
+function readSettings(file, fallback = {}) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return fallback; }
+  text = text.replace(/^﻿/, '');
+  if (!text.trim()) return fallback;
+  try { return JSON.parse(text); }
+  catch (e) { throw new Error(`${file} 不是合法的 JSON（${e.message}），为了不弄丢里面的设置，没有改它。修好后再运行 init`); }
+}
+
+// hook 命令里的脚本路径（引号里的那段）
+const scriptOf = h => { const m = String((h && h.command) || '').match(/"([^"]+)"|'([^']+)'/); return m ? (m[1] || m[2]) : null; };
+
+// 项目的 .claude/settings.json 或 settings.local.json 里有没有能用的需求树 hook：命令是我们的，而且脚本文件还在
+// （指向已经删掉的旧位置的算没装，插件会提示重新启用）
 function hasHooks(dir) {
+  const usable = h => { if (!isOurs(h)) return false; const p = scriptOf(h); return !!p && fs.existsSync(p); };
   return ['settings.json', 'settings.local.json'].some(f => {
-    const s = store.readJson(path.join(dir, '.claude', f), null);
+    let s = null;
+    try { s = readSettings(path.join(dir, '.claude', f), null); } catch {}
     return !!(s && s.hooks && typeof s.hooks === 'object' && Object.values(s.hooks).some(groups =>
-      Array.isArray(groups) && groups.some(g => g && Array.isArray(g.hooks) && g.hooks.some(isOurs))));
+      Array.isArray(groups) && groups.some(g => g && Array.isArray(g.hooks) && g.hooks.some(usable))));
   });
 }
 
@@ -92,7 +110,7 @@ function hasHooks(dir) {
 function installClaude(dir, { runtime, log }) {
   const command = hookCommand(path.join(runtime, 'hooks', 'hook.js'));
   const settingsPath = path.join(dir, '.claude', 'settings.local.json');
-  const settings = store.readJson(settingsPath, {});
+  const settings = readSettings(settingsPath, {});
   settings.hooks = settings.hooks || {};
   for (const event of Object.keys(settings.hooks)) {
     settings.hooks[event] = settings.hooks[event]
@@ -126,7 +144,7 @@ const TOOLS = { claude: installClaude, codex: installCodex };
 // 装完还要用户做什么
 const NEXT_STEP = {
   claude: '新开 Claude Code 会话后生效。',
-  codex: '还差一步：在项目里运行 codex，输入 /hooks，信任 4 个「需求树」hook（不信任也能用：规则索引写在 AGENTS.md 里）。',
+  codex: '还差一步：在项目里运行 codex，输入 /hooks，信任 5 个「需求树」hook（不信任也能用：规则索引写在 AGENTS.md 里）。',
 };
 
 // 在项目里启用需求树：复制运行时副本、按工具装 hook、忽略 .reqtree/、没有树文件就建一个模板、编译规则。
@@ -136,8 +154,15 @@ function init(dir, { tool = 'claude', log = console.log } = {}) {
   if (!install) throw new Error(`不认识的 --tool：${tool}（可选：${Object.keys(TOOLS).join('、')}）`);
   dir = path.resolve(dir);
   if (!fs.statSync(dir).isDirectory()) throw new Error(`不是文件夹：${dir}`);
-  const runtime = installRuntime();
-  log(`✓ hook 程序已复制到 ${runtime}（版本 ${VERSION}）`);
+  const have = runtimeVersion();
+  let runtime;
+  if (have && isOlder(VERSION, have)) {
+    runtime = runtimeDir();
+    log(`✓ ${runtime} 里已经是更新的版本 ${have}（这次是 ${VERSION}），不覆盖`);
+  } else {
+    runtime = installRuntime();
+    log(`✓ hook 程序已复制到 ${runtime}（版本 ${VERSION}）`);
+  }
   install(dir, { runtime, log });
 
   const gi = path.join(dir, '.gitignore');
@@ -236,6 +261,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  init, TOOLS, VERSION, hookCommand, isOurs, hasHooks,
+  init, TOOLS, VERSION, hookCommand, isOurs, hasHooks, readSettings, RUNTIME_PARTS,
   installRuntime, runtimeDir, runtimeVersion, refreshRuntimeIfOlder, isOlder, parseInitArgs,
 };
