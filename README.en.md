@@ -109,7 +109,7 @@ Everything revolves around one file. While you chat, a background recorder write
 
 ![The recorder notes long-term requirements in the background](docs/images/en/recorder.png)
 
-**Why not inject rules with hooks?** Early versions did. Claude Code's native rules turned out to be more reliable: they work inside subagents and after compaction, and rules created or edited mid-session are pushed to the assistant. So the hooks now only do what the native mechanism can't — track which requirement is being edited and start the recorder. They add nothing to the assistant's context.
+**Why not inject rules with hooks?** Early versions did. Claude Code's native rules turned out to be more reliable: they work inside subagents and after compaction, and rules created or edited mid-session are pushed to the assistant. So rules are left to the native mechanism, and the hooks only do what it can't — track which requirement is being edited and start the recorder. The one exception is discussion before any file is touched: when you ask "how should Chapter 3 work?", the assistant hasn't opened a file yet, so the hook adds the rules of the requirement you named, once per session.
 
 | Part | What it does |
 |---|---|
@@ -125,35 +125,59 @@ Everything revolves around one file. While you chat, a background recorder write
 | Feature | Status |
 |---|---|
 | Rules load on demand: they enter the context when the AI reads or edits a matching file | ✅ |
-| Hooks add nothing to the conversation | ✅ |
+| Hooks add rules only when you name a requirement whose files the assistant hasn't touched yet; otherwise nothing | ✅ |
 | Old rules are rewritten instead of duplicated, so the tree doesn't keep growing | ✅ |
 | The recorder uses the inexpensive Haiku model in the background; short replies skip it | ✅ |
 | Context meter: which rules each session loaded, how many characters each, resident vs on demand | ✅ |
 | Split CLAUDE.md: move requirement-specific content into the tree so it loads on demand | Planned |
 | Cross-file duplicate and contradiction check between the tree, CLAUDE.md and project docs | Planned (experiment script exists) |
 
-![Characters always in context](docs/images/en/chart-context.png)
+In practice, the AI reads 30–50% fewer characters of rules to work on one chapter of a course — see "How much better after moving them into a tree?" below.
 
 ## Test data
 
-Raw data and experiment conditions are in [`测试数据记录.md`](测试数据记录.md) (the test log, in Chinese).
+Each experiment below answers one question. Raw data and experiment conditions are in [`测试数据记录.md`](测试数据记录.md) (the test log, in Chinese).
 
-**Does the recorder judge correctly?** Six kinds of situations, three runs each, with the real Haiku model: a reworded duplicate is not added, a change of mind rewrites the original rule, a genuinely new rule is added, a one-off instruction is ignored, a rejected rule is deleted, and a child repeating its parent is not added. 18 out of 18 correct.
+### Does the recorder get things wrong or add duplicates?
+
+The recorder mostly meets six situations: you restate an old rule in new words; you change your mind; you give a new rule; you ask for a one-off edit; you reject a rule; you repeat a parent's rule inside a child requirement. Two easily confused ones were added later: "open Chapter 1 with the cholera story" is a decision Chapter 1 should keep following, while "tighten that paragraph in Chapter 1" is done once it's done. Run five times each with the real Haiku model, the recorder handled every case correctly: no duplicates, changes of mind rewrite the original rule, one-off edits are not recorded.
 
 ![Recorder accuracy](docs/images/en/chart-recorder.png)
 
-**With or without ReqTree — do rules get messier?** A simulated 32-turn conversation in which the user gradually states 13 long-term requirements, changes their mind, cancels some and adds exceptions. Three arms: the assistant maintaining its own rule document (plain prompt, careful prompt) and the ReqTree recorder. When the assistant kept its own document, a cancelled rule turned into a new "don't …" entry that stayed behind, and some rules landed in the wrong scope; ReqTree had neither problem. All three arms missed some requirements.
+### Compared with letting the AI maintain its own rule document?
+
+A simulated 32-turn conversation: the user gradually states 13 long-term requirements, changes their mind, cancels some, adds exceptions. One arm lets the AI keep its own rule document; the other uses ReqTree. When the AI keeps the document, "drop the reflection questions" often becomes a new line "no reflection questions" while the old rule stays, and an exception like "only 3 exercises in Chapter 2" sometimes turns into a global rule. ReqTree deletes the cancelled rule and files the exception under Chapter 2. At first ReqTree also missed decisions about a single chapter's content; after the recorder's criteria were fixed, it captured almost all 13 requirements.
 
 ![Rule problems after a simulated conversation](docs/images/en/chart-confusion.png)
 
-**How messy is a real project?** In a real course project's 21 rule documents, most problems sit **across files**: the same rule copied in several places, updated in one and stale in the others. With ReqTree each rule has exactly one place, which removes this class of problem at the root.
+### How messy are real rule documents?
+
+The author audited a course project after a few months of work. Across 21 rule documents the problems sit mostly **across files**: the same rule copied in several places, updated in one and stale in the others; one file says "run one agent at a time", another says "two or three chapters can run in parallel".
 
 ![Audit of real rule documents](docs/images/en/chart-audit.png)
+
+### How much better after moving them into a tree?
+
+The rules from those 21 documents were moved into one requirement tree and audited again with the same checker. Duplicates and outdated rules dropped sharply, because each rule now has one place and old wording was replaced by the latest during the move. Contradictions did not drop: where a course rule conflicts with a global one, the original text never said "this course is an exception", so the move couldn't turn it into an override. That call still needs a person.
+
+![Before and after moving the rules into a tree](docs/images/en/chart-migrate.png)
+
+The context savings are easier to see. Before, every session carried CLAUDE.md and the memory, and working on a course meant reading that course's whole rule document. With the tree, only the global rules are always loaded; a course's rules arrive when its files are touched. To work on one chapter of any course, the AI reads 30–50% fewer characters of rules.
+
+![How much the AI reads to work on one chapter](docs/images/en/chart-chapter.png)
+
+### Replaying real conversations
+
+436 messages the author actually typed across 12 sessions over several weeks were replayed in order. One arm let the AI record rules as it normally would, into CLAUDE.md, memory and course documents (seeing only some of them each time); the other used ReqTree. Both were checked against the same answer key.
+
+ReqTree missed fewer requirements, kept fewer overturned rules, and ended with a rule base a third the size. Its extra errors were of one kind: general preferences mentioned while working on one course, such as "reply in Chinese", got filed under that course, so other courses didn't get them. The recorder's criteria have since been adjusted for this.
+
+![The rule base after replaying real conversations](docs/images/en/chart-replay.png)
 
 ## Current limits
 
 - Works with Claude Code and OpenAI Codex. Codex has no path-scoped rules, so ReqTree uses an index in `AGENTS.md` plus hooks that deliver the right rules (see docs/codex.md).
-- The recorder sometimes misses things, especially decisions about a single chapter's content ("open Chapter 1 with this story"). You can add those by hand in the panel.
+- The recorder relies on a small model and occasionally files a rule in the wrong place. You can fix it in the panel, or undo it under "Recent changes".
 - Each turn costs one extra Haiku call, run in the background (about 6 seconds).
 - Developed on Windows; macOS and Linux are covered by CI.
 
