@@ -54,7 +54,14 @@ jobs:
           echo "::warning::no Chrome/Edge found"
 
       - name: Test
-        run: node --test test/*.test.js
+        run: |
+          set -o pipefail
+          node --test --test-reporter=tap test/*.test.js 2>&1 | tee test-output.txt
+
+      # 日志要登录才能看；失败的测试写成注释，公开可见
+      - name: Annotate failures
+        if: failure()
+        run: node tools/ci-annotate.js test-output.txt
 
       - name: Upload screenshots
         if: failure()

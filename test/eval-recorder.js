@@ -51,6 +51,13 @@ const CASES = [
     return hit.parent && hit.parent.id === 'C2' ? null : `新需求没放在数据科学课下面：${hit.id}`;
   }],
   ['章节内一次性修改', '第1章霍乱故事那段写得太啰嗦了，帮我压缩一下', '已压缩到三段', (ops, t) => (t === TREE ? null : `不该改树：${JSON.stringify(ops)}`)],
+  // 子需求放宽上级规则：要在第1章用同一个 [段落] 键覆盖，不能加一条没键的（那样两条都生效、互相矛盾）
+  ['子需求覆盖上级（同键）', '第1章开场可以写到6行', '好的，第1章开场段落放宽到 6 行', (ops, t) => {
+    const r = rulesOf(t, 'C2.1').filter(x => /6/.test(x.text));
+    if (!r.length) return '第1章没有记下 6 行';
+    if (r.some(x => x.key !== '段落')) return `没用 [段落] 键覆盖：${JSON.stringify(r.map(x => [x.key, x.text]))}`;
+    return rulesOf(t, 'P').some(x => x.key === '段落' && /4 行/.test(x.text)) ? null : '把全局的 4 行改掉了';
+  }],
 ];
 
 function ask(prompt) {
