@@ -1,14 +1,12 @@
 # Vibe Friend · 需求树 ReqTree
 
-**一棵需求树，让你和 AI 都看清这个项目。**
-
-散在聊天里的需求和规则，整理成一棵看得见的树：项目现在是什么样、每个需求做到哪一步，一眼就知道；AI 改到哪个文件，只带上那里的规则；你说过的长期要求自动记下来，记错了能撤销。
+需求树把散在聊天里的需求和规则整理成一棵树。你在 VS Code 里能看到项目现在有哪些需求、各做到哪一步；AI 改到哪个文件，只带上那部分的规则；你在对话里说的长期要求，由后台自动记进树里，记错了可以撤销。
 
 给 [Claude Code](https://claude.com/claude-code) 和 [OpenAI Codex](https://developers.openai.com/codex) 用，带一个 VS Code 插件。[English](README.en.md) | **中文**
 
 ![需求树导图](docs/images/ui-map.png)
 
-## 你是不是也遇到过
+## 为什么做这个
 
 和 AI 一起做一个长期项目，几周下来，规则散得到处都是：聊天记录里说过一遍，CLAUDE.md 里写过一遍，AI 的记忆里存过一遍，项目文档里又抄了一遍。后来你改了主意，只改了其中一处，剩下几处还是旧说法。
 
@@ -18,30 +16,30 @@
 
 ![规则散在好几个地方](docs/images/pain.png)
 
-作者体检了自己做了几个月的课程项目：21 份规则文档、8 万多字里，有 **237 处重复、矛盾和过时**。比如 agent 并行数，一份文档写"一次只开一个"，另一份写"可以两三章并行"；同一条"三道检查"在不同文件里抄了 15 遍。
+作者体检了自己做了几个月的课程项目：21 份规则文档、8 万多字里，有 237 处重复、矛盾和过时。比如 agent 并行数，一份文档写"一次只开一个"，另一份写"可以两三章并行"；同一条"三道检查"在不同文件里抄了 15 遍。
 
-## 它有什么用
+## 它做什么
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/use-1-change-tracking.png" alt="需求改了又改，现在到底是什么样？ → 一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销"><br><sub>麻烦</sub><br>需求改了又改，现在到底是什么样？<br><sub>需求树</sub><br><b>一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销</b></td>
-<td width="50%" valign="top"><img src="docs/images/use-2-one-place.png" alt="规则散在四处，不知道以哪份为准 → 所有规则写在一个文件里，每条只有一个位置"><br><sub>麻烦</sub><br>规则散在四处，不知道以哪份为准<br><sub>需求树</sub><br><b>所有规则写在一个文件里，每条只有一个位置</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-1-change-tracking.png" alt="需求改了又改，现在到底是什么样？ → 一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销"><br><sub>麻烦</sub><br>需求改了又改，现在到底是什么样？<br><sub>需求树</sub><br>一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销</td>
+<td width="50%" valign="top"><img src="docs/images/use-2-one-place.png" alt="规则散在四处，不知道以哪份为准 → 所有规则写在一个文件里，每条只有一个位置"><br><sub>麻烦</sub><br>规则散在四处，不知道以哪份为准<br><sub>需求树</sub><br>所有规则写在一个文件里，每条只有一个位置</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/use-3-rewrite-not-append.png" alt="相似的规则加了一遍又一遍 → 记录员改写原条，不新增；记错了一键撤销"><br><sub>麻烦</sub><br>相似的规则加了一遍又一遍<br><sub>需求树</sub><br><b>记录员改写原条，不新增；记错了一键撤销</b></td>
-<td width="50%" valign="top"><img src="docs/images/use-4-survive-compaction.png" alt="对话一长、上下文一压缩，AI 就忘了规则 → 规则交给 Claude Code 原生机制，压缩后、子 agent 里照样生效"><br><sub>麻烦</sub><br>对话一长、上下文一压缩，AI 就忘了规则<br><sub>需求树</sub><br><b>规则交给 Claude Code 原生机制，压缩后、子 agent 里照样生效</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-3-rewrite-not-append.png" alt="相似的规则加了一遍又一遍 → 记录员改写原条，不新增；记错了一键撤销"><br><sub>麻烦</sub><br>相似的规则加了一遍又一遍<br><sub>需求树</sub><br>记录员改写原条，不新增；记错了一键撤销</td>
+<td width="50%" valign="top"><img src="docs/images/use-4-survive-compaction.png" alt="对话一长、上下文一压缩，AI 就忘了规则 → 规则交给 Claude Code 原生机制，压缩后、子 agent 里照样生效"><br><sub>麻烦</sub><br>对话一长、上下文一压缩，AI 就忘了规则<br><sub>需求树</sub><br>规则交给 Claude Code 原生机制，压缩后、子 agent 里照样生效</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/use-5-load-on-demand.png" alt="所有规则一股脑塞进上下文 → 改到哪个文件，才带上那个需求的规则"><br><sub>麻烦</sub><br>所有规则一股脑塞进上下文<br><sub>需求树</sub><br><b>改到哪个文件，才带上那个需求的规则</b></td>
-<td width="50%" valign="top"><img src="docs/images/use-6-override.png" alt="母规则和子规则打架 → 子需求明确覆盖母规则，只在自己的范围里生效"><br><sub>麻烦</sub><br>母规则和子规则打架<br><sub>需求树</sub><br><b>子需求明确覆盖母规则，只在自己的范围里生效</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-5-load-on-demand.png" alt="所有规则一股脑塞进上下文 → 改到哪个文件，才带上那个需求的规则"><br><sub>麻烦</sub><br>所有规则一股脑塞进上下文<br><sub>需求树</sub><br>改到哪个文件，才带上那个需求的规则</td>
+<td width="50%" valign="top"><img src="docs/images/use-6-override.png" alt="母规则和子规则打架 → 子需求明确覆盖母规则，只在自己的范围里生效"><br><sub>麻烦</sub><br>母规则和子规则打架<br><sub>需求树</sub><br>子需求明确覆盖母规则，只在自己的范围里生效</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/use-7-live-status.png" alt="不知道 AI 正在做哪个需求 → 侧栏和导图实时显示 AI 正在改哪个需求"><br><sub>麻烦</sub><br>不知道 AI 正在做哪个需求<br><sub>需求树</sub><br><b>侧栏和导图实时显示 AI 正在改哪个需求</b></td>
-<td width="50%" valign="top"><img src="docs/images/use-8-click-not-markdown.png" alt="不想手写 Markdown → 加规则、改状态、撤销，全部能在面板上点"><br><sub>麻烦</sub><br>不想手写 Markdown<br><sub>需求树</sub><br><b>加规则、改状态、撤销，全部能在面板上点</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-7-live-status.png" alt="不知道 AI 正在做哪个需求 → 侧栏和导图实时显示 AI 正在改哪个需求"><br><sub>麻烦</sub><br>不知道 AI 正在做哪个需求<br><sub>需求树</sub><br>侧栏和导图实时显示 AI 正在改哪个需求</td>
+<td width="50%" valign="top"><img src="docs/images/use-8-click-not-markdown.png" alt="不想手写 Markdown → 加规则、改状态、撤销，全部能在面板上点"><br><sub>麻烦</sub><br>不想手写 Markdown<br><sub>需求树</sub><br>加规则、改状态、撤销，全部能在面板上点</td>
 </tr>
 </table>
 
-## 看一眼
+## 界面
 
 | 侧栏（深色主题） | 导图（浅色主题）：点一个需求，别的分支淡下去 |
 |---|---|
@@ -152,7 +150,7 @@ npx github:penstic123-code/Vibe-Friend init <你的项目目录> --tool codex # 
 
 ### 真实项目里的规则文档有多乱？
 
-作者体检了自己做了几个月的课程项目：21 份规则文档里，问题集中在**跨文件**这一层。同一条规则抄在好几处，改了一处，别处还是旧的；有的地方写「一次只开一个 agent」，另一处写「可以两三章并行」。
+作者体检了自己做了几个月的课程项目：21 份规则文档里，问题集中在跨文件这一层。同一条规则抄在好几处，改了一处，别处还是旧的；有的地方写「一次只开一个 agent」，另一处写「可以两三章并行」。
 
 ![真实规则文档体检](docs/images/chart-audit.png)
 
@@ -177,7 +175,7 @@ npx github:penstic123-code/Vibe-Friend init <你的项目目录> --tool codex # 
 ## 目前的限制
 
 - 支持 Claude Code 和 OpenAI Codex。Codex 没有按文件加载规则的机制，改用 `AGENTS.md` 里的索引加 hook 补送，见 [docs/codex.md](docs/codex.md)。
-- 记录员靠小模型判断，偶尔会把规则挂错位置。面板上能直接改，「最近改动」里能撤销。
+- 记录员靠小模型判断，偶尔会把规则挂错位置；你改口时如果没说明推翻的是哪条，旧规则可能还留着。面板上能直接改，「最近改动」里能撤销。
 - 每轮对话多一次 Haiku 调用，在后台跑，约 6 秒。
 - 在 Windows 上开发；Mac 和 Linux 由 CI 跑测试。
 

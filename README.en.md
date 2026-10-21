@@ -1,14 +1,12 @@
 # Vibe Friend · ReqTree
 
-**Keep your project's requirements and AI rules in one living tree — see where things stand, and give your AI only the rules that apply.**
-
-The requirements and rules scattered across your chats become a tree you can see: what the project looks like now and how far along each requirement is, at a glance. The AI gets only the rules for the file it is editing. Long-term requirements you mention are recorded automatically, and every change can be undone.
+ReqTree turns the requirements and rules scattered across your chats into one tree. In VS Code you can see which requirements the project has and how far along each one is. When the AI edits a file, it gets only the rules that apply there. Long-term requirements you mention in chat are recorded in the background, and every change can be undone.
 
 For [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex), with a VS Code extension. **English** | [中文](README.md)
 
 ![ReqTree mind map](docs/images/en/ui-map.png)
 
-## Sound familiar?
+## Why this exists
 
 You work with an AI assistant on a long project. A few weeks in, your rules are everywhere: said once in chat, written once in CLAUDE.md, stored once in the assistant's memory, copied again into a project doc. Then you change your mind, update one of those places, and the others keep the old version.
 
@@ -18,30 +16,30 @@ And the longer the conversation, the more the assistant forgets. After context c
 
 ![Rules scattered across many places](docs/images/en/pain.png)
 
-The author audited their own course project after a few months of work: 21 rule documents, over 80,000 characters, **237 duplicated, contradictory or outdated rules**. One document said "run only one agent at a time", another said "two or three chapters can run in parallel"; the same "three checks" rule had been copied 15 times.
+The author audited their own course project after a few months of work: 21 rule documents, over 80,000 characters, 237 duplicated, contradictory or outdated rules. One document said "run only one agent at a time", another said "two or three chapters can run in parallel"; the same "three checks" rule had been copied 15 times.
 
-## What it does for you
+## What it does
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often — what does the project look like now? → One tree shows it all: how far each part is, which rules are current; every change is logged and undoable"><br><sub>Problem</sub><br>Requirements changed so often — what does the project look like now?<br><sub>ReqTree</sub><br><b>One tree shows it all: how far each part is, which rules are current; every change is logged and undoable</b></td>
-<td width="50%" valign="top"><img src="docs/images/en/use-2-one-place.png" alt="The same rule lives in four places. Which one counts? → Every rule lives in one file, in exactly one place"><br><sub>Problem</sub><br>The same rule lives in four places. Which one counts?<br><sub>ReqTree</sub><br><b>Every rule lives in one file, in exactly one place</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often — what does the project look like now? → One tree shows it all: how far each part is, which rules are current; every change is logged and undoable"><br><sub>Problem</sub><br>Requirements changed so often — what does the project look like now?<br><sub>ReqTree</sub><br>One tree shows it all: how far each part is, which rules are current; every change is logged and undoable</td>
+<td width="50%" valign="top"><img src="docs/images/en/use-2-one-place.png" alt="The same rule lives in four places. Which one counts? → Every rule lives in one file, in exactly one place"><br><sub>Problem</sub><br>The same rule lives in four places. Which one counts?<br><sub>ReqTree</sub><br>Every rule lives in one file, in exactly one place</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-3-rewrite-not-append.png" alt="The same rule gets added again and again → The recorder rewrites the original instead of adding; undo in one click"><br><sub>Problem</sub><br>The same rule gets added again and again<br><sub>ReqTree</sub><br><b>The recorder rewrites the original instead of adding; undo in one click</b></td>
-<td width="50%" valign="top"><img src="docs/images/en/use-4-survive-compaction.png" alt="Long chats and compaction make the AI forget the rules → Rules use Claude Code's native mechanism and survive compaction and subagents"><br><sub>Problem</sub><br>Long chats and compaction make the AI forget the rules<br><sub>ReqTree</sub><br><b>Rules use Claude Code's native mechanism and survive compaction and subagents</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-3-rewrite-not-append.png" alt="The same rule gets added again and again → The recorder rewrites the original instead of adding; undo in one click"><br><sub>Problem</sub><br>The same rule gets added again and again<br><sub>ReqTree</sub><br>The recorder rewrites the original instead of adding; undo in one click</td>
+<td width="50%" valign="top"><img src="docs/images/en/use-4-survive-compaction.png" alt="Long chats and compaction make the AI forget the rules → Rules use Claude Code's native mechanism and survive compaction and subagents"><br><sub>Problem</sub><br>Long chats and compaction make the AI forget the rules<br><sub>ReqTree</sub><br>Rules use Claude Code's native mechanism and survive compaction and subagents</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-5-load-on-demand.png" alt="Every rule gets stuffed into the context → Only the rules for the file being edited come along"><br><sub>Problem</sub><br>Every rule gets stuffed into the context<br><sub>ReqTree</sub><br><b>Only the rules for the file being edited come along</b></td>
-<td width="50%" valign="top"><img src="docs/images/en/use-6-override.png" alt="Parent and child rules contradict each other → A child requirement overrides its parent, only within its own scope"><br><sub>Problem</sub><br>Parent and child rules contradict each other<br><sub>ReqTree</sub><br><b>A child requirement overrides its parent, only within its own scope</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-5-load-on-demand.png" alt="Every rule gets stuffed into the context → Only the rules for the file being edited come along"><br><sub>Problem</sub><br>Every rule gets stuffed into the context<br><sub>ReqTree</sub><br>Only the rules for the file being edited come along</td>
+<td width="50%" valign="top"><img src="docs/images/en/use-6-override.png" alt="Parent and child rules contradict each other → A child requirement overrides its parent, only within its own scope"><br><sub>Problem</sub><br>Parent and child rules contradict each other<br><sub>ReqTree</sub><br>A child requirement overrides its parent, only within its own scope</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-7-live-status.png" alt="What is the AI working on right now? → The sidebar and map show it live"><br><sub>Problem</sub><br>What is the AI working on right now?<br><sub>ReqTree</sub><br><b>The sidebar and map show it live</b></td>
-<td width="50%" valign="top"><img src="docs/images/en/use-8-click-not-markdown.png" alt="Hand-editing Markdown → Add rules, change status, undo — all by clicking"><br><sub>Problem</sub><br>Hand-editing Markdown<br><sub>ReqTree</sub><br><b>Add rules, change status, undo — all by clicking</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-7-live-status.png" alt="What is the AI working on right now? → The sidebar and map show it live"><br><sub>Problem</sub><br>What is the AI working on right now?<br><sub>ReqTree</sub><br>The sidebar and map show it live</td>
+<td width="50%" valign="top"><img src="docs/images/en/use-8-click-not-markdown.png" alt="Hand-editing Markdown → Add rules, change status, undo — all by clicking"><br><sub>Problem</sub><br>Hand-editing Markdown<br><sub>ReqTree</sub><br>Add rules, change status, undo — all by clicking</td>
 </tr>
 </table>
 
-## Screenshots
+## The interface
 
 | Sidebar (dark theme) | Mind map (light theme): select a requirement and the other branches fade |
 |---|---|
@@ -152,7 +150,7 @@ A simulated 32-turn conversation: the user gradually states 13 long-term require
 
 ### How messy are real rule documents?
 
-The author audited a course project after a few months of work. Across 21 rule documents the problems sit mostly **across files**: the same rule copied in several places, updated in one and stale in the others; one file says "run one agent at a time", another says "two or three chapters can run in parallel".
+The author audited a course project after a few months of work. Across 21 rule documents the problems sit mostly across files: the same rule copied in several places, updated in one and stale in the others; one file says "run one agent at a time", another says "two or three chapters can run in parallel".
 
 ![Audit of real rule documents](docs/images/en/chart-audit.png)
 
@@ -177,7 +175,7 @@ ReqTree missed fewer requirements, kept fewer overturned rules, and ended with a
 ## Current limits
 
 - Works with Claude Code and OpenAI Codex. Codex has no path-scoped rules, so ReqTree uses an index in `AGENTS.md` plus hooks that deliver the right rules (see docs/codex.md).
-- The recorder relies on a small model and occasionally files a rule in the wrong place. You can fix it in the panel, or undo it under "Recent changes".
+- The recorder relies on a small model and occasionally files a rule in the wrong place; when you change your mind without saying which rule you are replacing, the old one may stay. You can fix it in the panel, or undo it under "Recent changes".
 - Each turn costs one extra Haiku call, run in the background (about 6 seconds).
 - Developed on Windows; macOS and Linux are covered by CI.
 
