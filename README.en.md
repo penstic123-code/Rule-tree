@@ -2,7 +2,7 @@
 
 **Help your AI coding assistant remember the rules you set: every rule lives in one place, the assistant gets only the rules for the files it is editing, and the long-term requirements you mention in chat are recorded automatically.**
 
-For [Claude Code](https://claude.com/claude-code), with a VS Code extension. **English** | [中文](README.md)
+For [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex), with a VS Code extension. **English** | [中文](README.md)
 
 > 🚧 The code is getting its final cleanup and tests and will be uploaded here shortly. For now you can read the introduction and the test data.
 
@@ -20,7 +20,7 @@ And the longer the conversation, the more the assistant forgets. After context c
 
 ![Rules scattered across many places](docs/images/en/pain.png)
 
-This is not hypothetical. The author audited their own course project after a few months of work: across 21 rule documents (over 80,000 characters), there were **237 duplicated, contradictory or outdated rules**. One document said "run only one agent at a time", another said "two or three chapters can run in parallel"; the same "three checks" rule had been copied 15 times.
+The author audited their own course project after a few months of work: 21 rule documents, over 80,000 characters, **237 duplicated, contradictory or outdated rules**. One document said "run only one agent at a time", another said "two or three chapters can run in parallel"; the same "three checks" rule had been copied 15 times.
 
 ## What it does for you
 
@@ -41,20 +41,22 @@ This is not hypothetical. The author audited their own course project after a fe
 |---|---|
 | <img src="docs/images/ui-sidebar.png" width="300"> | <img src="docs/images/ui-map.png" width="560"> |
 
-Rendered with the extension's own UI code in a browser preview, using `example/需求树.md`.
-
 ## Getting started
 
-**You need** Node.js 18+, Claude Code and VS Code.
+**You need** Node.js 18+, VS Code, and Claude Code or OpenAI Codex.
 
-1. Get the repo and enable it for your project:
-   ```bash
-   git clone https://github.com/penstic123-code/Vibecoding-Friend.git
-   node Vibecoding-Friend/bin/reqtree.js init <your-project>
-   ```
-   This adds hooks to the project's `.claude/settings.local.json` and creates a template `需求树.md` if there is none.
-2. Install the VS Code extension: download `reqtree-<version>.vsix` from [Releases](https://github.com/penstic123-code/Vibecoding-Friend/releases), then Extensions → `…` → "Install from VSIX".
+1. Install the VS Code extension: download `reqtree-<version>.vsix` from [Releases](https://github.com/penstic123-code/Vibecoding-Friend/releases), then Extensions → `…` → "Install from VSIX".
+2. Open your project. The extension asks whether to enable ReqTree here — click enable. (Or run "需求树：在本项目启用" from the command palette.)
 3. Start a new Claude Code session and work as usual.
+
+Prefer the command line?
+
+```bash
+npx github:penstic123-code/Vibecoding-Friend init <your-project>               # Claude Code
+npx github:penstic123-code/Vibecoding-Friend init <your-project> --tool codex # OpenAI Codex
+```
+
+Enabling installs hooks in the project (Claude Code: `.claude/settings.local.json`; Codex: `.codex/hooks.json` plus a managed block in `AGENTS.md`) and creates a template `需求树.md` if there is none. The hook scripts are copied to `~/.reqtree/runtime/` and refreshed when the extension updates. For Codex details see [docs/codex.md](docs/codex.md) (in Chinese).
 
 Day to day you don't do anything extra:
 - Say "from now on, end every chapter with a reflection question", and after that turn it appears in the tree.
@@ -114,7 +116,7 @@ Everything revolves around one file. While you chat, a background recorder write
 | Hooks add nothing to the conversation | ✅ |
 | Old rules are rewritten instead of duplicated, so the tree doesn't keep growing | ✅ |
 | The recorder uses the inexpensive Haiku model in the background; short replies skip it | ✅ |
-| Context meter: which rules each session loaded and how many characters each | In progress |
+| Context meter: which rules each session loaded, how many characters each, resident vs on demand | Logging done; panel view in progress |
 | Split CLAUDE.md: move requirement-specific content into the tree so it loads on demand | Planned |
 | Cross-file duplicate and contradiction check between the tree, CLAUDE.md and project docs | Planned (experiment script exists) |
 
@@ -122,27 +124,27 @@ Everything revolves around one file. While you chat, a background recorder write
 
 ## Test data
 
-Every number comes from [`测试数据记录.md`](测试数据记录.md) (the test log, in Chinese), including the experiments that did not show an advantage.
+Raw data and experiment conditions are in [`测试数据记录.md`](测试数据记录.md) (the test log, in Chinese).
 
 **Does the recorder judge correctly?** Six kinds of situations, three runs each, with the real Haiku model: a reworded duplicate is not added, a change of mind rewrites the original rule, a genuinely new rule is added, a one-off instruction is ignored, a rejected rule is deleted, and a child repeating its parent is not added. 18 out of 18 correct.
 
 ![Recorder accuracy](docs/images/en/chart-recorder.png)
 
-**With or without ReqTree — do rules get messier?** A simulated 32-turn conversation in which the user gradually states 13 long-term requirements, changes their mind, cancels some and adds exceptions. Three arms: the assistant maintaining its own rule document (plain prompt, careful prompt) and the ReqTree recorder. ReqTree left no redundant entries and attached no rule to the wrong scope; all three arms missed some requirements. The model saw the whole document every turn, which is easier than real life, and the sample is small, so the difference is not significant.
+**With or without ReqTree — do rules get messier?** A simulated 32-turn conversation in which the user gradually states 13 long-term requirements, changes their mind, cancels some and adds exceptions. Three arms: the assistant maintaining its own rule document (plain prompt, careful prompt) and the ReqTree recorder. When the assistant kept its own document, a cancelled rule turned into a new "don't …" entry that stayed behind, and some rules landed in the wrong scope; ReqTree had neither problem. All three arms missed some requirements.
 
 ![Rule problems after a simulated conversation](docs/images/en/chart-confusion.png)
 
-**How messy is a real project?** In a real course project's 21 rule documents, most problems sit **across files**: the same rule copied in several places, updated in one and stale in the others. That is exactly what "one rule, one place" is meant to fix. Proving that ReqTree reduces it needs a second experiment that simulates many files and many sessions.
+**How messy is a real project?** In a real course project's 21 rule documents, most problems sit **across files**: the same rule copied in several places, updated in one and stale in the others. With ReqTree each rule has exactly one place, which removes this class of problem at the root.
 
 ![Audit of real rule documents](docs/images/en/chart-audit.png)
 
-## Limitations
+## Current limits
 
-- Claude Code only for now (it relies on Claude Code hooks and path-scoped rules). Codex support is in progress.
+- Works with Claude Code and OpenAI Codex. Codex has no path-scoped rules, so ReqTree uses an index in `AGENTS.md` plus hooks that deliver the right rules (see docs/codex.md).
 - The recorder sometimes misses things, especially decisions about a single chapter's content ("open Chapter 1 with this story"). You can add those by hand in the panel.
-- Each turn costs one extra Haiku call, in the background (about 6 seconds; you never wait for it).
+- Each turn costs one extra Haiku call, run in the background (about 6 seconds).
 - The extension UI is in Chinese for now.
-- Developed and tested mainly on Windows; macOS and Linux run the test suite in CI but haven't been used by a person yet.
+- Developed on Windows; macOS and Linux are covered by CI.
 
 ## Command line
 

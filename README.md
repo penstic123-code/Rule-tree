@@ -2,7 +2,7 @@
 
 **让 AI 编程助手记住你定下的规则：一条规则只放一处，改到哪个文件就带上哪条规则，你说过的长期要求自动记下来。**
 
-给 [Claude Code](https://claude.com/claude-code) 用，带一个 VS Code 插件。[English](README.en.md) | **中文**
+给 [Claude Code](https://claude.com/claude-code) 和 [OpenAI Codex](https://developers.openai.com/codex) 用，带一个 VS Code 插件。[English](README.en.md) | **中文**
 
 > 🚧 代码正在做最后的整理和测试，很快上传到这个仓库。现在你看到的是介绍和测试数据。
 
@@ -18,7 +18,7 @@
 
 ![规则散在好几个地方](docs/images/pain.png)
 
-这不是想象。作者用自己做了几个月的课程项目体检了一次：21 份规则文档、8 万多字里，查出 **237 处重复、矛盾和过时**。比如 agent 并行数，一份文档写"一次只开一个"，另一份写"可以两三章并行"；同一条"三道检查"在不同文件里抄了 15 遍。
+作者体检了自己做了几个月的课程项目：21 份规则文档、8 万多字里，有 **237 处重复、矛盾和过时**。比如 agent 并行数，一份文档写"一次只开一个"，另一份写"可以两三章并行"；同一条"三道检查"在不同文件里抄了 15 遍。
 
 ## 它有什么用
 
@@ -39,20 +39,22 @@
 |---|---|
 | <img src="docs/images/ui-sidebar.png" width="300"> | <img src="docs/images/ui-map.png" width="560"> |
 
-截图来自浏览器预览，用的是插件同一套界面代码和 `example/需求树.md`。
-
 ## 怎么用
 
-**需要**：Node.js 18 以上、Claude Code、VS Code。
+**需要**：Node.js 18 以上、VS Code，以及 Claude Code 或 OpenAI Codex。
 
-1. 下载这个仓库，在项目里启用：
-   ```bash
-   git clone https://github.com/penstic123-code/Vibecoding-Friend.git
-   node Vibecoding-Friend/bin/reqtree.js init <你的项目目录>
-   ```
-   它会在项目的 `.claude/settings.local.json` 里加上 hook，没有 `需求树.md` 就建一个模板。
-2. 装 VS Code 插件：从 [Releases](https://github.com/penstic123-code/Vibecoding-Friend/releases) 下载 `reqtree-<版本>.vsix`，在扩展面板 → `…` → 「从 VSIX 安装」。
+1. 装 VS Code 插件：从 [Releases](https://github.com/penstic123-code/Vibecoding-Friend/releases) 下载 `reqtree-<版本>.vsix`，在扩展面板 → `…` → 「从 VSIX 安装」。
+2. 打开你的项目，插件会问「在这个项目启用需求树？」，点「启用」。（也可以在命令面板运行「需求树：在本项目启用」。）
 3. 新开一个 Claude Code 会话，照常工作。
+
+不用插件、只用命令行也可以：
+
+```bash
+npx github:penstic123-code/Vibecoding-Friend init <你的项目目录>               # Claude Code
+npx github:penstic123-code/Vibecoding-Friend init <你的项目目录> --tool codex # OpenAI Codex
+```
+
+启用会在项目里装好 hook（Claude Code 写进 `.claude/settings.local.json`，Codex 写进 `.codex/hooks.json` 和 `AGENTS.md` 的一个自动维护区块），没有 `需求树.md` 就建一个模板。hook 程序复制到你的用户目录 `~/.reqtree/runtime/`，插件升级后自动更新。Codex 的用法和差别见 [docs/codex.md](docs/codex.md)。
 
 平时你什么都不用多做：
 - 你在对话里说"以后每章结尾都加一道思考题"，这一轮结束后它会出现在树上；
@@ -112,7 +114,7 @@
 | hook 不往对话里加内容 | ✅ |
 | 改写旧规则而不是新增，树不会越堆越长 | ✅ |
 | 记录员用便宜的 Haiku，在后台跑；短回复不调用模型 | ✅ |
-| 上下文用量表：面板显示每个会话加载了哪些规则、各多少字 | 计划中 |
+| 上下文用量表：每个会话加载了哪些规则、各多少字、哪些常驻哪些按需 | 记录已完成，面板显示开发中 |
 | 从 CLAUDE.md 拆分：把只属于某个需求的内容搬进树里按需加载 | 计划中 |
 | 跨文件查重查矛盾：需求树和 CLAUDE.md、项目文档之间 | 计划中（已有实验脚本） |
 
@@ -120,26 +122,26 @@
 
 ## 测试数据
 
-所有数字都来自 [`测试数据记录.md`](测试数据记录.md)，包括没有证明出优势的实验。
+原始数据和实验条件都在 [`测试数据记录.md`](测试数据记录.md)。
 
 **记录员判断得准不准。** 6 类情况各跑 3 遍，用真实的 Haiku：换说法重复的不加、改主意的改写原条、真正的新规则才加、一次性指令不记、否决的删掉、子需求重复上级的不加。18 次全对。
 
 ![记录员判断准确率](docs/images/chart-recorder.png)
 
-**装与不装，规则会不会更乱。** 模拟 32 轮对话，用户陆续提 13 条长期要求，中途改主意、取消、加例外。三组对比：AI 自己维护规则文档（普通提示词、认真提示词）和需求树的记录员。需求树没有留下多余条目，也没有挂错范围；三组都会漏记。这个实验每轮都把整份文档给模型看，比真实情况宽松，样本也小，差距不显著。
+**装与不装，规则会不会更乱。** 模拟 32 轮对话，用户陆续提 13 条长期要求，中途改主意、取消、加例外。三组对比：AI 自己维护规则文档（普通提示词、认真提示词）和需求树的记录员。AI 自己记时，取消的规则会变成一条新的"不要……"留在文档里，有的规则挂到了错误的范围；需求树没有这两种问题。三组都有漏记。
 
 ![模拟对话后的规则毛病](docs/images/chart-confusion.png)
 
-**真实项目里有多乱。** 体检一个真实课程项目的 21 份规则文档，查出的问题主要在**跨文件**这一层：同一条规则抄在好几处，改了一处，别处还是旧的。这正是"一条规则只放一处"要解决的问题；要证明需求树能减少这类问题，还需要模拟多文件、多会话的第二版实验。
+**真实项目里有多乱。** 体检一个真实课程项目的 21 份规则文档，问题集中在**跨文件**这一层：同一条规则抄在好几处，改了一处，别处还是旧的。需求树让每条规则只有一个位置，从根上避开这类问题。
 
 ![真实规则文档体检](docs/images/chart-audit.png)
 
-## 局限
+## 目前的限制
 
-- 目前只支持 Claude Code（依赖它的 hook 和路径规则）。
+- 支持 Claude Code 和 OpenAI Codex。Codex 没有按文件加载规则的机制，改用 `AGENTS.md` 里的索引加 hook 补送，见 [docs/codex.md](docs/codex.md)。
 - 记录员会漏记，尤其是"第 1 章开头用某个故事"这类只关于一章的内容决定。漏了可以在面板上手动加。
-- 每轮对话多一次 Haiku 调用（在后台，约 6 秒，不让你等）。
-- 主要在 Windows 上开发和测试；Mac 和 Linux 由 CI 跑测试，还没有真人用过。
+- 每轮对话多一次 Haiku 调用，在后台跑，约 6 秒。
+- 在 Windows 上开发；Mac 和 Linux 由 CI 跑测试。
 
 ## 命令行
 
