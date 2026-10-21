@@ -1,4 +1,4 @@
-# Vibecoding Friend · ReqTree
+# Vibe Friend · ReqTree
 
 **Help your AI coding assistant remember the rules you set: every rule lives in one place, the assistant gets only the rules for the files it is editing, and the long-term requirements you mention in chat are recorded automatically.**
 
@@ -24,16 +24,26 @@ The author audited their own course project after a few months of work: 21 rule 
 
 ## What it does for you
 
-| Your problem | How ReqTree helps |
-|---|---|
-| Requirements changed so often you no longer know what the project looks like | Open the sidebar or the mind map and see the whole picture: every requirement, how far along it is, and the current version of each rule. "Recent changes" shows what changed and who changed it, with undo |
-| Rules scattered across chat, CLAUDE.md, memory and docs — which one wins? | All requirements and rules live in one file, `需求树.md` (the tree file). Each rule has exactly one place |
-| Rules pile up; the same idea gets added again in different words | A background recorder looks for an existing rule on the same topic and **rewrites it** instead of adding a new one. Every change can be undone |
-| Long chats and compaction make the assistant forget | Rules are compiled into Claude Code's native rule files, which still apply after compaction and inside subagents |
-| Stuffing every rule into the context is costly and distracting | The assistant gets a requirement's rules only when it touches that requirement's files |
-| Parent and child rules conflict ("paragraphs ≤ 4 lines" everywhere, but Chapter 1's opening may be longer) | A child requirement overrides a parent rule with the same `[key]`, only within its own scope |
-| You can't tell which requirement the assistant is working on | The sidebar and mind map show it live |
-| You don't want to hand-edit Markdown | Add, edit and delete rules, change status, set files, undo — all by clicking |
+Each picture: the problem on the left, how ReqTree solves it on the right.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often you lost track → see the whole picture, every change logged and undoable"></td>
+<td width="50%"><img src="docs/images/en/use-2-one-place.png" alt="Rules scattered in four places → each rule has one place"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/en/use-3-rewrite-not-append.png" alt="Similar rules pile up → the recorder rewrites the original"></td>
+<td width="50%"><img src="docs/images/en/use-4-survive-compaction.png" alt="Compaction makes the AI forget → native rules survive it"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/en/use-5-load-on-demand.png" alt="Every rule stuffed into context → only the rules for the file being edited"></td>
+<td width="50%"><img src="docs/images/en/use-6-override.png" alt="Parent and child rules conflict → the child overrides within its scope"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/en/use-7-live-status.png" alt="What is the AI working on? → shown live"></td>
+<td width="50%"><img src="docs/images/en/use-8-click-not-markdown.png" alt="No hand-editing Markdown → click everything in the panel"></td>
+</tr>
+</table>
 
 ## Screenshots
 
@@ -45,15 +55,15 @@ The author audited their own course project after a few months of work: 21 rule 
 
 **You need** Node.js 18+, VS Code, and Claude Code or OpenAI Codex.
 
-1. Install the VS Code extension: download `reqtree-<version>.vsix` from [Releases](https://github.com/penstic123-code/Vibecoding-Friend/releases), then Extensions → `…` → "Install from VSIX".
+1. Install the VS Code extension: download `reqtree-<version>.vsix` from [Releases](https://github.com/penstic123-code/Vibe-Friend/releases), then Extensions → `…` → "Install from VSIX".
 2. Open your project. The extension asks whether to enable ReqTree here — click enable. (Or run "需求树：在本项目启用" from the command palette.)
 3. Start a new Claude Code session and work as usual.
 
 Prefer the command line?
 
 ```bash
-npx github:penstic123-code/Vibecoding-Friend init <your-project>               # Claude Code
-npx github:penstic123-code/Vibecoding-Friend init <your-project> --tool codex # OpenAI Codex
+npx github:penstic123-code/Vibe-Friend init <your-project>               # Claude Code
+npx github:penstic123-code/Vibe-Friend init <your-project> --tool codex # OpenAI Codex
 ```
 
 Enabling installs hooks in the project (Claude Code: `.claude/settings.local.json`; Codex: `.codex/hooks.json` plus a managed block in `AGENTS.md`) and creates a template `需求树.md` if there is none. The hook scripts are copied to `~/.reqtree/runtime/` and refreshed when the extension updates. For Codex details see [docs/codex.md](docs/codex.md) (in Chinese).

@@ -1,4 +1,4 @@
-# Vibecoding Friend · 需求树 ReqTree
+# Vibe Friend · 需求树 ReqTree
 
 **让 AI 编程助手记住你定下的规则：一条规则只放一处，改到哪个文件就带上哪条规则，你说过的长期要求自动记下来。**
 
@@ -22,16 +22,26 @@
 
 ## 它有什么用
 
-| 你的麻烦 | 需求树怎么帮你 |
-|---|---|
-| 需求改了又改，项目现在什么样，自己都说不清了 | 打开侧栏或导图，一眼看全貌：有哪些需求、每个做到哪一步、现在生效的是哪版规则。「最近改动」里看得到每次改了什么、谁改的，改错了能撤销 |
-| 规则散在聊天、CLAUDE.md、记忆、文档里，不知道以哪份为准 | 所有需求和规则写在一个文件 `需求树.md` 里，每条规则只有一个位置 |
-| 规则越堆越多，相似的说法加了一遍又一遍 | 后台记录员先找同主题的旧规则，**改写原条**，不新增；记错了一键撤销 |
-| 对话一长、上下文一压缩，AI 就忘了规则 | 规则编译成 Claude Code 原生的规则文件，压缩后、子 agent 里照样生效 |
-| 所有规则一股脑塞进上下文，又贵又分散注意力 | 改到哪个文件，才带上那个需求的规则；别的需求的规则不占上下文 |
-| 母规则和子规则打架（全课"段落 ≤4 行"，第 1 章开场想放宽） | 子需求用同一个 `[键]` 明确覆盖母规则，只在自己的范围里生效 |
-| 不知道 AI 正在做哪个需求、哪些做完了 | VS Code 侧栏和导图实时显示 AI 正在改哪个需求，状态一目了然 |
-| 不想手写 Markdown | 加规则、改规则、改状态、设对应文件、撤销，全部能在面板上点 |
+每张图左边是麻烦，右边是需求树怎么解决。
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/use-1-change-tracking.png" alt="需求改了又改，项目什么样说不清 → 一棵树看全貌，改动有记录能撤销"></td>
+<td width="50%"><img src="docs/images/use-2-one-place.png" alt="规则散在四处 → 每条规则只有一个位置"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/use-3-rewrite-not-append.png" alt="相似规则越堆越多 → 记录员改写原条"></td>
+<td width="50%"><img src="docs/images/use-4-survive-compaction.png" alt="上下文一压缩就忘规则 → 原生规则压缩后照样生效"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/use-5-load-on-demand.png" alt="所有规则塞进上下文 → 改到哪个文件才带哪条规则"></td>
+<td width="50%"><img src="docs/images/use-6-override.png" alt="母规则子规则打架 → 子需求在自己范围里覆盖"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/use-7-live-status.png" alt="不知道 AI 在做什么 → 实时显示 AI 正在改哪个需求"></td>
+<td width="50%"><img src="docs/images/use-8-click-not-markdown.png" alt="不想手写 Markdown → 全部能在面板上点"></td>
+</tr>
+</table>
 
 ## 看一眼
 
@@ -43,15 +53,15 @@
 
 **需要**：Node.js 18 以上、VS Code，以及 Claude Code 或 OpenAI Codex。
 
-1. 装 VS Code 插件：从 [Releases](https://github.com/penstic123-code/Vibecoding-Friend/releases) 下载 `reqtree-<版本>.vsix`，在扩展面板 → `…` → 「从 VSIX 安装」。
+1. 装 VS Code 插件：从 [Releases](https://github.com/penstic123-code/Vibe-Friend/releases) 下载 `reqtree-<版本>.vsix`，在扩展面板 → `…` → 「从 VSIX 安装」。
 2. 打开你的项目，插件会问「在这个项目启用需求树？」，点「启用」。（也可以在命令面板运行「需求树：在本项目启用」。）
 3. 新开一个 Claude Code 会话，照常工作。
 
 不用插件、只用命令行也可以：
 
 ```bash
-npx github:penstic123-code/Vibecoding-Friend init <你的项目目录>               # Claude Code
-npx github:penstic123-code/Vibecoding-Friend init <你的项目目录> --tool codex # OpenAI Codex
+npx github:penstic123-code/Vibe-Friend init <你的项目目录>               # Claude Code
+npx github:penstic123-code/Vibe-Friend init <你的项目目录> --tool codex # OpenAI Codex
 ```
 
 启用会在项目里装好 hook（Claude Code 写进 `.claude/settings.local.json`，Codex 写进 `.codex/hooks.json` 和 `AGENTS.md` 的一个自动维护区块），没有 `需求树.md` 就建一个模板。hook 程序复制到你的用户目录 `~/.reqtree/runtime/`，插件升级后自动更新。Codex 的用法和差别见 [docs/codex.md](docs/codex.md)。
