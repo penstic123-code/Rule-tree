@@ -6,7 +6,7 @@ For [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://dev
 
 ![ReqTree mind map](docs/images/en/ui-map.png)
 
-## Why this exists
+## Sound familiar?
 
 You work with an AI assistant on a long project. A few weeks in, your rules are everywhere: said once in chat, written once in CLAUDE.md, stored once in the assistant's memory, copied again into a project doc. Then you change your mind, update one of those places, and the others keep the old version.
 
