@@ -12,6 +12,8 @@
 
 和 AI 一起做一个长期项目，几周下来，规则散得到处都是：聊天记录里说过一遍，CLAUDE.md 里写过一遍，AI 的记忆里存过一遍，项目文档里又抄了一遍。后来你改了主意，只改了其中一处，剩下几处还是旧说法。
 
+需求也一样。一个功能改了又改，三周前定的方案被推翻两次，做到后来，连你自己都说不清项目现在是什么样：哪些需求做完了，哪些还在做，哪条规则是最新的说法。
+
 对话一长，AI 开始忘事。上下文被压缩以后，早先定好的"段落不超过 4 行"不见了；派出去的子 agent 只拿到一部分规则；你问它"我们之前怎么定的"，它从三份互相矛盾的文档里挑一份。
 
 ![规则散在好几个地方](docs/images/pain.png)
@@ -22,6 +24,7 @@
 
 | 你的麻烦 | 需求树怎么帮你 |
 |---|---|
+| 需求改了又改，项目现在什么样，自己都说不清了 | 打开侧栏或导图，一眼看全貌：有哪些需求、每个做到哪一步、现在生效的是哪版规则。「最近改动」里看得到每次改了什么、谁改的，改错了能撤销 |
 | 规则散在聊天、CLAUDE.md、记忆、文档里，不知道以哪份为准 | 所有需求和规则写在一个文件 `需求树.md` 里，每条规则只有一个位置 |
 | 规则越堆越多，相似的说法加了一遍又一遍 | 后台记录员先找同主题的旧规则，**改写原条**，不新增；记错了一键撤销 |
 | 对话一长、上下文一压缩，AI 就忘了规则 | 规则编译成 Claude Code 原生的规则文件，压缩后、子 agent 里照样生效 |
@@ -168,13 +171,13 @@ MIT
 
 **ReqTree keeps the rules you give your AI coding assistant in one place, loads only the rules that matter for the file being edited, and records your long-term requirements automatically.** Built for Claude Code, with a VS Code extension.
 
-**The problem.** On a long project, rules end up scattered across chat history, CLAUDE.md, the assistant's memory and project docs. You change your mind in one place and the others go stale. Long chats and context compaction make the assistant forget. An audit of a real course project found 237 duplicated, contradictory or outdated rules across 21 rule documents.
+**The problem.** On a long project, rules end up scattered across chat history, CLAUDE.md, the assistant's memory and project docs. You change your mind in one place and the others go stale. Requirements get revised so many times that you lose track of what the project currently is. Long chats and context compaction make the assistant forget. An audit of a real course project found 237 duplicated, contradictory or outdated rules across 21 rule documents.
 
 **What it does.**
 - One file, `需求树.md` (a Markdown tree): headings are requirements with a status, list items are rules. Child requirements can override a parent rule within their own scope.
 - Each requirement is compiled into a native Claude Code path-scoped rule (`.claude/rules/reqtree/<ID>.md` with `paths:`), so rules load only when the assistant touches matching files, and keep working inside subagents and after compaction.
 - After each turn, a background recorder (Claude Haiku) reads what you said, rewrites the existing rule on the same topic instead of adding a near-duplicate, and logs every change with an undo.
-- A VS Code sidebar and mind map show the tree, which requirement the assistant is working on right now, and let you edit everything by clicking.
+- A VS Code sidebar and mind map give you the whole picture at a glance — every requirement, how far along it is, and the current version of each rule — and show the tree, which requirement the assistant is working on right now, and let you edit everything by clicking.
 
 **Install.** `git clone` this repo, run `node bin/reqtree.js init <your-project>`, install the `.vsix` from Releases, then start a new Claude Code session. Requires Node.js 18+.
 
