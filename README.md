@@ -2,7 +2,7 @@
 
 **让 AI 编程助手记住你定下的规则：一条规则只放一处，改到哪个文件就带上哪条规则，你说过的长期要求自动记下来。**
 
-给 [Claude Code](https://claude.com/claude-code) 用，带一个 VS Code 插件。[English](#english)
+给 [Claude Code](https://claude.com/claude-code) 用，带一个 VS Code 插件。[English](README.en.md) | **中文**
 
 > 🚧 代码正在做最后的整理和测试，很快上传到这个仓库。现在你看到的是介绍和测试数据。
 
@@ -164,25 +164,3 @@ node test/eval-confusion.js 2     # 装与不装的对照实验（约 200 次调
 ## 许可
 
 MIT
-
----
-
-## English
-
-**ReqTree keeps the rules you give your AI coding assistant in one place, loads only the rules that matter for the file being edited, and records your long-term requirements automatically.** Built for Claude Code, with a VS Code extension.
-
-**The problem.** On a long project, rules end up scattered across chat history, CLAUDE.md, the assistant's memory and project docs. You change your mind in one place and the others go stale. Requirements get revised so many times that you lose track of what the project currently is. Long chats and context compaction make the assistant forget. An audit of a real course project found 237 duplicated, contradictory or outdated rules across 21 rule documents.
-
-**What it does.**
-- One file, `需求树.md` (a Markdown tree): headings are requirements with a status, list items are rules. Child requirements can override a parent rule within their own scope.
-- Each requirement is compiled into a native Claude Code path-scoped rule (`.claude/rules/reqtree/<ID>.md` with `paths:`), so rules load only when the assistant touches matching files, and keep working inside subagents and after compaction.
-- After each turn, a background recorder (Claude Haiku) reads what you said, rewrites the existing rule on the same topic instead of adding a near-duplicate, and logs every change with an undo.
-- A VS Code sidebar and mind map give you the whole picture at a glance — every requirement, how far along it is, and the current version of each rule — and show the tree, which requirement the assistant is working on right now, and let you edit everything by clicking.
-
-**Install.** `git clone` this repo, run `node bin/reqtree.js init <your-project>`, install the `.vsix` from Releases, then start a new Claude Code session. Requires Node.js 18+.
-
-**Evidence.** Recorder accuracy with real Haiku: 18/18 across six cases. A 32-turn simulated comparison showed no extra or mis-scoped rules with ReqTree (vs. 1.0 and 0.5 per run without), but the sample is small and every arm missed some requirements. All raw numbers are in `测试数据记录.md`.
-
-**Limitations.** Claude Code only; the UI is currently in Chinese; developed on Windows (macOS/Linux covered by CI only).
-
-License: MIT
