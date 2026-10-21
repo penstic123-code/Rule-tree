@@ -67,7 +67,7 @@ function run(hook, input, env = {}) {
 }
 const ctx = o => o && o.hookSpecificOutput && o.hookSpecificOutput.additionalContext;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function waitFor(fn, ms = 15000) {
+async function waitFor(fn, ms = 45000) {  // Windows CI 上起后台进程很慢
   for (const end = Date.now() + ms; Date.now() < end; await sleep(50)) if (fn()) return true;
   return false;
 }

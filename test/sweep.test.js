@@ -35,7 +35,7 @@ function project() {
   return dir;
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function waitFor(fn, ms = 15000) {
+async function waitFor(fn, ms = 45000) {  // Windows CI 上起后台进程很慢（杀毒扫描），15 秒不够
   for (const end = Date.now() + ms; Date.now() < end; await sleep(50)) if (fn()) return true;
   return false;
 }
