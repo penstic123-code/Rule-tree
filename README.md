@@ -22,24 +22,22 @@
 
 ## 它有什么用
 
-每张图左边是麻烦，右边是需求树怎么解决。
-
 <table>
 <tr>
-<td width="50%"><img src="docs/images/use-1-change-tracking.png" alt="需求改了又改，项目什么样说不清 → 一棵树看全貌，改动有记录能撤销"></td>
-<td width="50%"><img src="docs/images/use-2-one-place.png" alt="规则散在四处 → 每条规则只有一个位置"></td>
+<td width="50%" valign="top"><img src="docs/images/use-1-change-tracking.png" alt="需求改了又改，现在到底是什么样？ → 一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销"><br><sub>麻烦</sub><br>需求改了又改，现在到底是什么样？<br><sub>需求树</sub><br><b>一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-2-one-place.png" alt="规则散在四处，不知道以哪份为准 → 所有规则写在一个文件里，每条只有一个位置"><br><sub>麻烦</sub><br>规则散在四处，不知道以哪份为准<br><sub>需求树</sub><br><b>所有规则写在一个文件里，每条只有一个位置</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/use-3-rewrite-not-append.png" alt="相似规则越堆越多 → 记录员改写原条"></td>
-<td width="50%"><img src="docs/images/use-4-survive-compaction.png" alt="上下文一压缩就忘规则 → 原生规则压缩后照样生效"></td>
+<td width="50%" valign="top"><img src="docs/images/use-3-rewrite-not-append.png" alt="相似的规则加了一遍又一遍 → 记录员改写原条，不新增；记错了一键撤销"><br><sub>麻烦</sub><br>相似的规则加了一遍又一遍<br><sub>需求树</sub><br><b>记录员改写原条，不新增；记错了一键撤销</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-4-survive-compaction.png" alt="对话一长、上下文一压缩，AI 就忘了规则 → 规则交给 Claude Code 原生机制，压缩后、子 agent 里照样生效"><br><sub>麻烦</sub><br>对话一长、上下文一压缩，AI 就忘了规则<br><sub>需求树</sub><br><b>规则交给 Claude Code 原生机制，压缩后、子 agent 里照样生效</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/use-5-load-on-demand.png" alt="所有规则塞进上下文 → 改到哪个文件才带哪条规则"></td>
-<td width="50%"><img src="docs/images/use-6-override.png" alt="母规则子规则打架 → 子需求在自己范围里覆盖"></td>
+<td width="50%" valign="top"><img src="docs/images/use-5-load-on-demand.png" alt="所有规则一股脑塞进上下文 → 改到哪个文件，才带上那个需求的规则"><br><sub>麻烦</sub><br>所有规则一股脑塞进上下文<br><sub>需求树</sub><br><b>改到哪个文件，才带上那个需求的规则</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-6-override.png" alt="母规则和子规则打架 → 子需求明确覆盖母规则，只在自己的范围里生效"><br><sub>麻烦</sub><br>母规则和子规则打架<br><sub>需求树</sub><br><b>子需求明确覆盖母规则，只在自己的范围里生效</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/use-7-live-status.png" alt="不知道 AI 在做什么 → 实时显示 AI 正在改哪个需求"></td>
-<td width="50%"><img src="docs/images/use-8-click-not-markdown.png" alt="不想手写 Markdown → 全部能在面板上点"></td>
+<td width="50%" valign="top"><img src="docs/images/use-7-live-status.png" alt="不知道 AI 正在做哪个需求 → 侧栏和导图实时显示 AI 正在改哪个需求"><br><sub>麻烦</sub><br>不知道 AI 正在做哪个需求<br><sub>需求树</sub><br><b>侧栏和导图实时显示 AI 正在改哪个需求</b></td>
+<td width="50%" valign="top"><img src="docs/images/use-8-click-not-markdown.png" alt="不想手写 Markdown → 加规则、改状态、撤销，全部能在面板上点"><br><sub>麻烦</sub><br>不想手写 Markdown<br><sub>需求树</sub><br><b>加规则、改状态、撤销，全部能在面板上点</b></td>
 </tr>
 </table>
 

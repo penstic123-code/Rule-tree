@@ -24,24 +24,22 @@ The author audited their own course project after a few months of work: 21 rule 
 
 ## What it does for you
 
-Each picture: the problem on the left, how ReqTree solves it on the right.
-
 <table>
 <tr>
-<td width="50%"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often you lost track → see the whole picture, every change logged and undoable"></td>
-<td width="50%"><img src="docs/images/en/use-2-one-place.png" alt="Rules scattered in four places → each rule has one place"></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often — what does the project look like now? → One tree shows it all: how far each part is, which rules are current; every change is logged and undoable"><br><sub>Problem</sub><br>Requirements changed so often — what does the project look like now?<br><sub>ReqTree</sub><br><b>One tree shows it all: how far each part is, which rules are current; every change is logged and undoable</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-2-one-place.png" alt="The same rule lives in four places. Which one counts? → Every rule lives in one file, in exactly one place"><br><sub>Problem</sub><br>The same rule lives in four places. Which one counts?<br><sub>ReqTree</sub><br><b>Every rule lives in one file, in exactly one place</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/en/use-3-rewrite-not-append.png" alt="Similar rules pile up → the recorder rewrites the original"></td>
-<td width="50%"><img src="docs/images/en/use-4-survive-compaction.png" alt="Compaction makes the AI forget → native rules survive it"></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-3-rewrite-not-append.png" alt="The same rule gets added again and again → The recorder rewrites the original instead of adding; undo in one click"><br><sub>Problem</sub><br>The same rule gets added again and again<br><sub>ReqTree</sub><br><b>The recorder rewrites the original instead of adding; undo in one click</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-4-survive-compaction.png" alt="Long chats and compaction make the AI forget the rules → Rules use Claude Code's native mechanism and survive compaction and subagents"><br><sub>Problem</sub><br>Long chats and compaction make the AI forget the rules<br><sub>ReqTree</sub><br><b>Rules use Claude Code's native mechanism and survive compaction and subagents</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/en/use-5-load-on-demand.png" alt="Every rule stuffed into context → only the rules for the file being edited"></td>
-<td width="50%"><img src="docs/images/en/use-6-override.png" alt="Parent and child rules conflict → the child overrides within its scope"></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-5-load-on-demand.png" alt="Every rule gets stuffed into the context → Only the rules for the file being edited come along"><br><sub>Problem</sub><br>Every rule gets stuffed into the context<br><sub>ReqTree</sub><br><b>Only the rules for the file being edited come along</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-6-override.png" alt="Parent and child rules contradict each other → A child requirement overrides its parent, only within its own scope"><br><sub>Problem</sub><br>Parent and child rules contradict each other<br><sub>ReqTree</sub><br><b>A child requirement overrides its parent, only within its own scope</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/en/use-7-live-status.png" alt="What is the AI working on? → shown live"></td>
-<td width="50%"><img src="docs/images/en/use-8-click-not-markdown.png" alt="No hand-editing Markdown → click everything in the panel"></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-7-live-status.png" alt="What is the AI working on right now? → The sidebar and map show it live"><br><sub>Problem</sub><br>What is the AI working on right now?<br><sub>ReqTree</sub><br><b>The sidebar and map show it live</b></td>
+<td width="50%" valign="top"><img src="docs/images/en/use-8-click-not-markdown.png" alt="Hand-editing Markdown → Add rules, change status, undo — all by clicking"><br><sub>Problem</sub><br>Hand-editing Markdown<br><sub>ReqTree</sub><br><b>Add rules, change status, undo — all by clicking</b></td>
 </tr>
 </table>
 
