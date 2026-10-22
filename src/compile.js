@@ -25,7 +25,7 @@ function scopeOf(node) {
   return null;
 }
 
-const isRoot = node => !node.parent || !node.parent.parent;
+const { isRoot } = require('./common');
 
 // 这个节点的规则会不会自动加载给 AI：根节点全局加载；其他节点要自己或上级有文件对应。
 // 编译、面板提醒、check 三处共用，免得判断不一致

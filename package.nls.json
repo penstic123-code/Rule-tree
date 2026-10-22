@@ -11,5 +11,14 @@
   "config.language": "Language of the ReqTree panels and messages.",
   "config.language.auto": "Follow the VS Code display language",
   "config.language.zh": "Chinese",
-  "config.language.en": "English"
+  "config.language.en": "English",
+  "cmd.questions": "ReqTree: Questions waiting for you",
+  "cmd.checkup": "ReqTree: Check-up",
+  "config.askQuestions": "When the recorder is unsure (does a rule cover the whole project or just this part, does it replace an old rule, is a requirement done), it records the most likely option and asks you.",
+  "config.askQuestions.notify": "Ask with a notification (it does not block you)",
+  "config.askQuestions.panel": "Only show the count on the side bar icon; answer with \"ReqTree: Questions waiting for you\"",
+  "config.askQuestions.off": "Don't ask; keep the recorder's choice",
+  "config.memoryMode": "How ReqTree works with Claude Code's auto memory.",
+  "config.memoryMode.dedupe": "Keep auto memory; the check-up finds rules that are both in memory and in the tree and asks which copy to delete",
+  "config.memoryMode.treeOnly": "Turn off auto memory for this project (writes \"autoMemoryEnabled\": false to .claude/settings.local.json); the tree is the only record"
 }

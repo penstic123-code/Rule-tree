@@ -22,7 +22,7 @@
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/use-1-change-tracking.png" alt="需求改了又改，现在到底是什么样？ → 一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销"><br><sub>麻烦</sub><br>需求改了又改，现在到底是什么样？<br><sub>需求树</sub><br>一棵树看全貌：做到哪一步、哪版规则在生效；每次改动都有记录，能撤销</td>
+<td width="50%" valign="top"><img src="docs/images/use-1-change-tracking.png" alt="需求改了又改，现在到底是什么样？ → 一棵树看全貌：做到哪一步、哪版规则在生效；记录员和面板上的改动都有记录，能撤销"><br><sub>麻烦</sub><br>需求改了又改，现在到底是什么样？<br><sub>需求树</sub><br>一棵树看全貌：做到哪一步、哪版规则在生效；记录员和面板上的改动都有记录，能撤销</td>
 <td width="50%" valign="top"><img src="docs/images/use-2-one-place.png" alt="规则散在四处，不知道以哪份为准 → 所有规则写在一个文件里，每条只有一个位置"><br><sub>麻烦</sub><br>规则散在四处，不知道以哪份为准<br><sub>需求树</sub><br>所有规则写在一个文件里，每条只有一个位置</td>
 </tr>
 <tr>
@@ -103,7 +103,11 @@ npx github:penstic123-code/Vibe-Friend init <你的项目目录> --tool codex # 
 
 ![改到哪个文件，就只带上那条路上的规则](docs/images/scope.png)
 
-**记录员。** 每轮对话结束，一个 hook 在后台启动 Claude Haiku，只读你这一轮的原话和 AI 的最后回复。它先在树里找同主题的规则：找到就改写，没找到才新增；"帮我把这段改短"这类一次性指令不记，"好""继续"这类短回复直接跳过，不调用模型。改动立即生效，每一条都记进 `.reqtree/changes.jsonl` 并附带反操作，所以都能撤销。
+**记录员。** 每轮对话结束，一个 hook 在后台启动 Claude Haiku，把需求树和最近两轮对话（你的原话和 AI 的最后回复）交给它；每 8 轮和上下文压缩之前，还会把你最近说的话（最多 20 句）再交给它查一遍漏记。这些内容发给的是你本来就在用的模型服务（Claude Code 用 Anthropic，Codex 用 OpenAI 的 codex exec）。它先在树里找同主题的规则：找到就改写，没找到才新增；"帮我把这段改短"这类一次性指令不记，"好""继续"这类短回复直接跳过，不调用模型。改动立即生效，每一条都记进 `.reqtree/changes.jsonl` 并附带反操作，所以都能撤销。
+
+有把握的直接记，拿不准的问你。新说法和旧规则说的是同一件事时，记录员以最新的为准改写旧规则，哪怕你没说"改成"。有些事只有你能定：「第 5 章互动可以多一点」是这一章的例外，还是以后每章都这样？「手账风只用于第一篇」是收窄旧规则，还是另加一条？某一章算不算做完了？碰到这类情况，记录员先按最可能的意思记下，同时在 VS Code 右下角弹一条通知，列出几种做法让你选。不理它也没关系，先记下的那种一直有效；选了别的，原来那条自动撤销，换成你选的。标着正在做、好几天没动的需求，也会这样问一句做完没有。问题存在 `.reqtree/questions.jsonl`，七天没回答就按先记下的算。设置 `reqtree.askQuestions` 可以改成只在侧栏图标上显示个数，或者不问。
+
+另有一个「需求树：体检」命令（命令行是 `reqtree check --fix`）。它把同一个需求里几乎一样的规则合并成一条，留后写的那条；再调用一次 Haiku，找上下级说法冲突、又没写成覆盖的规则，比如全局写每章互动不超过 4 个、某门课写不超过 5 个，每一处变成同样的选择题。只在你运行它的时候才调用模型。
 
 ![记录员在后台记下长期要求](docs/images/recorder.png)
 
@@ -115,7 +119,8 @@ npx github:penstic123-code/Vibe-Friend init <你的项目目录> --tool codex # 
 | `src/compile.js` | 每个需求编译成一份原生规则；继承靠范围嵌套，覆盖写成"在本范围内以此为准" |
 | `src/store.js` | 加锁原子写、写完自动编译、改动记录与撤销、状态文件 |
 | `hooks/hook.js` | 发消息时确保规则最新；AI 改文件时记下属于哪个需求；一轮结束启动记录员 |
-| `hooks/recorder.js` | 用 Haiku 判断这一轮有没有长期要求，改写或新增规则 |
+| `hooks/recorder.js` | 用 Haiku 判断这一轮有没有长期要求，改写或新增规则；拿不准的记成问题 |
+| `src/questions.js`、`src/checkup.js` | 问题的存取、回答和撤销；久未动的需求；体检 |
 | `extension.js`、`media/` | VS Code 侧栏和导图 |
 
 ## 省上下文、省 token
@@ -175,7 +180,7 @@ npx github:penstic123-code/Vibe-Friend init <你的项目目录> --tool codex # 
 ## 目前的限制
 
 - 支持 Claude Code 和 OpenAI Codex。Codex 没有按文件加载规则的机制，改用 `AGENTS.md` 里的索引加 hook 补送，见 [docs/codex.md](docs/codex.md)。
-- 记录员靠小模型判断，偶尔会把规则挂错位置；你改口时如果没说明推翻的是哪条，旧规则可能还留着。面板上能直接改，「最近改动」里能撤销。
+- 记录员靠小模型判断，偶尔会把规则挂错位置。它察觉到拿不准时会问你，没察觉的错要靠你在面板上改，或者在「最近改动」里撤销。
 - 每轮对话多一次 Haiku 调用，在后台跑，约 6 秒。
 - 在 Windows 上开发；Mac 和 Linux 由 CI 跑测试。
 
@@ -186,7 +191,10 @@ node bin/reqtree.js init    <项目目录>         # 启用：写入 hook、编�
 node bin/reqtree.js tree    需求树.md          # 打印整棵树
 node bin/reqtree.js rules   需求树.md C2.1     # 某个需求实际生效的规则
 node bin/reqtree.js compile 需求树.md          # 手动编译（平时自动）
-node bin/reqtree.js check   需求树.md          # 重复编号、没有对应文件、很久没动的 🔨
+node bin/reqtree.js check   需求树.md          # 重复编号、重复规则、没有对应文件、很久没动的 🔨
+node bin/reqtree.js check   需求树.md --fix    # 体检：合并重复规则，冲突和久未动变成问题（加 --no-model 不调用模型）
+node bin/reqtree.js questions 需求树.md        # 等你回答的问题
+node bin/reqtree.js answer  需求树.md <问题ID> <选项序号|dismiss>
 ```
 
 **注意**：不要在用着 Claude Code 的时候用命令行强制重装插件（`code --install-extension --force`），那会重启 VS Code 的插件宿主，Claude Code 跟着重启。

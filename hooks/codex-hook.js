@@ -10,7 +10,6 @@
 // 其余（记下用户原话、启动记录员）交给 hook.js，记录员改用 codex exec 调小模型。
 // hook 出错不能挡住 Codex 干活：所有异常吞掉，记进临时目录的 codex-hook.log。
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { parse, nodeForFile, findById, pathOf } = require('../src/parser');
@@ -19,18 +18,8 @@ const codex = require('../src/targets/codex');
 const { mentionContext, isMachinePrompt } = require('../src/mention');
 
 const HOOK = path.join(__dirname, 'hook.js');
-const LOG_DIR = () => path.join(os.tmpdir(), 'reqtree');
-
-// 从 cwd 往上找需求树，到 git 根为止（Codex 可能在子目录里启动）
-function findTreeUp(dir) {
-  for (let d = path.resolve(dir); ;) {
-    const t = store.findTree(d);
-    if (t) return t;
-    const up = path.dirname(d);
-    if (up === d || fs.existsSync(path.join(d, '.git'))) return null;
-    d = up;
-  }
-}
+// 从 cwd 往上找需求树，到 git 根为止（Codex 可能在子目录里启动）；和 hook.js 共用一份
+const { tmpDir: LOG_DIR, findTreeUp } = require('../src/common');
 
 function readSession(file) {
   const s = store.readJson(file, null) || {};

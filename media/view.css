@@ -102,7 +102,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .lnk:hover { text-decoration: underline; }
 /* 焦点环：强调色，外扩 2px，不压住文字 */
-.btn:focus-visible, .ibtn:focus-visible, .dp .ib:focus-visible, .seg button:focus-visible, .inh-tg:focus-visible, .lnk:focus-visible, .kid:focus-visible,
+.btn:focus-visible, .ibtn:focus-visible, .dp .ib:focus-visible, .dp .st-btn:focus-visible, .inh-tg:focus-visible, .lnk:focus-visible, .kid:focus-visible,
 .menu button:focus-visible, .follow:focus-visible, .crumb:focus-visible, .tseg button:focus-visible, .tzoom button:focus-visible, .ttog:focus-visible,
 .dp .sec > summary:focus-visible, .sh-title strong:focus-visible {
   outline: 1px solid var(--accent); outline-offset: 2px;
@@ -220,6 +220,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .menu button:hover, .menu button:focus-visible { background: var(--vscode-menu-selectionBackground, var(--c-hover)); color: var(--vscode-menu-selectionForeground, inherit); }
 .menu button.danger { color: var(--danger); }
 .menu .tick { width: 12px; display: inline-flex; color: var(--c-text); }
+/* 状态菜单：「完成」的符号本身就是勾，不再用勾标当前项；当前项加粗、垫一层淡底（高对比度主题再加一圈边） */
+.menu.st-menu { min-width: 136px; }
+.menu.st-menu .tick { display: none; }
+.menu.st-menu [aria-checked="true"] { font-weight: 600; background: var(--c-raised); box-shadow: inset 0 0 0 1px var(--c-hc); }
+.menu.st-menu [aria-checked="true"]:hover, .menu.st-menu [aria-checked="true"]:focus-visible { background: var(--vscode-menu-selectionBackground, var(--c-hover)); }
+/* 「清除状态」和上面四项隔一根线，文字和状态名对齐（符号 14 + 间距 8） */
+.menu.st-menu [data-s=""] { position: relative; margin-top: 9px; padding-left: calc(var(--sp-2) + 22px); }
+.menu.st-menu [data-s=""]::before { content: ""; position: absolute; left: calc(-1 * var(--sp-1)); right: calc(-1 * var(--sp-1)); top: -5px; border-top: 1px solid var(--c-border); }
 
 .welcome { padding: 18px 14px; color: var(--c-muted); line-height: 1.6; }
 

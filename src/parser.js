@@ -280,100 +280,153 @@ function oneLine(op) {
   return out;
 }
 
+// 字面很像，意思却可能相反或换了数：「不超过 5 道」和「不超过 3 道」重合度 0.85。
+// 所以「同一条」还要数字一样、否定词一样多。数字连中文数字一起算（三道 / 五道）
+const numbersOf = s => (String(s).match(/[\d零一二两三四五六七八九十百千]+(?:\.\d+)?/g) || []).join(',');
+const negationsOf = s => (String(s).match(/[不别没无非勿禁]/g) || []).length;
+function sameMeaning(a, b) {
+  return similarity(a, b) >= DUPLICATE && numbersOf(a) === numbersOf(b) && negationsOf(a) === negationsOf(b);
+}
+
+// 模型转述旧规则时可能不逐字：在本节点里找最像的一条（≥ 0.5），而且要比第二像的明显更像，不然不知道指的是哪条。
+// sameNumbers：数字不同就不算（删规则时，「不超过 3 道」不能删掉「不超过 5 道」）
+function fuzzyRule(node, text, { sameNumbers = false } = {}) {
+  if (!node) return null;
+  const cands = node.rules
+    .filter(r => !sameNumbers || numbersOf(r.text) === numbersOf(text || ''))
+    .map(r => ({ r, s: similarity(r.text, text || '') })).sort((a, b) => b.s - a.s);
+  if (!cands[0] || cands[0].s < 0.5) return null;
+  if (cands[1] && cands[1].s === cands[0].s) return null;
+  return cands[0].r;
+}
+
+// 新规则和本节点或上级的某条规则像（≥ 0.7）时怎么办：
+//   意思一样（数字、否定词也一样）→ 重复，跳过
+//   意思不一样 → 本节点的：以最新为准改写那条（replace_rule）；上级的：在本节点覆盖它（override_rule，两边自动补同一个键）
+// 返回 'duplicate'、改写后的 op，或 null（不像，照常加）
+function nearRule(node, op) {
+  let best = null, score = 0;
+  for (let n = node; n && n.parent; n = n.parent) {
+    for (const r of n.rules) {
+      if (sameMeaning(r.text, op.text)) return 'duplicate';
+      const s = similarity(r.text, op.text);
+      if (s > score) { best = r; score = s; }
+    }
+  }
+  if (!best || score < DUPLICATE) return null;
+  if (best.owner === node) return { op: 'replace_rule', node: node.id, old: best.text, text: op.text };
+  return { op: 'override_rule', node: node.id, from: best.owner.id, text: best.text, new: op.text };
+}
+
 // ops（记录员和面板共用），都直接改成最终样子：
-//   {op:'add_rule', node, key?, text, index?}  新规则；和本节点或上级已有规则几乎一样就跳过；本节点已有同键规则就改写它（记成 replace_rule）。force 时都不查
+//   {op:'add_rule', node, key?, text, index?}  新规则。本节点已有同键规则 → 改写它（记成 replace_rule）；
+//                                              和本节点或上级的规则意思一样 → 跳过；字面像但数字或否定变了 → 本节点的改写、上级的覆盖（见 nearRule）。force 时都不查
 //   {op:'replace_rule', node, old, text}       改写已有规则，沿用旧的键
-//   {op:'remove_rule', node, text}             删除规则
+//   {op:'remove_rule', node, text}             删除规则（原文对不上时找本节点最像且唯一的一条）
 //   {op:'add_node', parent, id?, title}        新需求；没给 id 就自动分配
 //   {op:'add_files', node, globs[]}            加文件对应
 //   {op:'set_files', node, globs[]}            把文件对应整个换掉（面板用）
 //   {op:'set_status', node, status|null}       改状态
 //   {op:'rename_node', node, title}            改名（面板用）
 //   {op:'delete_node', node}                   删除需求和它下面的一切（面板用）
-//   {op:'override_rule', node, from, text, new} 在子需求里改写上级 from 节点的一条规则（面板用）：text 是上级原文，new 是新内容
+//   {op:'override_rule', node, from, text, new} 在子需求里改写上级 from 节点的一条规则：text 是上级原文，new 是新内容
 // 下面两个只出现在撤销里（反操作），不对外：
 //   {op:'restore_node', parent, before, at, lines}    放回删掉的需求：放在上级下面、原来的下一个兄弟之前
 //   {op:'set_key', node, text, key}                    还原 override_rule 给上级规则自动补的键
-// 返回 { text, applied[] }。每个 applied 带 undo：能把这一步撤回去的反操作。做不到的操作跳过。
+// 返回 { text, applied[], skipped[] }。每个 applied 带 undo：能把这一步撤回去的反操作。
+// 做不到的操作跳过，记进 skipped：{ op, reason }，reason 见 SKIP_REASON。
 // 不改调用方传进来的 op。文字、标题、键、文件对应里的换行一律压成空格（oneLine）。
 function applyOps(text, ops) {
   const nl = lineEnding(text);
-  const applied = [];
-  for (const raw of ops || []) {
-    const op = oneLine(raw);
+  const applied = [], skipped = [];
+  const queue = [...(ops || [])];
+  while (queue.length) {
+    const op = oneLine(queue.shift());
+    const skip = reason => { skipped.push({ op, reason }); };
+    if (!op || typeof op !== 'object') { skipped.push({ op, reason: 'unknown-op' }); continue; }
     const lines = text.split(/\r?\n/);
     const root = parse(text);
     const node = op.node && findById(root, op.node);
     let undo, extra = {};
     if (op.op === 'add_rule') {
-      if (!node || !op.text || !op.text.trim()) continue;
+      if (!node) { skip('no-node'); continue; }
+      if (!op.text || !op.text.trim()) { skip('empty'); continue; }
       // 一个节点里同一个键只能有一条：本节点已有同键规则就改写它，记成 replace_rule（上级有同键是覆盖，照加）。
-      // 放在去重之前：「4 行」改「5 行」字面几乎一样，会被去重当成重复吞掉。force（撤销、升级还原）不走这里
+      // 放在查重之前：「4 行」改「5 行」字面几乎一样。force（撤销、升级还原）不走这里
       const same = !op.force && op.key && node.rules.find(r => r.key === op.key);
       if (same) {
-        if (same.text === op.text.trim()) continue;
+        if (same.text === op.text.trim()) { skip('same'); continue; }
         lines[same.line] = ruleText(same.key, op.text);
         text = lines.join(nl);
         applied.push({ op: 'replace_rule', node: node.id, old: same.text, text: op.text.trim(), key: same.key,
           undo: [{ op: 'replace_rule', node: node.id, old: op.text.trim(), text: same.text, key: same.key }] });
         continue;
       }
-      if (!op.force && closestRule(node, op.text).score >= DUPLICATE) continue;
+      if (!op.force) {
+        const near = nearRule(node, op);
+        if (near === 'duplicate') { skip('duplicate'); continue; }
+        if (near) { queue.unshift(near); continue; }
+      }
       const own = node.rules;
       const at = op.index != null && own[op.index] ? own[op.index].line : bodyEnd(lines, node) + 1;
       lines.splice(at, 0, ruleText(op.key, op.text));
       undo = [{ op: 'remove_rule', node: node.id, text: op.text.trim() }];
     } else if (op.op === 'replace_rule') {
-      if (!node || !op.text || !op.text.trim()) continue;
-      // 先按原文找；模型转述旧规则时可能不逐字，退而找本节点里最像的一条
-      let old = findRule(node, op.old);
-      if (!old) {
-        const cands = node.rules.map(r => ({ r, s: similarity(r.text, op.old || '') })).sort((a, b) => b.s - a.s);
-        if (cands[0] && cands[0].s >= 0.5) old = cands[0].r;
-      }
-      if (!old || old.text === op.text.trim()) continue;
+      if (!node) { skip('no-node'); continue; }
+      if (!op.text || !op.text.trim()) { skip('empty'); continue; }
+      const old = findRule(node, op.old) || fuzzyRule(node, op.old);
+      if (!old) { skip('no-rule'); continue; }
+      if (old.text === op.text.trim()) { skip('same'); continue; }
       const key = op.key || old.key;
       lines[old.line] = ruleText(key, op.text);
       undo = [{ op: 'replace_rule', node: node.id, old: op.text.trim(), text: old.text, key: old.key }];
     } else if (op.op === 'remove_rule') {
-      const rule = findRule(node, op.text);
-      if (!rule) continue;
+      if (!node) { skip('no-node'); continue; }
+      const rule = findRule(node, op.text) || fuzzyRule(node, op.text, { sameNumbers: true });
+      if (!rule) { skip('no-rule'); continue; }
       lines.splice(rule.line, 1);
       undo = [{ op: 'add_rule', node: node.id, key: rule.key, text: rule.text, index: node.rules.indexOf(rule), force: true }];
+      extra = rule.text !== op.text ? { text: rule.text } : {};
     } else if (op.op === 'add_node') {
       const parent = op.parent ? findById(root, op.parent) : root.children[0];
-      if (!parent || !op.title || !op.title.trim()) continue;
+      if (!parent) { skip('no-node'); continue; }
+      if (!op.title || !op.title.trim()) { skip('empty'); continue; }
       const id = op.id || nextChildId(root, parent);
-      if (findById(root, id) || !ID_ONLY.test(id)) continue;
+      if (findById(root, id) || !ID_ONLY.test(id)) { skip('bad-id'); continue; }
       lines.splice(subtreeEnd(lines, parent) + 1, 0, '', `${'#'.repeat(Math.min(parent.level + 1, 6))} ${id} ${op.title.trim()}`);
       extra = { id };
       undo = [{ op: 'delete_node', node: id }];
     } else if (op.op === 'add_files') {
-      const globs = (op.globs || []).filter(g => g && node && !node.files.includes(g));
-      if (!node || !globs.length) continue;
+      if (!node) { skip('no-node'); continue; }
+      const globs = (op.globs || []).filter(g => g && !node.files.includes(g));
+      if (!globs.length) { skip('same'); continue; }
       // 文件对应写在标题正下方
       lines.splice(node.line + 1, 0, `> 文件：${globs.join(', ')}`);
       undo = [{ op: 'set_files', node: node.id, globs: node.files }];
     } else if (op.op === 'set_files') {
-      if (!node) continue;
+      if (!node) { skip('no-node'); continue; }
       const globs = [...new Set((op.globs || []).filter(Boolean))];
-      if (globs.join('\n') === node.files.join('\n')) continue;
+      if (globs.join('\n') === node.files.join('\n')) { skip('same'); continue; }
       writeFiles(lines, node, globs);
       undo = [{ op: 'set_files', node: node.id, globs: node.files }];
     } else if (op.op === 'set_status') {
       const status = op.status || null;
-      if (!node || (status && !(status in STATUS_EMOJI)) || node.status === status) continue;
+      if (!node) { skip('no-node'); continue; }
+      if (status && !(status in STATUS_EMOJI)) { skip('bad-status'); continue; }
+      if (node.status === status) { skip('same'); continue; }
       lines[node.line] = setStatusInText(lines[node.line], 0, status);
       undo = [{ op: 'set_status', node: node.id, status: node.status }];
     } else if (op.op === 'rename_node') {
-      if (!node || !op.title || !op.title.trim() || node.title === op.title.trim()) continue;
+      if (!node) { skip('no-node'); continue; }
+      if (!op.title || !op.title.trim()) { skip('empty'); continue; }
+      if (node.title === op.title.trim()) { skip('same'); continue; }
       const h = lines[node.line].match(headPrefix(node));
-      if (!h) continue;
+      if (!h) { skip('no-node'); continue; }
       const tail = node.status ? ' ' + STATUS_EMOJI[node.status] : '';
       lines[node.line] = h[1] + op.title.trim() + tail;
       undo = [{ op: 'rename_node', node: node.id, title: node.title }];
     } else if (op.op === 'delete_node') {
-      if (!node) continue;
+      if (!node) { skip('no-node'); continue; }
       const end = subtreeEnd(lines, node);
       const start = node.line > 0 && !lines[node.line - 1].trim() ? node.line - 1 : node.line;
       const removed = lines.splice(start, end - start + 1);
@@ -399,7 +452,9 @@ function applyOps(text, ops) {
     } else if (op.op === 'override_rule') {
       const from = findById(root, op.from);
       const base = findRule(from, op.text);
-      if (!node || !base || !op.new || !op.new.trim()) continue;
+      if (!node || !from) { skip('no-node'); continue; }
+      if (!base) { skip('no-rule'); continue; }
+      if (!op.new || !op.new.trim()) { skip('empty'); continue; }
       let key = base.key;
       undo = [];
       if (!key) {
@@ -410,7 +465,7 @@ function applyOps(text, ops) {
       // 已经改写过同一条：改那一条，不再加第二条同键的规则
       const prev = node.rules.find(r => r.key === key);
       if (prev) {
-        if (prev.text === op.new.trim()) continue;
+        if (prev.text === op.new.trim()) { skip('same'); continue; }
         lines[prev.line] = ruleText(key, op.new);
         undo.unshift({ op: 'replace_rule', node: node.id, old: op.new.trim(), text: prev.text, key });
       } else {
@@ -419,15 +474,22 @@ function applyOps(text, ops) {
       }
     } else if (op.op === 'set_key') {
       const r = findRule(node, op.text);
-      if (!r || r.key === (op.key || null)) continue;
+      if (!r) { skip('no-rule'); continue; }
+      if (r.key === (op.key || null)) { skip('same'); continue; }
       lines[r.line] = lines[r.line].replace(/^(\s*[-*]\s+)(?:\[[^\]]*\]\s*)?/, `$1${op.key ? `[${op.key}] ` : ''}`);
       undo = [];
-    } else continue;
+    } else { skip('unknown-op'); continue; }
     text = lines.join(nl);
     applied.push({ ...op, ...extra, undo });
   }
-  return { text, applied };
+  return { text, applied, skipped };
 }
+// 跳过的原因（中文，记录员的日志和状态用；界面上的提示另见 strings.js 的 x.nc.*）
+const SKIP_REASON = {
+  'no-node': '找不到这个需求', 'no-rule': '找不到这条规则', empty: '内容是空的', same: '和现在一样',
+  duplicate: '已经有意思一样的规则', 'bad-id': '编号不合法或已被占用', 'bad-status': '状态不认识', 'unknown-op': '不认识的操作',
+  'not-allowed': '记录员不许做这种改动', 'no-basis': '文件对应没有根据',
+};
 
 // 旧版本「先让我确认」模式留下的标记：🆕 待确认新增，🗑 待确认删除。升级时 store 只清一次（state.json 记下
 // legacyCleaned），清理本身也是一条可撤销的改动，所以这里只生成普通的编辑操作：
@@ -556,5 +618,6 @@ function nodeForFile(root, relPath) {
 module.exports = {
   STATUS_EMOJI, STATUS_LABEL, parse, walk, findById, pathOf, effectiveRules, check,
   setStatusInText, nodeForFile, applyOps, legacyCleanupOps, stripLegacyMarks, outline, relocate, splitGlobs, globToRegExp,
+  oneLine, closestRule, norm, sameMeaning, numbersOf, SKIP_REASON,
   similarity, DUPLICATE, // 测试校准去重门槛用
 };

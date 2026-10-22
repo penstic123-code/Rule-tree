@@ -10,6 +10,7 @@
 //     activity.jsonl  AI 改了哪些文件（只追加）
 //     context.jsonl   每个会话加载了哪些规则文件、各多少字（只追加，给上下文用量表）
 //     changes.jsonl   改动记录，每条带反操作，可以撤销（只追加）
+//     questions.jsonl 拿不准、要问用户的事（只追加；回答、关掉也追加一行，见 src/questions.js）
 //   临时（用完即删，进程崩溃留下的也会按时间判定失效）
 //     tree.lock   写树的锁         state.lock  读改写 state.json / config.json 的锁
 //     queue.lock  读改写队列的锁   queue.json  用户编辑中时记录员的改动排队
@@ -213,6 +214,8 @@ function setCompileStatus(treePath, ok, message, t = null) {
   const prev = readState(treePath).compile;
   // 成功时只在之前没记过或失败过才写；同样的错误不重写：插件监视 .reqtree/*.json，每写一次就刷新、刷新又会重试编译，会转圈
   if (prev && (ok ? prev.ok : !prev.ok && prev.message === message)) return;
+  // 不开面板的人看不到 state.json：新的失败也写进 hook.log（hook 在下一句用户的话时还会告诉 AI 一次）
+  if (!ok) require('./common').appendTmpLog('hook.log', JSON.stringify({ t: new Date().toISOString(), ev: 'compile', tree: treePath, compileError: `编译失败：${message}` }));
   // 编译结果只是给面板看的提示，记不下来不能影响写树
   try { updateState(treePath, s => ({ ...s, compile: { ok, message, ...(t ? { t } : {}), time: Date.now() } })); } catch {}
 }
@@ -339,6 +342,7 @@ function describeOp(o) {
     case 'rename_node': return `${o.node} 改名为${q(o.title)}`;
     case 'delete_node': return `删除需求 ${o.node}`;
     case 'override_rule': return `在 ${o.node} 里把上级的${q(o.text)}改成${q(o.new)}`;
+    case 'memory_remove': return o.wholeFile ? `删掉记忆文件 ${o.file}（${q(o.text)}）` : `删掉记忆 ${o.file} 里的${q(o.text)}`;
     default: return o.op;
   }
 }
@@ -351,7 +355,7 @@ function logChange(treePath, entry) {
 }
 
 // 反操作里会出现的操作（applyOps 认的）
-const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key']);
+const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore']);
 // 旧版本「先让我确认」模式记下的反操作 reject_pending（applyOps 已经不认），能翻译的条件见 translateLegacyUndo
 const canTranslate = o => o.op === 'reject_pending' && !!o.node && (Array.isArray(o.globs) ? o.globs.length > 0 : !!o.text && (o.pending === 'add' || o.pending === 'remove'));
 const undoable = e => e.ops.every(o => (o.undo || []).every(u => UNDO_OPS.has(u.op) || canTranslate(u)));
@@ -394,25 +398,43 @@ function writeThen(treePath, update, write, after) {
   return Promise.resolve(write(treePath, update)).then(after);
 }
 
-// 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你'（升级清理记为 '升级'）
-function applyChange(treePath, ops, { source, write } = {}) {
-  let applied = [];
-  const update = text => { const r = applyOps(text, ops); applied = r.applied; return r.text; };
-  return writeThen(treePath, update, write, () => {
+// 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你'（升级清理记为 '升级'）。
+// id：这条改动记录用的编号（问题要记下默认做法是哪条改动，之后好撤销）；不给就新起一个。
+// 返回生效的改动（数组），数组上另挂 skipped：没做成的改动和原因（见 parser.applyOps）
+// 改记忆文件的操作（memory_*，见 src/memory.js）不改树：先做掉，和树的改动记成同一条
+function applyChange(treePath, ops, { source, write, id } = {}) {
+  const mem = require('./memory');
+  const memApplied = [], memSkipped = [];
+  for (const o of (ops || []).filter(mem.isMemoryOp)) {
+    let a = null;
+    try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : null; } catch {}
+    if (a) memApplied.push(a); else memSkipped.push({ op: o, reason: 'no-rule' });
+  }
+  const treeOps = (ops || []).filter(o => !mem.isMemoryOp(o));
+  let applied = memApplied, skipped = memSkipped;
+  const update = text => { const r = applyOps(text, treeOps); applied = memApplied.concat(r.applied); skipped = memSkipped.concat(r.skipped); return r.text; };
+  const after = () => {
     if (applied.length) {
-      logChange(treePath, { id: newChangeId(), time: Date.now(), source, summary: applied.map(describeOp), ops: applied });
+      logChange(treePath, { id: id || newChangeId(), time: Date.now(), source, summary: applied.map(describeOp), ops: applied });
     }
+    applied.skipped = skipped;
     return applied;
-  });
+  };
+  if (!treeOps.length) return write ? Promise.resolve(after()) : after();
+  return writeThen(treePath, update, write, after);
 }
 
 // 撤销某次改动：反操作倒着执行。一条都没生效（已经撤销过，或者内容早被改掉了）返回 false，也不记成已撤销
 function undoChange(treePath, id, { write } = {}) {
   const entry = readChanges(treePath, 500).find(e => e.id === id);
   if (!entry || entry.undone || !entry.undoable) return write ? Promise.resolve(false) : false;
-  const undo = entry.ops.slice().reverse().flatMap(o => o.undo || []);
+  const all = entry.ops.slice().reverse().flatMap(o => o.undo || []);
+  // 记忆文件的反操作（memory_restore）不改树，直接做
+  const mem = require('./memory');
   let count = 0;
-  const update = text => { const r = applyOps(text, translateLegacyUndo(text, undo)); count = r.applied.length; return r.text; };
+  for (const u of all.filter(mem.isMemoryOp)) { try { if (mem.restoreMemory(u)) count++; } catch {} }
+  const undo = all.filter(u => !mem.isMemoryOp(u));
+  const update = text => { const r = applyOps(text, translateLegacyUndo(text, undo)); count += r.applied.length; return r.text; };
   return writeThen(treePath, update, write, () => {
     if (count) logChange(treePath, { undone: id, time: Date.now() });
     return count > 0;
@@ -423,14 +445,31 @@ function undoChange(treePath, id, { write } = {}) {
 // 记录员（后台进程）往里加、hook 和插件往外取，读改写要加锁，否则会丢条目
 const queueLock = treePath => metaFile(treePath, 'queue.lock');
 
-function submitOps(treePath, ops) {
+// qid：这组改动是某个问题的默认做法。排队时每条带上 qid，写入时单独记成一条改动，再把改动编号补进问题（见 flushQueue）。
+// 返回 { queued 排队条数, applied, skipped 没做成的, id 改动编号（一条都没生效或在排队时为 null） }
+function submitOps(treePath, ops, { qid } = {}) {
   const queued = withLock(queueLock(treePath), () => {
     if (!isEditing(treePath)) return 0;
     const q = metaFile(treePath, 'queue.json');
-    writeJson(q, [...readJson(q, []), ...ops]);
+    writeJson(q, [...readJson(q, []), ...ops.map(o => (qid ? { ...o, qid } : o))]);
     return ops.length;
   });
-  return queued ? { queued, applied: [] } : { queued: 0, applied: applyChange(treePath, ops, { source: '记录员' }) };
+  if (queued) return { queued, applied: [], skipped: [], id: null };
+  const id = newChangeId();
+  const applied = applyChange(treePath, ops, { source: '记录员', id });
+  return { queued: 0, applied, skipped: applied.skipped || [], id: applied.length ? id : null };
+}
+
+// 问题的默认做法还在排队（用户在编辑、没保存）时，用户已经选了别的：把这个问题的那几条从队列里拿掉。返回拿掉了几条
+function dropQueued(treePath, qid) {
+  return withLock(queueLock(treePath), () => {
+    const q = metaFile(treePath, 'queue.json');
+    const list = readJson(q, []);
+    const rest = list.filter(o => o.qid !== qid);
+    if (rest.length === list.length) return 0;
+    if (rest.length) writeJson(q, rest); else try { fs.unlinkSync(q); } catch {}
+    return list.length - rest.length;
+  });
 }
 
 // 用户保存后（或下一次 hook 时）把队列写进去。插件传 write，返回 Promise。
@@ -444,14 +483,32 @@ function flushQueue(treePath, { write } = {}) {
     return list;
   }, write ? 300 : LOCK_WAIT_MS);
   if (!ops.length) return write ? Promise.resolve([]) : [];
-  // 旧版本排队时给每条带了 direct，现在没用了，别带进改动记录
-  return applyChange(treePath, ops.map(({ direct, ...o }) => o), { source: '记录员', write });
+  // 旧版本排队时给每条带了 direct，现在没用了，别带进改动记录。
+  // 带 qid 的是某个问题的默认做法：每个问题单独记一条改动，把编号补进 questions.jsonl，用户改选别的时才撤得掉
+  const groups = new Map();
+  for (const { direct, qid, ...o } of ops) {
+    const k = qid || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(o);
+  }
+  const all = [];
+  const steps = [...groups].map(([qid, list]) => () => {
+    const id = newChangeId();
+    const done = applied => {
+      all.push(...applied);
+      if (qid && applied.length) appendLog(treePath, 'questions.jsonl', { update: qid, changeId: id, time: Date.now() });
+    };
+    const r = applyChange(treePath, list, { source: '记录员', write, id });
+    return write ? r.then(done) : done(r);
+  });
+  if (!write) { steps.forEach(s => s()); return all; }
+  return steps.reduce((p, s) => p.then(s), Promise.resolve()).then(() => all);
 }
 
 module.exports = {
   findTree, samePath, pathKey, caseInsensitive, TEMPLATE, metaFile, readJson, writeJson, readTail,
   updateTree, updateTreeAsync, compileTree, readCompileStatus,
-  isEditing, setEditing, submitOps, flushQueue,
+  isEditing, setEditing, submitOps, flushQueue, dropQueued, appendLog, newChangeId, describeOp,
   readState, updateState, writeRecorderStatus, readRecorderStatus, touch, readTouched,
   appendActivity, readActivity, trimActivity, appendContext, readContext, trimContext, readConfig, writeConfig, ensureTracking,
   applyChange, undoChange, readChanges,

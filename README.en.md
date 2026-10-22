@@ -22,7 +22,7 @@ The author audited their own course project after a few months of work: 21 rule 
 
 <table>
 <tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often — what does the project look like now? → One tree shows it all: how far each part is, which rules are current; every change is logged and undoable"><br><sub>Problem</sub><br>Requirements changed so often — what does the project look like now?<br><sub>ReqTree</sub><br>One tree shows it all: how far each part is, which rules are current; every change is logged and undoable</td>
+<td width="50%" valign="top"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often — what does the project look like now? → One tree shows it all: how far each part is, which rules are current; changes by the recorder and from the panel are logged and undoable"><br><sub>Problem</sub><br>Requirements changed so often — what does the project look like now?<br><sub>ReqTree</sub><br>One tree shows it all: how far each part is, which rules are current; changes by the recorder and from the panel are logged and undoable</td>
 <td width="50%" valign="top"><img src="docs/images/en/use-2-one-place.png" alt="The same rule lives in four places. Which one counts? → Every rule lives in one file, in exactly one place"><br><sub>Problem</sub><br>The same rule lives in four places. Which one counts?<br><sub>ReqTree</sub><br>Every rule lives in one file, in exactly one place</td>
 </tr>
 <tr>
@@ -103,7 +103,11 @@ Everything revolves around one file. While you chat, a background recorder write
 
 ![Only the rules on the path to the file you edit](docs/images/en/scope.png)
 
-**The recorder.** At the end of each turn, a hook starts Claude Haiku in the background. It reads only your message and the assistant's final reply. It first looks for a rule on the same topic: if there is one, it rewrites it; otherwise it adds one. One-off instructions ("shorten this paragraph") are not recorded, and short replies like "ok" or "continue" skip the model entirely. Changes apply immediately and are logged in `.reqtree/changes.jsonl` with an inverse operation, so each one can be undone.
+**The recorder.** At the end of each turn, a hook starts Claude Haiku in the background. It receives the requirement tree and the last two turns (your message and the assistant's final reply in each); every 8 turns and before the context is compacted, it also gets up to 20 of your recent messages to check for anything missed. All of this goes to the model provider you already use (Anthropic for Claude Code, OpenAI's codex exec for Codex). It first looks for a rule on the same topic: if there is one, it rewrites it; otherwise it adds one. One-off instructions ("shorten this paragraph") are not recorded, and short replies like "ok" or "continue" skip the model entirely. Changes apply immediately and are logged in `.reqtree/changes.jsonl` with an inverse operation, so each one can be undone.
+
+When it is sure, it records; when it isn't, it asks. If a new statement is about the same thing as an existing rule, the recorder rewrites the old rule to match the latest wording, even if you never said "change it to". Some things only you can settle. Does "chapter 5 can have a few more interactions" make an exception for that chapter, or apply to every chapter from now on? Does "the journal style is only for part one" narrow the old rule or add a new one? Is a chapter finished? In cases like these the recorder writes down the most likely reading and shows a notification in VS Code with a few options. You can ignore it, and the first reading stays in effect; if you pick another option, the first change is undone and replaced with yours. Requirements marked in progress that haven't been touched for a few days get the same kind of question: is it done? Questions are kept in `.reqtree/questions.jsonl`; after seven days without an answer, the first reading stands. The `reqtree.askQuestions` setting can reduce this to a count on the side bar icon, or turn the questions off.
+
+There is also a "ReqTree: Check-up" command (`reqtree check --fix` on the command line). It merges near-identical rules within one requirement, keeping the later one, then makes one Haiku call to find rules that disagree between a parent and a child without being written as an override, such as "at most 4 interactions per chapter" for the whole project and "at most 5" in one course. Each one becomes the same kind of multiple-choice question. The model is called only when you run the command.
 
 ![The recorder notes long-term requirements in the background](docs/images/en/recorder.png)
 
@@ -115,7 +119,8 @@ Everything revolves around one file. While you chat, a background recorder write
 | `src/compile.js` | Compiles each requirement into a native rule file; inheritance via nested scopes, overrides written as "within this scope, this one wins" |
 | `src/store.js` | Locked atomic writes, recompiles after every write, change log and undo, state files |
 | `hooks/hook.js` | Keeps rules fresh when you send a message, records which requirement an edited file belongs to, starts the recorder at the end of a turn, and logs which rules were loaded |
-| `hooks/recorder.js` | Uses Haiku to decide whether the turn contained a long-term requirement, then rewrites or adds a rule |
+| `hooks/recorder.js` | Uses Haiku to decide whether the turn contained a long-term requirement, then rewrites or adds a rule; unclear cases become questions |
+| `src/questions.js`, `src/checkup.js` | Storing, answering and undoing questions; stale requirements; check-up |
 | `extension.js`, `media/` | VS Code sidebar and mind map |
 
 ## Saving context and tokens
@@ -175,7 +180,7 @@ ReqTree missed fewer requirements, kept fewer overturned rules, and ended with a
 ## Current limits
 
 - Works with Claude Code and OpenAI Codex. Codex has no path-scoped rules, so ReqTree uses an index in `AGENTS.md` plus hooks that deliver the right rules (see docs/codex.md).
-- The recorder relies on a small model and occasionally files a rule in the wrong place; when you change your mind without saying which rule you are replacing, the old one may stay. You can fix it in the panel, or undo it under "Recent changes".
+- The recorder relies on a small model and occasionally files a rule in the wrong place. When it notices it is unsure, it asks you; mistakes it doesn't notice are yours to fix in the panel, or to undo under "Recent changes".
 - Each turn costs one extra Haiku call, run in the background (about 6 seconds).
 - Developed on Windows; macOS and Linux are covered by CI.
 
@@ -186,7 +191,10 @@ node bin/reqtree.js init    <project>          # enable: install hooks, compile 
 node bin/reqtree.js tree    需求树.md           # print the whole tree
 node bin/reqtree.js rules   需求树.md C2.1      # the rules in effect for one requirement
 node bin/reqtree.js compile 需求树.md           # compile by hand (normally automatic)
-node bin/reqtree.js check   需求树.md           # duplicate IDs, requirements without files, stale 🔨
+node bin/reqtree.js check   需求树.md           # duplicate IDs and rules, requirements without files, stale 🔨
+node bin/reqtree.js check   需求树.md --fix     # check-up: merge duplicate rules, turn conflicts and stale 🔨 into questions (--no-model skips the model)
+node bin/reqtree.js questions 需求树.md         # questions waiting for you
+node bin/reqtree.js answer  需求树.md <question ID> <option number|dismiss>
 ```
 
 **Note:** don't force-reinstall the extension from the command line (`code --install-extension --force`) while Claude Code is running in VS Code. It restarts the extension host, and Claude Code restarts with it.

@@ -2,7 +2,7 @@
   "name": "reqtree",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "shidipeng",
   "license": "MIT",
   "repository": {
@@ -75,10 +75,24 @@
         "command": "reqtree.openMap",
         "title": "%cmd.openMap%",
         "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "reqtree.questions",
+        "title": "%cmd.questions%",
+        "icon": "$(question)"
+      },
+      {
+        "command": "reqtree.checkup",
+        "title": "%cmd.checkup%"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "reqtree.questions",
+          "when": "view == reqtree.panel && reqtree.hasQuestions",
+          "group": "navigation@0"
+        },
         {
           "command": "reqtree.openMap",
           "when": "view == reqtree.panel",
@@ -108,6 +122,34 @@
             "%config.language.en%"
           ],
           "description": "%config.language%"
+        },
+        "reqtree.askQuestions": {
+          "type": "string",
+          "enum": [
+            "notify",
+            "panel",
+            "off"
+          ],
+          "default": "notify",
+          "enumDescriptions": [
+            "%config.askQuestions.notify%",
+            "%config.askQuestions.panel%",
+            "%config.askQuestions.off%"
+          ],
+          "description": "%config.askQuestions%"
+        },
+        "reqtree.memoryMode": {
+          "type": "string",
+          "enum": [
+            "dedupe",
+            "treeOnly"
+          ],
+          "default": "dedupe",
+          "enumDescriptions": [
+            "%config.memoryMode.dedupe%",
+            "%config.memoryMode.treeOnly%"
+          ],
+          "description": "%config.memoryMode%"
         }
       }
     }

@@ -6,6 +6,8 @@
   // 界面文字：语言由插件写在 <body data-lang> 上（zh / en），文字表在 strings.js
   const T = window.ReqStrings ? window.ReqStrings.make(document.body && document.body.dataset.lang) : k => k;
   const STATUS_LABEL = { todo: T('st.todo'), doing: T('st.doing'), done: T('st.done'), question: T('st.question') };
+  // 状态菜单里的顺序（侧栏树行的菜单和详情的状态按钮共用）
+  const STATUS_ORDER = ['doing', 'todo', 'done', 'question'];
   const INHERIT_FOLD = 3; // 上级规则超过几条就默认收起
   const ago = (t, now = Date.now()) => {
     const s = Math.max(0, Math.round((now - t) / 1000));
@@ -109,6 +111,11 @@
           return T('op.delete_node', m && !showIds ? T('d.quote', m[1]) : o.node);
         }
         case 'override_rule': return T('op.override_rule', name(o.node), o.text, o.new);
+        // 删掉 Claude 自动记忆里和需求树重复的一句：写记忆文件名和那句话（太长的截短）
+        case 'memory_remove': {
+          const t = String(o.text || '');
+          return T('op.memory_remove', String(o.file || '').split(/[\\/]/).pop(), t.length > 60 ? t.slice(0, 59) + '…' : t, !!o.wholeFile);
+        }
         default: return null;
       }
     };
@@ -129,20 +136,22 @@
     return h;
   }
 
-  // 浮动菜单贴着按钮下方右对齐，靠近窗口边缘时往里收
-  function placeMenu(menu, anchor) {
+  // 浮动菜单贴着按钮下方右对齐（align='left' 时左对齐），靠近窗口边缘时往里收
+  function placeMenu(menu, anchor, align = 'right') {
     const b = anchor.getBoundingClientRect();
     menu.style.top = Math.min(b.bottom + 2, innerHeight - menu.offsetHeight - 4) + 'px';
-    menu.style.left = Math.max(4, Math.min(b.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 4)) + 'px';
+    const x = align === 'left' ? b.left : b.right - menu.offsetWidth;
+    menu.style.left = Math.max(4, Math.min(x, innerWidth - menu.offsetWidth - 4)) + 'px';
   }
 
   // 状态小圆点（HTML 版，侧栏和详情共用；导图在 map.js 里画同样的 SVG）。
   // 单色方案：正在做是强调色实心点，待做是灰色空心圈，完成是灰色勾，待定是灰色圈里一个问号
-  function dot(s) {
-    const tip = STATUS_LABEL[s] || T('st.none');
-    if (s === 'done') return `<span class="st st-done" title="${tip}">${icon('check', 12)}</span>`;
-    if (s === 'question') return `<span class="st st-question" title="${tip}">?</span>`;
-    return `<span class="st st-${s || 'none'}" title="${tip}"></span>`;
+  // withTip=false：旁边已经写了状态名（菜单、状态按钮），不再给小圆点单独的悬停提示
+  function dot(s, withTip = true) {
+    const tip = withTip ? ` title="${STATUS_LABEL[s] || T('st.none')}"` : ' aria-hidden="true"';
+    if (s === 'done') return `<span class="st st-done"${tip}>${icon('check', 12)}</span>`;
+    if (s === 'question') return `<span class="st st-question"${tip}>?</span>`;
+    return `<span class="st st-${s || 'none'}"${tip}></span>`;
   }
 
   // 需求详情：侧栏和导图共用。n 为空时显示最近改动和还没归属的文件。
@@ -182,14 +191,18 @@
     // 头部：大标题（点它改名，悬停提示里有编号）和右边的操作；下面是路径（只写名字）
     const focusBtn = data.focusable && data.focusKey !== n.key ? `<button class="lnk" data-act="focus" data-key="${esc(n.key)}" title="${T('d.focusTip')}">${esc(data.focusLabel || T('d.focusSide'))}</button>` : '';
     const crumbs = path.slice(0, -1).map(x => esc(ids ? `${x.id} ${x.title}` : x.title)).join(' › ');
+    // 状态：只显示当前状态（符号 + 名字 + 小箭头），点开菜单再改。状态多数时候自动更新，这里只用来纠正，所以做成不起眼的文字按钮，和路径排在同一行
+    const st = STATUS_LABEL[n.status] ? n.status : '';
+    const stLabel = st ? STATUS_LABEL[st] : T('st.none');
+    const statusBtn = `<button class="st-btn s-${st || 'none'}" data-act="statusMenu" data-node="${esc(n.id)}" data-status="${st}" ${U} aria-haspopup="menu" aria-expanded="false" aria-label="${esc(T('d.statusBtn', stLabel))}" title="${T('v.changeStatus')}">${dot(st, false)}<span class="st-l">${stLabel}</span>${icon('chevd', 12)}</button>`;
     let h = `<div class="sh">
         <div class="sh-title">${ids ? `<span class="sid">${esc(n.id)}</span>` : ''}<strong data-act="rename" data-node="${esc(n.id)}" ${U} tabindex="0" role="button" title="${esc(T('d.renameTip', n.id))}">${esc(n.title)}</strong><button class="ib pen" data-act="rename" data-node="${esc(n.id)}" ${U} title="${T('d.rename')}" aria-label="${T('d.rename')}">${icon('edit', 13)}</button>
           <span class="sh-acts">${focusBtn}<button class="ib more" data-act="more" data-node="${esc(n.id)}" data-key="${esc(n.key)}" data-line="${n.line}" data-raw="${esc(n.raw)}" ${U} title="${T('d.more')}" aria-label="${T('d.more')}" aria-haspopup="menu">${icon('more', 16)}</button></span></div>
-        ${crumbs ? `<div class="crumbs">${crumbs}</div>` : ''}
-      </div>
-      <div class="seg" role="group" aria-label="${T('d.status')}">${Object.entries(STATUS_LABEL).map(([s, l]) =>
-        `<button class="s-${s}${n.status === s ? ' on' : ''}" aria-pressed="${n.status === s}" ${E('setStatus', `data-status="${n.status === s ? '' : s}"`)}>${n.status === s ? dot(s) : ''}${l}</button>`).join('')}</div>`;
-    if (n.stale) h += `<div class="hint">${icon('stale', 14)}<span>${esc(T('d.stale', data.staleDays))}</span></div>`;
+        <div class="sh-meta">${statusBtn}${crumbs ? `<span class="sep" aria-hidden="true">·</span><span class="crumbs">${crumbs}</span>` : ''}</div>
+      </div>`;
+    // 久未动的提示：同一件事已经作为问题在问用户（问题队列里有这个需求的久未动问题，还开着），就不在面板里重复说
+    const staleAsked = (file.questions || []).some(q => q && q.kind === 'stale' && q.node === n.id && (!q.status || q.status === 'open'));
+    if (n.stale && !staleAsked) h += `<div class="hint">${icon('stale', 14)}<span>${esc(T('d.stale', data.staleDays))}</span></div>`;
 
     // 本需求的规则
     const own = n.groups.find(g => g.self);
@@ -322,7 +335,7 @@
       } else name = `<span class="ctx-name" title="${esc(f.file)}">${esc(f.file)}</span>`;
       let why = f.kind === 'resident'
         ? (f.reason === 'compact' && f.source !== 'claude-md' ? T('ctx.compact') : T('ctx.always'))
-        : f.trigger ? T('ctx.trigger', base(f.trigger)) : f.reason === 'nested_traversal' ? T('ctx.folder') : T('ctx.used');
+        : f.reason === 'fallback' ? T('ctx.fallback') : f.trigger ? T('ctx.trigger', base(f.trigger)) : f.reason === 'nested_traversal' ? T('ctx.folder') : T('ctx.used');
       if (f.loads > 1) why += T('ctx.loads', f.loads);
       if (f.agents > 1) why += T('ctx.agents', f.agents);
       return `<div class="ctx-row ctx-${f.kind}"><div class="ctx-main">${name}<span class="ctx-chars">${T('ctx.charsN', num(f.chars))}</span></div><div class="ctx-why">${esc(why)}</div></div>`;
@@ -372,14 +385,22 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && ctx) { closeContext(); e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 
   // ---------- 浮动菜单（⋯ 菜单；侧栏的状态菜单、设置菜单也用它的样式） ----------
-  let openMenuEl = null;
-  function closeMenu() { openMenuEl?.remove(); openMenuEl = null; }
-  // items: [{ label, danger, run }]
-  function showMenu(anchor, items) {
+  let openMenuEl = null, menuAnchor = null;
+  // 关菜单；按钮上写了 aria-expanded 的改回 false。refocus：把焦点还给打开它的按钮（Esc、选了一项）
+  function closeMenu(refocus) {
+    const a = menuAnchor;
+    openMenuEl?.remove(); openMenuEl = null; menuAnchor = null;
+    if (a && a.hasAttribute('aria-expanded')) a.setAttribute('aria-expanded', 'false');
+    if (refocus && a && a.isConnected) a.focus();
+  }
+  // items: [{ label, danger, run }]；opts：{ align: 'left' 左对齐（默认右对齐），label: 菜单的可访问名称，cls: 菜单多加的 class }
+  function showMenu(anchor, items, opts = {}) {
     closeMenu();
     const m = document.createElement('div');
     m.className = 'menu';
     m.setAttribute('role', 'menu');
+    if (opts.label) m.setAttribute('aria-label', opts.label);
+    if (opts.cls) m.classList.add(opts.cls);
     // item：label（文字）或 html（拼好的）；有 checked 的是单选项，选中的前面一个勾；data 写成 data-* 属性
     m.innerHTML = items.map((it, i) => {
       const radio = 'checked' in it;
@@ -387,19 +408,39 @@
       return `<button role="${radio ? (it.toggle ? 'menuitemcheckbox' : 'menuitemradio') : 'menuitem'}"${radio ? ` aria-checked="${!!it.checked}"` : ''} data-i="${i}"${attrs}${it.danger ? ' class="danger"' : ''}>${radio ? `<span class="tick">${it.checked ? icon('check', 12) : ''}</span>` : ''}${it.html || esc(it.label)}</button>`;
     }).join('');
     document.body.appendChild(m);
-    placeMenu(m, anchor);
+    placeMenu(m, anchor, opts.align);
     m.addEventListener('click', ev => {
       const b = ev.target.closest('button');
       ev.stopPropagation();
-      closeMenu();
-      if (b) items[+b.dataset.i].run();
+      if (!b) return;
+      closeMenu(true);
+      items[+b.dataset.i].run();
     });
-    m.querySelector('button')?.focus();
-    openMenuEl = m;
+    // 方向键在菜单里上下移动（到头了绕回来），Home / End 到第一项、最后一项；Tab 关菜单回到按钮
+    m.addEventListener('keydown', ev => {
+      const btns = [...m.querySelectorAll('button')];
+      const i = btns.indexOf(document.activeElement);
+      const go = j => { ev.preventDefault(); btns[(j + btns.length) % btns.length]?.focus(); };
+      if (ev.key === 'ArrowDown') go(i + 1);
+      else if (ev.key === 'ArrowUp') go(i < 0 ? -1 : i - 1);
+      else if (ev.key === 'Home') go(0);
+      else if (ev.key === 'End') go(-1);
+      else if (ev.key === 'Tab') { ev.preventDefault(); closeMenu(true); }
+    });
+    if (anchor.hasAttribute('aria-expanded')) anchor.setAttribute('aria-expanded', 'true');
+    // 单选菜单先停在当前选中的那一项上
+    (m.querySelector('[aria-checked="true"]') || m.querySelector('button'))?.focus();
+    openMenuEl = m; menuAnchor = anchor;
     return m;
   }
-  document.addEventListener('click', e => { if (openMenuEl && !openMenuEl.contains(e.target) && !e.target.closest('[data-act="more"]')) closeMenu(); }, true);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && openMenuEl) { closeMenu(); e.stopImmediatePropagation(); } }, true);
+  // 点菜单外面就关；点的是打开它的按钮（或 ⋯）时交给按钮自己处理开关
+  document.addEventListener('click', e => { if (openMenuEl && !openMenuEl.contains(e.target) && !(menuAnchor && menuAnchor.contains(e.target)) && !e.target.closest('[data-act="more"]')) closeMenu(); }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && openMenuEl) { closeMenu(true); e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+  // 状态按钮：回车、空格是按钮自带的；上下方向键也能打开菜单
+  document.addEventListener('keydown', e => {
+    const t = e.target;
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && t && t.matches && t.matches('[data-act="statusMenu"]') && !openMenuEl) { e.preventDefault(); t.click(); }
+  });
   window.addEventListener('blur', closeMenu);
 
   // 复制一小段文字（编号）：先用剪贴板接口，不行就用老办法
@@ -419,6 +460,16 @@
       const body = document.getElementById(a.getAttribute('aria-controls'));
       if (body) body.hidden = !open;
       return { inheritOpen: open };
+    }
+    if (d.act === 'statusMenu') {
+      if (openMenuEl && menuAnchor === a) { closeMenu(); return {}; }
+      // 选了别的状态：发的消息和以前的状态分段按钮一样（edit / setStatus）；选当前的就只关菜单
+      const cur = d.status || '';
+      const set = s => post(message({ dataset: { act: 'edit', a: 'setStatus', node: d.node, uri: d.uri, status: s } }));
+      const items = STATUS_ORDER.map(s => ({ html: dot(s, false) + `<span>${esc(STATUS_LABEL[s])}</span>`, data: { s }, checked: cur === s, run: () => { if (s !== cur) set(s); } }));
+      if (cur) items.push({ label: T('v.clearStatus'), data: { s: '' }, run: () => set('') });
+      showMenu(a, items, { align: 'left', label: T('d.status'), cls: 'st-menu' });
+      return {};
     }
     if (d.act === 'more') {
       if (openMenuEl) { closeMenu(); return {}; }
@@ -446,5 +497,5 @@
       default: return null;
     }
   }
-  window.ReqDetail = { T, tx, recorderText, changeLines, html, message, local, isEditing, showContext, refreshContext, closeContext, contextHtml, showMenu, closeMenu, dot, alertsHtml, placeMenu, icon, esc, ago, walkNodes, hasActive, staleSpan, STATUS_LABEL, pathTo, reducedMotion };
+  window.ReqDetail = { T, tx, recorderText, changeLines, html, message, local, isEditing, showContext, refreshContext, closeContext, contextHtml, showMenu, closeMenu, dot, alertsHtml, placeMenu, icon, esc, ago, walkNodes, hasActive, staleSpan, STATUS_LABEL, STATUS_ORDER, pathTo, reducedMotion };
 })();

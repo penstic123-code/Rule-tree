@@ -3,18 +3,24 @@
 // 记录员：每轮回复结束后由 hook 在后台启动。
 // 1. 这一轮 AI 改过的需求，没状态 / 待做 / 待定 的标成 🔨（确定的事，不用模型）
 // 2. 用户这一轮说了实质内容时，让小模型判断有没有新要求、哪些需求做完了、新文件该归哪个需求
+//    有把握的直接改；拿不准的（管全项目还是只管这一块、新说法是取代还是补充、做完没有）先按最可能的改，
+//    同时记一个问题（src/questions.js），插件弹出选项让用户改选
+// 3. 标着 🔨 很久没动的需求，变成同一种问题（不调用模型）
 // 改动直接生效（面板上可撤销）。结果写进 .reqtree/state.json 的 recorder，面板会显示；出错也写在那里。
 // 用法：node recorder.js <job.json>
-//   job = { treePath, turns[{ user, ai, start }], transcriptPath, touched[], unmapped[] }
+//   job = { treePath, turns[{ user, ai, start }], transcriptPath, touched[], unmapped[], sweep?[], sweepOnly? }
 //   turns 是 hook 用公开字段攒下的最近两轮；transcriptPath 只在 turns 为空时兜底读（未公开格式）
+//   sweep 是要补漏检查的最近几句用户原话（每 sweepEvery 轮和压缩前才有）；sweepOnly 表示只补漏（压缩前，没有这一轮）
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { parse, findById, outline, nodeForFile } = require('../src/parser');
+const { parse, findById, outline, nodeForFile, applyOps, oneLine, SKIP_REASON } = require('../src/parser');
 const store = require('../src/store');
+const Q = require('../src/questions');
 
-const LOG = path.join(os.tmpdir(), 'reqtree', 'recorder.log');
+const { tmpDir } = require('../src/common');
+const LOG = path.join(tmpDir(), 'recorder.log');
 const log = msg => {
   try {
     // 日志超过 1 MB 就从头开始
@@ -29,13 +35,17 @@ const TIMEOUT_MS = +process.env.REQTREE_CLAUDE_TIMEOUT_MS || 120000;
 const BIG_TREE_LINES = 200;
 
 // 模型只能做这几种改动（和提示词里列的一致）。模型编出 delete_node、set_files 之类会删掉整个子树，一律丢掉
-const ALLOWED_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'set_status', 'add_files']);
+const ALLOWED_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'set_status', 'add_files', 'override_rule']);
+// 每轮最多问几个问题、每个问题几个选项
+const MAX_QUESTIONS = 2;
+const MIN_OPTIONS = 2, MAX_OPTIONS = 4;
 
 // add_files 只在有根据时保留：glob 能匹配这一轮没归属的文件，或者用户这句话里提到了 glob 里的路径（用户明确要设文件）。
 // 已经被这个需求现有范围覆盖的具体文件也丢掉。2026-10-22 实测 Codex 的小模型在没有未归属文件时，
 // 给已由 DataScience/ch02-*.html 覆盖的 R4 又加了 DataScience/ch02-next.html。提示词约束不可靠，在代码里拦
 const globMatches = (globs, rel) => !!nodeForFile({ children: [{ files: globs, children: [], level: 1 }] }, rel);
-function filterAddFiles(ops, { root, unmapped = [], user = '' }) {
+// dropped：传了数组就把丢掉的放进去（{ op, reason: 'no-basis' }），记录员要报给面板
+function filterAddFiles(ops, { root, unmapped = [], user = '', dropped } = {}) {
   const out = [];
   for (const o of ops) {
     if (o.op !== 'add_files') { out.push(o); continue; }
@@ -47,9 +57,84 @@ function filterAddFiles(ops, { root, unmapped = [], user = '' }) {
       return g.split(/[/*?]+/).some(seg => seg.length >= 2 && !/^\.[A-Za-z0-9]+$/.test(seg) && user.includes(seg.replace(/[-_.]+$/, '')));
     });
     if (globs.length) out.push({ ...o, globs });
-    else log(`丢掉没有根据的 add_files：${JSON.stringify(o)}`);
+    else { log(`丢掉没有根据的 add_files：${JSON.stringify(o)}`); if (dropped) dropped.push({ op: o, reason: 'no-basis' }); }
   }
   return out;
+}
+
+// 模型给的一组改动：只留允许的操作，换行压成空格，没根据的 add_files 去掉
+const allowedOp = allowed => o => o && typeof o === 'object' && allowed.has(o.op);
+function cleanOps(list, ctx, allowed = ALLOWED_OPS) {
+  const arr = Array.isArray(list) ? list : [];
+  const ok = arr.filter(allowedOp(allowed)).map(oneLine);
+  if (ok.length < arr.length) {
+    const bad = arr.filter(o => !allowedOp(allowed)(o));
+    log(`丢掉模型给的不允许的操作：${JSON.stringify(bad)}`);
+    if (ctx && ctx.dropped) ctx.dropped.push(...bad.map(op => ({ op, reason: 'not-allowed' })));
+  }
+  return filterAddFiles(ok, ctx);
+}
+
+// 比较两条改动是不是同一条（模型照提示把默认做法也写进了 ops，要认出来，免得记两次）
+const OP_FIELDS = ['op', 'node', 'parent', 'id', 'title', 'key', 'text', 'old', 'new', 'from', 'status', 'globs'];
+const opKey = o => { const x = oneLine(o); return JSON.stringify(OP_FIELDS.map(k => (typeof x[k] === 'string' ? x[k].trim() : x[k] == null ? null : x[k]))); };
+const oneLineText = (s, max) => { const t = String(s).replace(/[\r\n]+/g, ' ').trim(); return t.length > max ? t.slice(0, max) + '…' : t; };
+
+// 模型给的一个问题，先看格式：问题文字、2–4 个选项（各有 label 和 ops）、default 指向其中一个。
+// 选项的改动和普通改动过同样的筛子；有改动被筛掉的选项整个不要（剩下的改动已经不是 label 说的意思了）。
+// default 那个选项不合格，或者剩下不到 2 个选项，整个问题不要
+function shapeQuestion(q, ctx, allowed) {
+  if (!q || typeof q !== 'object' || typeof q.text !== 'string' || !q.text.trim() || !Array.isArray(q.options)) return null;
+  const def = Number.isInteger(q.default) ? q.default : 0;
+  const seen = new Set();
+  const options = q.options.slice(0, MAX_OPTIONS).map(o => {
+    if (!o || typeof o !== 'object' || typeof o.label !== 'string' || !o.label.trim() || !Array.isArray(o.ops)) return null;
+    const label = oneLineText(o.label, 60);
+    if (seen.has(label)) return null;
+    const ops = cleanOps(o.ops, ctx, allowed);
+    if (ops.length < o.ops.length) return null;
+    seen.add(label);
+    return { label, ops };
+  });
+  return keepOptions({ text: oneLineText(q.text, 200), options, default: def });
+}
+// 去掉不合格（null）的选项，default 跟着挪
+function keepOptions(q) {
+  if (!q.options[q.default]) return null;
+  const kept = q.options.filter(Boolean);
+  if (kept.length < MIN_OPTIONS) return null;
+  return { ...q, options: kept, default: kept.indexOf(q.options[q.default]) };
+}
+
+// 从模型的输出里挑出合格的问题，并把 ops 里和问题选项重复的改动拿掉（问题的默认做法单独记一条改动，才撤销得掉）。
+// 选项的改动要在「这一轮其余改动做完之后」的树上至少有一条能生效，否则这个选项不要（指向不存在的需求、规则）。
+// 被丢掉的问题，它的改动留在 ops 里照常生效。返回 { ops, questions }
+function pickQuestions(raw, { text, before = [], ops = [], ctx, allowed = ALLOWED_OPS, max = MAX_QUESTIONS }) {
+  const list = Array.isArray(raw) ? raw : [];
+  const cands = list.map(q => shapeQuestion(q, ctx, allowed)).filter(Boolean).slice(0, max);
+  if (cands.length < Math.min(list.length, max)) log(`丢掉格式不对的问题：${JSON.stringify(list).slice(0, 500)}`);
+  const keysOf = qs => new Set(qs.flatMap(q => q.options.flatMap(o => o.ops.map(opKey))));
+  const k1 = keysOf(cands);
+  const base = applyOps(text, [...before, ...ops.filter(o => !k1.has(opKey(o)))]).text;
+  const questions = cands.map(q => keepOptions({
+    ...q, options: q.options.map(o => (!o.ops.length || applyOps(base, o.ops).applied.length ? o : null)),
+  })).filter(Boolean);
+  if (questions.length < cands.length) log(`丢掉选项对不上需求树的问题：${JSON.stringify(cands.filter(c => !questions.some(q => q.text === c.text)))}`);
+  const k2 = keysOf(questions);
+  return { ops: ops.filter(o => !k2.has(opKey(o))), questions };
+}
+
+// 问题的默认做法写进树（用户正在编辑就排队），再把问题记下来。返回 { applied, queued, skipped }
+function recordQuestions(treePath, questions, source = '记录员') {
+  let applied = [], queued = 0, skipped = [];
+  for (const q of questions) {
+    const id = Q.newId();
+    const ops = q.options[q.default].ops;
+    const r = ops.length ? store.submitOps(treePath, ops, { qid: id }) : { applied: [], queued: 0, id: null, skipped: [] };
+    Q.addQuestion(treePath, { id, source, text: q.text, options: q.options, default: q.default, defaultApplied: true, changeId: r.id, queued: r.queued > 0 });
+    applied = applied.concat(r.applied); queued += r.queued; skipped = skipped.concat(r.skipped || []);
+  }
+  return { applied, queued, skipped };
 }
 
 // 从对话记录（jsonl，Claude Code 内部格式）取最近几轮：用户的话 + AI 回复正文
@@ -77,12 +162,15 @@ function lastTurns(transcriptPath, n) {
   return turns.slice(-n).map(t => ({ user: clip(t.user, 2000), ai: clip(t.ai, 2500) }));
 }
 
-// 明显没有长期要求的消息不调用模型。不用关键词白名单：那会漏掉"第1章开头用霍乱"这类没有关键词的要求。
-const TRIVIAL = /^(好|好的|行|可以|嗯|对|是|ok|okay|继续|开始|做吧|去吧|谢谢|收到|没问题|go)[。.!！~～\s]*$/i;
+// 明显没有长期要求的消息不调用模型：整句就是「好」「继续」这类应答、斜杠命令、两个字以内、短的纯提问。
+// 不按长度一刀切：「全用中文」「标题别加粗」只有四五个字，却是长期要求（2026-10-22 审查发现）。
+// 也不用关键词白名单：那会漏掉"第1章开头用霍乱"这类没有关键词的要求
+const TRIVIAL = /^(好|好的|好吧|好滴|行|行吧|可以|可以的|嗯|嗯嗯|对|对的|是|是的|ok|okay|继续|开始|做吧|去吧|谢谢|收到|明白|了解|知道了|没问题|不错|go)[。.!！~～\s]*$/i;
 function isTrivial(msg) {
-  if (msg.startsWith('/') || msg.length < 6 || TRIVIAL.test(msg)) return true;
+  const s = String(msg).trim();
+  if (s.startsWith('/') || [...s].length <= 2 || TRIVIAL.test(s)) return true;
   // 短的纯提问
-  return /[?？]\s*$/.test(msg) && msg.length < 30 && !/(以后|不要|别|改成|都要|应该|必须)/.test(msg);
+  return /[?？]\s*$/.test(s) && s.length < 30 && !/(以后|不要|别|改成|都要|应该|必须)/.test(s);
 }
 
 function buildPrompt(tree, turns, touched, unmapped) {
@@ -108,18 +196,23 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
    - 只记这个项目自己的需求：在讨论别的工具、别的项目（比如正在用的插件、另一个程序）时提的要求不记。
    - **先在树里找同一主题的已有规则**（同一件事，哪怕措辞不同）：
      · 意思已经包含 → 什么都不做；
-     · 用户改了它的内容 → replace_rule（old 填树里原文，不含 [键]），不要另加一条；
+     · 用户的新说法和它不一样（哪怕没说"改成"）→ 以最新的为准改写它，不要两条并存：replace_rule（old 填树里原文，不含 [键]）；
      · 用户否决它 → remove_rule。
      只有树里确实没有这个主题时才 add_rule。宁可改一条，不要加一条相似的。
+     例：旧「像素风探险地图」，新「改成2D横版像素游戏」→ replace_rule；
+         P 里旧「手账风全课通用」，新「手账风只属于第一篇」→ 缩小范围：remove_rule P 那条，在第一篇 add_rule；
+         P 里旧「每章互动不超过4个」，新「第5章互动可以多一点」→ 只第5章例外：在第5章 override_rule。
    - 规则挂在它管辖范围最小的节点上；用户说"以后都""所有章节""每次"之类时，挂到覆盖这个范围的最高节点。最顶上那个需求只放明确对整个项目都成立的规则。
    - 这个项目整体怎么做事、怎么写、怎么沟通的偏好（如"交流用中文""反馈含糊先问清""文风要平实"），不是某门课、某个模块内容特有的，挂到最顶上那个需求——哪怕说的时候正在做某一章。只有那一块内容本身的决定才挂在那一块上。
-   - 子需求要在本范围内推翻上级的规则时，用 add_rule 并写上和上级同一个 [键]（上级没有键就别加）。
+   - 子需求要在本范围内推翻上级的规则时，用 override_rule（node 是子需求，from 是上级 ID，text 是上级原文，new 是新内容）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
-2. 需求状态：只有用户明确说某需求做完了、或 AI 说做完而用户认可时，才 set_status 为 done。
+2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，按第 4 条问「做完了吗」，default 是「还没」（ops 为空）。
 3. 没归属的文件如果明显属于某个需求，用 add_files 给出 glob（如 DataScience/ch02-*.html）；拿不准就不给。
+4. 拿不准就问：只在真有歧义、只有用户能定的时候问——这句话管全项目还是只管当前这门课或这一章；新说法是取代旧规则、缩小范围还是补充；某需求做完没有。先把最可能的做法照常写进 ops，同时在 questions 里问：text 是一句简短的问题，options 是 2–4 种做法（label 几个字，ops 是这种做法完整的改动，可以为空），default 是已写进 ops 的那个选项的序号（从 0 起）。每轮最多 2 个问题；有把握的直接改，不要问。
 
 只输出 JSON，不要任何别的文字；没有改动就输出 {"ops":[]}：
-{"ops":[{"op":"replace_rule","node":"ID","old":"树里原文","text":"新内容"},{"op":"add_rule","node":"ID","key":"可选","text":"..."},{"op":"remove_rule","node":"ID","text":"原文"},{"op":"add_node","parent":"ID","id":"新ID","title":"..."},{"op":"set_status","node":"ID","status":"done"},{"op":"add_files","node":"ID","globs":["..."]}]}`;
+{"ops":[{"op":"replace_rule","node":"ID","old":"树里原文","text":"新内容"},{"op":"add_rule","node":"ID","key":"可选","text":"..."},{"op":"remove_rule","node":"ID","text":"原文"},{"op":"override_rule","node":"子需求ID","from":"上级ID","text":"上级原文","new":"新内容"},{"op":"add_node","parent":"ID","id":"新ID","title":"..."},{"op":"set_status","node":"ID","status":"done 或 question"},{"op":"add_files","node":"ID","globs":["..."]}],
+ "questions":[{"text":"「每章配3张图」只管这门课，还是全项目？","options":[{"label":"只管这门课","ops":[{"op":"add_rule","node":"C1","text":"每章配3张图"}]},{"label":"全项目","ops":[{"op":"add_rule","node":"P","text":"每章配3张图"}]}],"default":0}]}`;
 }
 
 // 补漏：把最近几轮用户的原话一起对照树，只补单轮判断漏掉的长期要求。
@@ -208,7 +301,8 @@ function runModel(prompt) {
 // 出错时除了中文 message，再带上结构化的 t（{ k: 文字表的键, a: 参数 }），面板按当前语言显示
 const fail = (message, k, ...a) => Object.assign(new Error(message), { t: { k, a } });
 
-async function askModel(prompt) {
+// 调用模型，返回它输出的 JSON 对象
+async function askJson(prompt) {
   const res = await runModel(prompt);
   if (res.timedOut) throw fail(`调用模型超时（${Math.round(TIMEOUT_MS / 1000)} 秒没有返回）`, 'rec.err.timeout', Math.round(TIMEOUT_MS / 1000));
   if (res.error) throw fail(`调用模型失败：${res.error.message}`, 'rec.err.spawn', res.error.message);
@@ -218,39 +312,54 @@ async function askModel(prompt) {
   }
   const m = (res.stdout || '').match(/\{[\s\S]*\}/);
   if (!m) throw fail(`模型没有返回 JSON：${(res.stdout || '').slice(0, 120)}`, 'rec.err.noJson', (res.stdout || '').slice(0, 120));
-  const ops = JSON.parse(m[0]).ops;
+  let out;
+  try { out = JSON.parse(m[0]); } catch { throw fail(`模型没有返回 JSON：${(res.stdout || '').slice(0, 120)}`, 'rec.err.noJson', (res.stdout || '').slice(0, 120)); }
+  if (!out || typeof out !== 'object') throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
+  return out;
+}
+
+// 只要改动（补漏用）：允许的操作
+async function askModel(prompt) {
+  const ops = (await askJson(prompt)).ops;
   if (!Array.isArray(ops)) throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
   const ok = ops.filter(o => o && ALLOWED_OPS.has(o.op));
   if (ok.length < ops.length) log(`丢掉模型给的不允许的操作：${JSON.stringify(ops.filter(o => !ok.includes(o)))}`);
   return ok;
 }
 
-// 和 describe 同样的内容，写成结构化的几段（{ k, a }），面板按当前语言拼
-function describeParts(applied, queued) {
+// 这一轮做了什么，写成结构化的几段（{ k, a }），面板按当前语言拼（media/strings.js 的 rec.*）
+function describeParts(applied, queued, asked = 0) {
   const count = op => applied.filter(o => o.op === op).length;
   const parts = [];
-  const rules = count('add_rule') + count('replace_rule') + count('remove_rule') + count('add_node') + count('add_files');
+  const rules = count('add_rule') + count('replace_rule') + count('remove_rule') + count('add_node') + count('add_files') + count('override_rule');
   if (rules) parts.push({ k: 'rec.rules', a: [rules] });
   const done = applied.filter(o => o.op === 'set_status' && o.status === 'done').map(o => o.node);
   const doing = applied.filter(o => o.op === 'set_status' && o.status === 'doing').map(o => o.node);
   if (done.length) parts.push({ k: 'rec.done', a: [done] });
   if (doing.length) parts.push({ k: 'rec.doing', a: [doing] });
   if (queued) parts.push({ k: 'rec.queued', a: [queued] });
+  if (asked) parts.push({ k: 'rec.asked', a: [asked] });
   return parts.length ? parts : [{ k: 'rec.none', a: [] }];
 }
 
-function describe(applied, queued) {
-  const count = op => applied.filter(o => o.op === op).length;
-  const parts = [];
-  const rules = count('add_rule') + count('replace_rule') + count('remove_rule') + count('add_node') + count('add_files');
-  if (rules) parts.push(`记下 ${rules} 条`);
-  const done = applied.filter(o => o.op === 'set_status' && o.status === 'done').map(o => o.node);
-  const doing = applied.filter(o => o.op === 'set_status' && o.status === 'doing').map(o => o.node);
-  if (done.length) parts.push(`${done.join('、')} 标为完成`);
-  if (doing.length) parts.push(`${doing.join('、')} 标为正在做`);
-  if (queued) parts.push(`${queued} 条改动等你保存需求树后写入`);
-  return parts.join('；') || '这一轮没有新要求';
+// 同样几段的中文（state.json 里的 message、recorder.log、命令行和旧版本的面板用）。
+// 和 media/strings.js 的中文一致（测试对照）；hook 运行时只复制 src/ 和 hooks/，读不到 media/，所以这里留一份
+const ZH = {
+  'rec.rules': n => `记下 ${n} 条`, 'rec.done': ids => `${ids.join('、')} 标为完成`, 'rec.doing': ids => `${ids.join('、')} 标为正在做`,
+  'rec.queued': n => `${n} 条改动等你保存需求树后写入`, 'rec.asked': n => `${n} 件事拿不准，问你了`, 'rec.none': '这一轮没有新要求',
+  'rec.paused': '已暂停（只标正在做，不记新要求）', 'rec.sweep': n => `补漏记下 ${n} 条`, 'rec.sweepNone': n => `补漏查了 ${n} 句，没有漏的`,
+  'rec.sweepFail': m => `补漏失败：${m}`, 'rec.skipped': (n, first) => `${n} 条没写进去：${first}`,
+};
+const partText = p => { const v = ZH[p.k]; return typeof v === 'function' ? v(...(p.a || [])) : v; };
+const partsText = parts => parts.map(partText).join('；');
+
+function describe(applied, queued, asked = 0) {
+  return partsText(describeParts(applied, queued, asked));
 }
+
+// 没写进去的改动：applyOps 跳过的（找不到需求、已经有了……）和这里筛掉的（不允许的操作、没根据的文件对应）。
+// 都写进 recorder.log；状态里给个数和第一条，面板能看到，不再只说「这一轮没有新要求」
+const skipText = s => `${s.op && s.op.op ? store.describeOp(s.op) : JSON.stringify(s.op)}（${SKIP_REASON[s.reason] || s.reason}）`;
 
 async function main(jobPath) {
   const job = JSON.parse(fs.readFileSync(jobPath, 'utf8'));
@@ -278,22 +387,34 @@ async function main(jobPath) {
     }
     const latest = turns.length ? turns[turns.length - 1].user : '';
     const config = store.readConfig(treePath);
-    let asked = false;
+    let asked = false, questions = [];
+    const skipped = [];
     if (turns.length && config.recorder !== 'off' && !isTrivial(latest)) {
       const lines = text.split(/\r?\n/).length;
       const tree = lines > BIG_TREE_LINES ? outline(text, touched) : text;
-      ops.push(...filterAddFiles(await askModel(buildPrompt(tree, turns, touched, unmapped)), { root, unmapped, user: latest }));
+      const out = await askJson(buildPrompt(tree, turns, touched, unmapped));
+      if (!Array.isArray(out.ops) && !Array.isArray(out.questions)) throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
+      const ctx = { root, unmapped, user: latest, dropped: skipped };
+      const picked = pickQuestions(out.questions, { text, before: ops, ops: cleanOps(out.ops || [], ctx), ctx: { root, unmapped, user: latest } });
+      ops.push(...picked.ops);
+      questions = picked.questions;
       asked = true;
     }
 
-    let { applied, queued } = ops.length ? store.submitOps(treePath, ops) : { applied: [], queued: 0 };
-    let message = config.recorder === 'off' ? '已暂停（只标正在做，不记新要求）' : describe(applied, queued);
-    let parts = config.recorder === 'off' ? [{ k: 'rec.paused', a: [] }] : describeParts(applied, queued);
+    let { applied, queued, skipped: s1 = [] } = ops.length ? store.submitOps(treePath, ops) : { applied: [], queued: 0 };
+    skipped.push(...s1);
+    if (questions.length) {
+      const r = recordQuestions(treePath, questions);
+      applied = applied.concat(r.applied); queued += r.queued;
+      skipped.push(...r.skipped);
+      log(`问用户 ${questions.length} 个问题：${JSON.stringify(questions)}`);
+    }
+    let parts = config.recorder === 'off' ? [{ k: 'rec.paused', a: [] }] : describeParts(applied, queued, questions.length);
 
     // 3. 补漏：这一轮记完以后，拿最新的树对照最近几轮的原话（hook 每 sweepEvery 轮、压缩前才给）
     const sweep = (job.sweep || []).filter(m => typeof m === 'string' && m.trim()).map(m => clip(clean(m), 1000));
     if (sweep.length && config.recorder !== 'off') {
-      let note, notePart;
+      let notePart;
       try {
         const now = fs.readFileSync(treePath, 'utf8');
         const tree = now.split(/\r?\n/).length > BIG_TREE_LINES ? outline(now, touched) : now;
@@ -301,23 +422,28 @@ async function main(jobPath) {
         asked = true;
         const r = sops.length ? store.submitOps(treePath, sops) : { applied: [], queued: 0 };
         const n = r.applied.length + r.queued;
-        note = n ? `补漏记下 ${n} 条` : `补漏查了 ${sweep.length} 句，没有漏的`;
         notePart = n ? { k: 'rec.sweep', a: [n] } : { k: 'rec.sweepNone', a: [sweep.length] };
         log(`补漏 ${sweep.length} 句｜${JSON.stringify(r.applied)}`);
         applied = applied.concat(r.applied); queued += r.queued;
       } catch (e) {
         // 这一轮的记录已经写进树了，补漏失败不能把它说成整轮出错
         if (job.sweepOnly) throw e;
-        note = `补漏失败：${e.message}`;
         notePart = { k: 'rec.sweepFail', a: [e.message] };
         log('补漏出错：' + e.stack);
       }
-      const alone = job.sweepOnly || message === '这一轮没有新要求';
-      message = alone ? note : `${message}；${note}`;
+      const alone = job.sweepOnly || (parts.length === 1 && parts[0].k === 'rec.none');
       parts = alone ? [notePart] : parts.concat(notePart);
     }
+    if (skipped.length) {
+      for (const s of skipped) log(`没写进去：${skipText(s)}｜${JSON.stringify(s.op)}`);
+      const part = { k: 'rec.skipped', a: [skipped.length, skipText(skipped[0])] };
+      parts = parts.length === 1 && parts[0].k === 'rec.none' ? [part] : parts.concat(part);
+    }
+    const message = partsText(parts);
     status = { ok: true, asked, message, parts };
     log(`${message}｜${JSON.stringify(applied)}`);
+    // 标着 🔨 很久没动的需求：变成问题（不调用模型，每个需求每个周期只问一次）
+    try { Q.staleQuestions(treePath); } catch (e) { log('久未动的问题没生成：' + e.message); }
   } catch (e) {
     status = { ok: false, message: e.message, ...(e.t ? { t: e.t } : {}) };
     log('出错：' + e.stack);
@@ -331,4 +457,7 @@ if (require.main === module) {
   // 做完就退出：超时被杀掉的子进程万一留下了句柄，也不让记录员一直挂着
   main(process.argv[2]).catch(e => log('出错：' + e.stack)).finally(() => process.exit(0));
 }
-module.exports = { lastTurns, isTrivial, buildPrompt, buildSweepPrompt, SWEEP_OPS, describe, describeParts, splitCommand, filterAddFiles };
+module.exports = {
+  lastTurns, isTrivial, buildPrompt, buildSweepPrompt, SWEEP_OPS, ALLOWED_OPS, describe, describeParts, splitCommand, filterAddFiles,
+  cleanOps, pickQuestions, recordQuestions, askJson, fail, log, BIG_TREE_LINES,
+};

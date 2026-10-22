@@ -211,8 +211,32 @@ const USAGE = `用法：
   reqtree init  [目录] [--tool claude|codex] 在项目里装好 hook 和忽略规则（默认当前目录）
   reqtree tree  <文件>          打印整棵树
   reqtree rules <文件> <ID>     打印某个节点实际生效的规则（含继承与覆盖）
-  reqtree check <文件>          检查重复 ID、重复规则键、很久没动的 🔨
+  reqtree check <文件>          检查重复 ID、重复规则键、重复规则、很久没动的 🔨（只读）
+  reqtree check <文件> --fix    体检：合并重复规则（留后写的），很久没动的 🔨 和可能冲突的规则变成问题
+                                （冲突要调用一次模型；加 --no-model 不调用）；也查 Claude Code 自动记忆里和树重复的（--no-memory 不查）
+  reqtree questions <文件>      列出等你回答的问题
+  reqtree answer <文件> <问题ID> <选项序号|dismiss>   回答问题（序号从 1 起；dismiss 保持现在的样子）
   reqtree compile <文件>        编译成 Claude Code 原生规则（.claude/rules/reqtree/）`;
+
+// 命令行显示问题：编号 + 问题 + 选项（序号从 1 起，标出现在用的和建议的）
+function printQuestion(q) {
+  console.log(`${q.id}  ${q.text}`);
+  q.options.forEach((o, i) => {
+    const tag = i === q.default ? (q.defaultApplied ? '（现在是这样）' : '（建议）') : '';
+    console.log(`  ${i + 1}. ${o.label}${tag}`);
+  });
+}
+
+async function checkFix(file, { model, memoryOn = true }) {
+  const { runCheckup } = require('../src/checkup');
+  const r = await runCheckup(file, { model, memory: memoryOn ? undefined : false });
+  for (const o of r.merged) console.log(`合并重复规则：删掉 ${o.node} 的「${o.text}」（留后写的那条）`);
+  const asked = [...r.stale, ...r.memory, ...r.questions];
+  for (const q of asked) printQuestion(q);
+  if (r.error) console.error(`查冲突时调用模型出错：${r.error.message}`);
+  console.log(`合并 ${r.merged.length} 条重复规则，新提出 ${asked.length} 个问题${asked.length ? '（在 VS Code 里回答，或者 reqtree answer <文件> <问题ID> <选项序号>）' : ''}`);
+  return r.error ? 1 : 0;
+}
 
 if (require.main === module) {
   const [cmd, file, id] = process.argv.slice(2);
@@ -222,6 +246,33 @@ if (require.main === module) {
     process.exit(0);
   }
   if (!cmd || !file) { console.log(USAGE); process.exit(1); }
+  const flags = process.argv.slice(4); // 文件之后的参数
+
+  if (cmd === 'check' && flags.includes('--fix')) {
+    checkFix(path.resolve(file), { model: !flags.includes('--no-model'), memoryOn: !flags.includes('--no-memory') })
+      .then(code => process.exit(code), e => { console.error(e.message); process.exit(1); });
+    return;
+  }
+  if (cmd === 'questions') {
+    const Q = require('../src/questions');
+    const open = Q.openQuestions(path.resolve(file));
+    open.forEach(printQuestion);
+    console.log(open.length ? `共 ${open.length} 个问题等你回答` : '没有等你回答的问题');
+    process.exit(0);
+  }
+  if (cmd === 'answer') {
+    const Q = require('../src/questions');
+    const [qid, pick] = flags;
+    const tree = path.resolve(file);
+    const done = pick === 'dismiss' ? Promise.resolve({ ok: Q.dismissQuestion(tree, qid), reason: 'gone' })
+      : Q.answerQuestion(tree, qid, Number(pick) - 1);
+    done.then(r => {
+      if (r.ok) { console.log('好了'); process.exit(0); }
+      console.error(r.reason === 'bad' ? '没有这个选项' : '找不到这个问题，或者已经回答过、过期了');
+      process.exit(1);
+    }, e => { console.error(e.message); process.exit(1); });
+    return;
+  }
 
   const root = parse(fs.readFileSync(file, 'utf8'));
   const label = n => `${n.id} ${n.title}${n.status ? ' ' + STATUS_EMOJI[n.status] : ''}`;
@@ -253,6 +304,7 @@ if (require.main === module) {
     for (const n of walk(root)) if (n.rules.length && !autoLoads(n)) console.log(`提醒：${n.id} ${n.title} 有规则但没有文件对应（上级也没有），规则不会自动加载给 AI`);
     const { touched, since } = store.readState(path.resolve(file));
     for (const n of walk(root)) if (isStale(n, touched, since)) console.log(`提醒：${n.id} ${n.title} 标着 🔨，但 ${STALE_DAYS} 天内 AI 没改过它的文件，是做完了还是暂停了？`);
+    for (const o of require('../src/checkup').duplicateOps(fs.readFileSync(file, 'utf8'))) console.log(`提醒：${o.node} 里「${o.text}」和后面的「${o.why}」是同一件事，运行 check --fix 只留后面那条`);
     console.log(problems.length ? `共 ${problems.length} 个问题` : '没有发现问题');
     process.exit(problems.length ? 1 : 0);
   } else {

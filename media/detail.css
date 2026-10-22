@@ -2,7 +2,6 @@
    层级：需求标题 18 加粗、正文色 > 分节小标题 15 加粗、正文色 > 内容 13、柔和色 > 条数和说明 12、灰色 */
 
 /* ---------- 头部：编号和操作 / 大标题（点它改名）/ 路径 ---------- */
-.dp .sh { margin-bottom: var(--sp-3); }
 .sid { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--c-muted); }
 .sh-acts { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
 .sh-title { display: flex; align-items: center; gap: var(--sp-1); }
@@ -10,26 +9,29 @@
 .sh-title strong:hover { text-decoration: underline dotted var(--c-muted); text-underline-offset: 3px; }
 .sh-title .pen .ico { opacity: 0; }
 .sh-title:hover .pen .ico, .sh-title:focus-within .pen .ico { opacity: 1; }
-.dp .sh .crumbs { margin-top: 2px; font-size: 12px; }
+/* 标题下面一行：当前状态（文字按钮）· 路径。状态排第一，路径长了在末尾省略 */
+.dp .sh-meta { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; margin-top: 2px; font-size: 12px; line-height: 18px; color: var(--c-muted); }
+.dp .sh-meta .sep { flex: none; margin-left: calc(-1 * var(--sp-1)); } /* 抵掉状态按钮右边的内边距，「·」两边一样宽 */
+.dp .sh .crumbs { min-width: 0; margin: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 小按钮（铅笔、⋯、规则上的改和删）：透明底、灰色图标，悬停才有底色 */
 .dp .ib { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1); min-height: var(--h-ib); min-width: var(--h-ib); border: 0; background: none; color: var(--c-muted); border-radius: var(--r-ctl); padding: 0 var(--sp-1); line-height: 18px; }
 .dp .ib:hover { background: var(--c-hover); color: var(--c-text); }
 .dp .ib.wide { font-size: 12px; white-space: nowrap; color: var(--accent-text); }
 
-/* ---------- 状态：细的分段按钮，只有选中的一格有底色 ---------- */
-.seg { display: flex; border: 1px solid var(--c-border); border-radius: var(--r-ctl); overflow: hidden; }
-.seg button { flex: 1; min-height: var(--h-ctl); border: 0; background: none; padding: 0 2px; color: var(--c-muted); font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
-.seg button + button { border-left: 1px solid var(--c-border); }
-.seg button:hover { background: var(--c-hover); color: var(--c-text); }
-.seg button:focus-visible { outline-offset: -2px; }
-.seg button.on { background: var(--c-raised); color: var(--c-text); font-weight: 600; }
-.seg .st { transform: scale(.85); }
+/* ---------- 状态：只显示当前状态（符号 + 名字 + 小箭头），点开菜单再改 ----------
+   状态多数时候自动更新，这里只用来纠正：没有底色和边框，和路径一样小，悬停或菜单开着时才有一层淡底。
+   往左挪 4px，让符号和标题的字对齐 */
+.dp .st-btn { flex: none; display: inline-flex; align-items: center; gap: 5px; min-height: var(--h-ib); margin-left: calc(-1 * var(--sp-1)); padding: 0 var(--sp-1);
+  border: 1px solid transparent; border-radius: var(--r-ctl); background: none; color: var(--c-soft); font-size: 12px; line-height: 18px; white-space: nowrap; }
+.dp .st-btn:hover, .dp .st-btn[aria-expanded="true"] { background: var(--c-hover); color: var(--c-text); border-color: var(--c-hc); }
+.dp .st-btn .st { transform: scale(.85); }
+.dp .st-btn .ico-chevd { margin-left: -2px; color: var(--c-muted); }
 
 /* ---------- 分节：本需求的规则 / 继承的规则 / 子需求 / 最近改动 / 未归属的文件 ----------
    节奏到处一样：小标题 → 第一条 8，条与条 6，最后一条 → 分隔线 12，分隔线 → 下一个小标题 16。
    每节结尾一根很淡的线；条与条之间不画线，靠前面的小圆点分开 */
-.dp .seg { margin-bottom: var(--sp-4); }
+.dp .sh { margin-bottom: var(--sp-4); }
 .dp .hint { display: flex; align-items: flex-start; gap: 6px; margin: calc(-1 * var(--sp-1)) 0 var(--sp-4); }
 .dp .hint .ico { margin-top: .15em; color: var(--c-muted); }
 .dp .sec { padding-bottom: var(--sp-3); margin-bottom: var(--sp-4); border-bottom: 1px solid color-mix(in srgb, var(--c-border) 60%, transparent); }

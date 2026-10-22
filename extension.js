@@ -8,6 +8,9 @@ const { samePath } = store;
 const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./src/viewmodel');
 const { suggest } = require('./src/guess');
 const reqtree = require('./bin/reqtree');
+const Q = require('./src/questions');
+const { runCheckup } = require('./src/checkup');
+const memory = require('./src/memory');
 const STRINGS = require('./media/strings');
 
 // 界面语言：设置 reqtree.language（auto / zh / en），auto 跟 VS Code 的显示语言走。插件的提示和网页用同一张文字表
@@ -18,6 +21,38 @@ function lang() {
 const T = (k, ...a) => STRINGS.make(lang())(k, ...a);
 // 出错文字：带结构化 t（{ k, a }）的按当前语言写，没有就用 message（Node 自己的错误本来就是英文）
 const errText = e => (e && e.t && e.t.k in STRINGS.zh ? T(e.t.k, ...(e.t.a || [])) : (e && e.message) || String(e));
+
+// ---------- 拿不准就问（src/questions.js） ----------
+// 设置 reqtree.askQuestions：notify 弹通知问（默认）| panel 只在侧栏图标上显示个数 | off 不问，记录员的默认做法直接算数
+const askMode = () => {
+  const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('reqtree') : null;
+  const v = cfg ? cfg.get('askQuestions', 'notify') : 'notify';
+  return v === 'panel' || v === 'off' ? v : 'notify';
+};
+// 问题和选项的文字：程序生成的（久未动）带结构化 t，按界面语言显示；记录员和体检的按用户的语言写好了
+const tx = (t, fallback) => (t && t.k in STRINGS.zh ? T(t.k, ...(t.a || [])) : fallback);
+const qText = q => tx(q.t, q.text);
+const optLabel = o => tx(o.t, o.label);
+// 同时最多弹几个问题通知，其余的等前面的答完（或在「待回答的问题」里答）
+const NOTIFY_MAX = 3;
+
+// 设置 reqtree.memoryMode：dedupe（默认）留着 Claude Code 的自动记忆，体检时查和需求树重复的；
+// treeOnly 在项目的 .claude/settings.local.json 写 "autoMemoryEnabled": false 关掉自动记忆（键名见官方文档 code.claude.com/docs/en/memory）
+const memoryMode = () => {
+  const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('reqtree') : null;
+  return cfg && cfg.get('memoryMode', 'dedupe') === 'treeOnly' ? 'treeOnly' : 'dedupe';
+};
+// 按设置开关每个项目的自动记忆。改了文件才提示一次（新开会话后生效）
+function applyMemoryMode() {
+  const off = memoryMode() === 'treeOnly';
+  for (const f of (vscode.workspace.workspaceFolders || []).filter(x => x.uri.scheme === 'file')) {
+    const dir = f.uri.fsPath;
+    if (!store.findTree(dir)) continue;
+    try { if (memory.setAutoMemory(dir, !off)) vscode.window.showInformationMessage(T(off ? 'mem.off' : 'mem.on')); }
+    catch (e) { vscode.window.showWarningMessage(T('mem.fail', errText(e))); }
+  }
+}
+const SNOOZE_KEY = 'reqtree.snoozedQuestions';
 
 // 和 hook 用同一个规则：每个工作区文件夹根目录下的 需求树.md / *.tree.md
 function findTrees() {
@@ -63,6 +98,9 @@ class Panel {
     this.context = context;
     this.trees = [];
     this.view = null;
+    this.notified = new Set(); // 这次打开 VS Code 已经弹过通知的问题
+    this.showing = 0;
+    this.asking = Promise.resolve(); // 测试用：等通知走完
   }
 
   load() {
@@ -86,17 +124,23 @@ class Panel {
         changes: store.readChanges(p, 8),
         unmapped: unmappedFiles(p),
         context: store.readContext(p, CONTEXT_WINDOW_MS),
+        questions: openQuestionsOf(p),
       };
     });
     this.push();
+    this.handleQuestions();
   }
 
   // 侧栏和导图收到同一份数据
   push() {
-    const data = viewData(this.trees);
+    // askQuestions 为 off 时不问用户，面板也就当没有问题（「久未动」提示照常显示）
+    const data = viewData(askMode() === 'off' ? this.trees.map(t => ({ ...t, questions: [] })) : this.trees);
+    // 侧栏图标上的数字：有问题等回答时显示问题个数（设置为 off 时不显示），否则记录员出错时显示 1
+    const asks = askMode() === 'off' ? 0 : this.trees.reduce((n, t) => n + (t.questions || []).length, 0);
+    if (vscode.commands.executeCommand) Promise.resolve(vscode.commands.executeCommand('setContext', 'reqtree.hasQuestions', asks > 0)).catch(() => {});
     if (this.view) {
       const err = data.files.some(f => f.recorder && !f.recorder.ok);
-      this.view.badge = err ? { value: 1, tooltip: T('x.recorderBadge') } : undefined;
+      this.view.badge = asks ? { value: asks, tooltip: T('q.badge', asks) } : err ? { value: 1, tooltip: T('x.recorderBadge') } : undefined;
       this.view.webview.postMessage(data);
     }
     if (this.map) this.map.webview.postMessage(data);
@@ -141,6 +185,113 @@ class Panel {
   }
 
   treeOf(uri) { return this.trees.find(t => t.uri === uri); }
+
+  // ---------- 拿不准就问 ----------
+  snoozed() { const st = this.context.workspaceState; return (st && st.get(SNOOZE_KEY)) || []; }
+  snooze(id) {
+    const st = this.context.workspaceState;
+    if (st) return Promise.resolve(st.update(SNOOZE_KEY, [...this.snoozed().filter(x => x !== id), id].slice(-200))).catch(() => {});
+  }
+
+  // 新出现的问题：notify 弹通知；off 时记录员的问题按默认做法算数（体检的问题是用户主动要的，留着）
+  handleQuestions() {
+    const mode = askMode();
+    const snoozed = new Set(this.snoozed());
+    let accepted = false;
+    for (const t of this.trees) {
+      for (const q of t.questions || []) {
+        if (mode === 'off') {
+          if (q.defaultApplied) try { accepted = Q.acceptDefault(t.path, q.id) || accepted; } catch (e) { console.error(e); }
+          continue;
+        }
+        if (mode !== 'notify' || this.notified.has(q.id) || snoozed.has(q.id) || this.showing >= NOTIFY_MAX) continue;
+        this.notified.add(q.id);
+        const p = this.notify(t.path, q).catch(e => console.error(e));
+        this.asking = Promise.all([this.asking, p]);
+      }
+    }
+    if (accepted) this.load();
+  }
+
+  // 不挡操作的通知：问题 + 最多 3 个选项 +「以后再说」。选项多于 3 个时放 2 个，其余在「其他选项…」里
+  async notify(treePath, q) {
+    this.showing++;
+    let pick;
+    try {
+      const def = q.options[q.default];
+      const msg = q.defaultApplied ? T('q.notify', qText(q), optLabel(def)) : T('q.notifySuggest', qText(q), optLabel(def));
+      const many = q.options.length > 3;
+      const items = (many ? q.options.slice(0, 2) : q.options).map((o, i) => ({ title: optLabel(o) + (i === q.default && q.defaultApplied ? T('q.current') : ''), i }));
+      if (many) items.push({ title: T('q.more'), more: true });
+      items.push({ title: T('q.later'), later: true });
+      pick = await vscode.window.showInformationMessage(msg, ...items);
+    } finally { this.showing--; }
+    // 关掉通知和「以后再说」一样：不再弹，问题留着（侧栏图标上的数字、「待回答的问题」里还能答）
+    if (!pick || typeof pick !== 'object' || pick.later) return this.snooze(q.id);
+    if (pick.more) return this.chooseOption(treePath, q);
+    return this.answer(treePath, q, pick.i);
+  }
+
+  async answer(treePath, q, k) {
+    const r = await Q.answerQuestion(treePath, q.id, k, { write: writeTree });
+    if (!r.ok && r.reason !== 'busy') vscode.window.showWarningMessage(T('q.gone'));
+    this.load();
+    return r;
+  }
+
+  // 选择框：全部选项（标出现在用的、建议的）+「保持现在这样」
+  async chooseOption(treePath, q) {
+    const items = q.options.map((o, i) => ({
+      label: optLabel(o), i,
+      description: i === q.default ? (q.defaultApplied ? T('q.applied') : T('q.suggested')) : undefined,
+    }));
+    items.push({ label: T('q.keep'), description: T('q.keepTip'), keep: true });
+    const pick = await vscode.window.showQuickPick(items, { placeHolder: qText(q), ignoreFocusOut: true });
+    if (!pick) return;
+    if (pick.keep) { Q.dismissQuestion(treePath, q.id); this.load(); return; }
+    return this.answer(treePath, q, pick.i);
+  }
+
+  // 命令「需求树：待回答的问题」
+  async questionsCommand() {
+    this.load();
+    const all = this.trees.flatMap(t => (t.questions || []).map(q => ({ t, q })));
+    if (!all.length) { vscode.window.showInformationMessage(T('q.none')); return; }
+    let one = all[0];
+    if (all.length > 1) {
+      const pick = await vscode.window.showQuickPick(all.map(x => ({
+        label: qText(x.q),
+        description: `${x.q.defaultApplied ? T('q.applied') : T('q.suggested')} · ${optLabel(x.q.options[x.q.default])}`,
+        detail: this.trees.length > 1 ? x.t.name : undefined, x,
+      })), { placeHolder: T('q.pickQuestion') });
+      if (!pick) return;
+      one = pick.x;
+    }
+    return this.chooseOption(one.t.path, one.q);
+  }
+
+  // 命令「需求树：体检」：合并重复规则，久未动和可能冲突的规则变成问题（冲突要调用一次模型）
+  async checkupCommand() {
+    const trees = findTrees();
+    if (!trees.length) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
+    let p = trees[0];
+    if (trees.length > 1) {
+      const pick = await vscode.window.showQuickPick(trees.map(t => ({ label: vscode.workspace.asRelativePath(t), p: t })), { placeHolder: T('q.whichTree') });
+      if (!pick) return;
+      p = pick.p;
+    }
+    const run = () => runCheckup(p, { read: currentText, write: writeTree, memory: memoryMode() === 'treeOnly' ? false : undefined });
+    const r = vscode.window.withProgress && vscode.ProgressLocation
+      ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('q.checking') }, run)
+      : await run();
+    this.load();
+    if (r.error) vscode.window.showWarningMessage(T('q.checkFail', errText(r.error)));
+    const asked = r.questions.length + r.stale.length + r.memory.length;
+    vscode.window.showInformationMessage(T('q.checkDone', r.merged.length, asked));
+    // 不弹通知的设置下，用户刚主动体检、正等着结果：直接打开问题列表
+    if (asked && askMode() !== 'notify') await this.questionsCommand();
+    return r;
+  }
 
   // 面板上的编辑操作（树行和详情面板都发 edit 消息）。按需求 ID 定位（不怕文件被改过导致行号错位），
   // 输入用 VS Code 自带的输入框和文件选择框。这些改动都记进改动记录，面板上可以撤销。
@@ -315,6 +466,12 @@ const MAP_BODY = require('./media/map-body');
 const VIEW_HTML = [['view.css', 'detail.css'], ['detail.js', 'view.js'], '<div id="app" style="display:contents"></div>'];
 const MAP_HTML = [['view.css', 'detail.css', 'map.css'], ['detail.js', 'map.js'], MAP_BODY];
 
+// 打开着的问题；顺便把标着 🔨 很久没动的需求变成问题（不调用模型，每个需求每个周期只问一次）
+function openQuestionsOf(p) {
+  try { Q.staleQuestions(p); } catch (e) { console.error(e); }
+  try { return Q.openQuestions(p); } catch (e) { console.error(e); return []; }
+}
+
 async function create() {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
@@ -357,18 +514,23 @@ function activate(context) {
     vscode.commands.registerCommand('reqtree.openMap', () => panel.openMap()),
     vscode.commands.registerCommand('reqtree.create', create),
     vscode.commands.registerCommand('reqtree.enable', () => enableCommand(panel)),
+    vscode.commands.registerCommand('reqtree.questions', () => panel.questionsCommand()),
+    vscode.commands.registerCommand('reqtree.checkup', () => panel.checkupCommand()),
   );
   // 改了 reqtree.language：界面马上换语言
   if (vscode.workspace.onDidChangeConfiguration) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('reqtree.language')) { panel.relang(); panel.load(); }
+      else if (e.affectsConfiguration('reqtree.askQuestions')) panel.load();
+      else if (e.affectsConfiguration('reqtree.memoryMode')) applyMemoryMode();
     }));
   }
   panel.load();
+  applyMemoryMode();
   // 插件升级后，~/.reqtree/runtime 里的 hook 程序还是旧版：悄悄换成新的（从没启用过就不建）
   try { reqtree.refreshRuntimeIfOlder(); } catch (e) { console.error(e); }
   const prompted = offerEnable(context, panel).catch(e => console.error(e));
-  return { prompted }; // 测试用：等提示走完
+  return { prompted, panel }; // 测试用：等提示走完
 }
 
 // ---------- 一键启用：在项目里装 hook（和命令行 init 同一套逻辑） ----------

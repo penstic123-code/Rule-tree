@@ -273,13 +273,13 @@ for (const theme of ['dark', 'light']) {
           out.aiIcon = !!document.querySelector('.chip.ai svg.ico-ai');
           out.status = document.querySelector('.status')?.textContent || '';
           // 对比度：正文、次要文字、标签、按钮
-          const checks = ['.row .title', '.crumbs', '.rule .why', '.gh', '.status', '.chip.ai', '.id', '.btn', '.files code', '.files', '.seg button', '.chg .cs', '.statusbar .ibtn', '.dp .ib'];
+          const checks = ['.row .title', '.crumbs', '.rule .why', '.gh', '.status', '.chip.ai', '.id', '.btn', '.files code', '.files', '.st-btn', '.chg .cs', '.statusbar .ibtn', '.dp .ib'];
           out.contrast = {};
           for (const s of checks) { const els = [...document.querySelectorAll(s)]; if (els.length) out.contrast[s] = Math.min(...els.map(contrast)); }
           // 行内元素是否互相压住（标题被右侧标签挤没）
           out.squeezed = [...document.querySelectorAll('.row')].filter(r => r.querySelector('.title').getBoundingClientRect().width < 24).map(r => r.dataset.key);
           // 常驻按钮要完整可见、点得到（没被裁掉或盖住）；点到按钮里的图标也算点到按钮
-          out.hiddenButtons = [...document.querySelectorAll('.statusbar button, .files button, .actions button, .seg button, .chg button, .dp .btn.add')]
+          out.hiddenButtons = [...document.querySelectorAll('.statusbar button, .files button, .actions button, .st-btn, .chg button, .dp .btn.add')]
             .filter(btn => {
               btn.scrollIntoView({ block: 'nearest' });
               const r = btn.getBoundingClientRect();
@@ -309,7 +309,8 @@ for (const theme of ['dark', 'light']) {
 
         // 交互：点状态、加规则、撤销、归属文件；点行 → 选中；点三角 → 折叠；设置菜单
         const posted = await b.eval(`
-          document.querySelector('.seg .s-done').click();
+          document.querySelector('.st-btn').click();
+          [...document.querySelectorAll('.menu button')].find(x => x.dataset.s === 'done').click();
           document.querySelector('[data-a="addRule"]').click();
           document.querySelector('.chg [data-act="undo"]').click();
           document.querySelector('[data-a="assignFile"]').click();
@@ -808,16 +809,16 @@ test('详情：没有大按钮，每节「+ 添加」都是同样的链接样式
           sizes: { title: fs(document.querySelector('.dp .sh-title strong')), gh: fs(document.querySelector('.dp .gh')), rule: fs(document.querySelector('.dp .rule')), gn: fs(document.querySelector('.dp .gh .gn')) },
           colors: { title: getComputedStyle(document.querySelector('.dp .sh-title strong')).color, gh: getComputedStyle(document.querySelector('.dp .gh')).color, rule: getComputedStyle(document.querySelector('.dp .rule .rt')).color },
           ids: [...document.querySelectorAll('.dp .sid, .row .id, .kid-id')].length, crumbs: document.querySelector('.dp .crumbs').textContent,
-          seg: [...document.querySelectorAll('.seg button')].map(e => Math.round(e.getBoundingClientRect().height)),
+          seg: [...document.querySelectorAll('.st-btn')].map(e => Math.round(e.getBoundingClientRect().height)),
           focus: css('--vscode-focusBorder'), rings: {}, contrast: {},
         };
-        for (const s of ['.dp .lnk', '.seg button', '.dp .ib', '.inh-tg', '.follow', '.statusbar .ibtn']) {
+        for (const s of ['.dp .lnk', '.st-btn', '.dp .ib', '.inh-tg', '.follow', '.statusbar .ibtn']) {
           const el = document.querySelector(s); if (!el) { out.rings[s] = 'missing'; continue; }
           el.focus(); const cs = getComputedStyle(el);
           out.rings[s] = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) >= 1 && cs.outlineColor === out.focus;
         }
         document.activeElement.blur();
-        for (const s of ['.follow', '.inh-tg', '.seg button.on', '.dp .lnk', '.dp .tag', '.dp .gh', '.dp .gh .gn', '.dp .crumbs', '.dp .rule .rt', '.dp .files', '.dp .files .fv', '.kid-t']) { const el = document.querySelector(s); if (el) out.contrast[s] = contrast(el); }
+        for (const s of ['.follow', '.inh-tg', '.st-btn .st-l', '.dp .lnk', '.dp .tag', '.dp .gh', '.dp .gh .gn', '.dp .crumbs', '.dp .rule .rt', '.dp .files', '.dp .files .fv', '.kid-t']) { const el = document.querySelector(s); if (el) out.contrast[s] = contrast(el); }
         return out;`);
       assert.strictEqual(r.primaries, 0, `${theme}：详情里不该有大按钮`);
       assert.deepStrictEqual(r.adds, ['添加|addRule', '添加|addChild'], `${theme}：每节的「+ 添加」`);
@@ -827,7 +828,7 @@ test('详情：没有大按钮，每节「+ 添加」都是同样的链接样式
       assert.notStrictEqual(r.colors.rule, r.colors.gh, `${theme}：内容要比小标题柔和`);
       assert.strictEqual(r.ids, 0, `${theme}：默认不显示编号`);
       assert.strictEqual(r.crumbs, '示例项目 › 数据科学课', `${theme}：路径只写名字`);
-      assert.ok(r.seg.every(h => h >= 22), `${theme}：状态按钮太矮 ${r.seg}`);
+      assert.ok(r.seg.length === 1 && r.seg.every(h => h >= 22), `${theme}：状态按钮太矮或不止一个 ${r.seg}`);
       for (const [s, ok] of Object.entries(r.rings)) assert.strictEqual(ok, true, `${theme}：${s} 没有焦点环`);
       for (const [s, c] of Object.entries(r.contrast)) assert.ok(c >= 4.5, `${theme}：${s} 对比度 ${c.toFixed(2)}`);
     } finally { b.close(); }
@@ -1505,4 +1506,210 @@ test('英文界面：新的改动记录、记录员状态、出错提示都按�
   // 中文界面：同样的新记录用中文写出来，名字用需求标题
   const z = await openPage2('zh-changes.html', { selId: 'C2.2', changes: [{ ...changes[0], ops: [{ op: 'add_rule', node: 'C2.2', text: '例子要足' }] }] }, 320);
   try { assert.deepStrictEqual(await z.eval(`return [...document.querySelectorAll('.chg .cs')].map(e => e.textContent)`), ['给「英文版」加规则「例子要足」']); } finally { z.close(); }
+});
+
+// ---------- 详情的状态：只显示当前状态，点开菜单再改 ----------
+// 真的按键（CDP），浏览器才会像用户按键一样触发按钮的点击、方向键处理
+async function press(b, key) {
+  const K = { Enter: ['Enter', 13, '\r'], ' ': ['Space', 32, ' '], Escape: ['Escape', 27], ArrowDown: ['ArrowDown', 40], ArrowUp: ['ArrowUp', 38], Home: ['Home', 36], End: ['End', 35], Tab: ['Tab', 9] }[key];
+  const base = { key, code: K[0], windowsVirtualKeyCode: K[1], nativeVirtualKeyCode: K[1] };
+  await b.send('Input.dispatchKeyEvent', { type: K[2] ? 'keyDown' : 'rawKeyDown', ...base, ...(K[2] ? { text: K[2] } : {}) });
+  await b.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  await sleep(60);
+}
+// 页面内：状态按钮和菜单的现状
+const ST_STATE = `
+  const btn = document.querySelector('.dp .st-btn'), menu = document.querySelector('.menu');
+  const fe = document.activeElement;
+  return { btns: document.querySelectorAll('.dp .st-btn').length, segs: document.querySelectorAll('.seg, .dp [aria-pressed]').length,
+    label: btn.querySelector('.st-l').textContent, aria: btn.getAttribute('aria-label'), pop: btn.getAttribute('aria-haspopup'), exp: btn.getAttribute('aria-expanded'),
+    menu: menu ? { role: menu.getAttribute('role'), label: menu.getAttribute('aria-label'), items: [...menu.querySelectorAll('button')].map(x => [x.getAttribute('role'), x.dataset.s, x.getAttribute('aria-checked'), [...x.childNodes].filter(c => !(c.classList && (c.classList.contains('st') || c.classList.contains('tick')))).map(c => c.textContent).join('').trim()]) } : null,
+    focus: fe === btn ? 'btn' : fe && fe.closest && fe.closest('.menu') ? 'menu:' + fe.dataset.s : fe && fe.tagName,
+    posted: window.__posted.filter(m => m.type === 'edit'), errors: window.__errors };`;
+
+test('详情状态：只显示当前状态（一个文字按钮），没有四格分段；有 aria-haspopup / aria-expanded，名字里带当前状态；中英文', { skip, timeout: 120000 }, async () => {
+  const en = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
+  const cases = [['zh', 'C2.2', '待做', '状态：待做', TREE], ['zh', 'C2.1', '正在做', '状态：正在做', TREE], ['zh', 'C2.3', '没有状态', '状态：没有状态', TREE],
+    ['en', 'R3.2', 'In progress', 'Status: In progress', en], ['en', 'R3.3', 'Undecided', 'Status: Undecided', en]];
+  for (const [lang, selId, want, aria, tree] of cases) {
+    const b = await openPage2(`st-only-${lang}-${selId}.html`, { lang, selId, theme: 'dark' }, 320, { tree });
+    try {
+      const r = await b.eval(ST_STATE);
+      assert.deepStrictEqual(r.errors, []);
+      assert.strictEqual(r.btns, 1, `${selId}：状态按钮应该只有一个`);
+      assert.strictEqual(r.segs, 0, `${selId}：还有分段按钮`);
+      assert.strictEqual(r.label, want);
+      assert.strictEqual(r.aria, aria);
+      assert.strictEqual(r.pop, 'menu');
+      assert.strictEqual(r.exp, 'false');
+      assert.strictEqual(r.menu, null, '菜单默认关着');
+      // 其他状态的名字不出现在标题区
+      const head = await b.eval(`return document.querySelector('.dp .sh').textContent`);
+      const all = lang === 'zh' ? ['待做', '正在做', '完成', '待定'] : ['To do', 'In progress', 'Done', 'Undecided'];
+      for (const l of all.filter(l => l !== want)) assert.ok(!head.includes(l), `${selId}：标题区还显示了「${l}」`);
+    } finally { b.close(); }
+  }
+});
+
+test('详情状态：点开菜单列出四种状态（当前的 aria-checked），选别的发 setStatus，选当前的不发，清除发空；再点按钮、点外面都能关', { skip, timeout: 120000 }, async () => {
+  for (const mode of ['side', 'map']) {
+    const width = mode === 'map' ? 1300 : 320;
+    const b = await openPage2(`st-menu-${mode}.html`, { selId: 'C2.2', mode, theme: mode === 'map' ? 'light' : 'dark', width, height: 800 }, width);
+    try {
+      const open = await b.eval(`document.querySelector('.dp .st-btn').click();` + ST_STATE);
+      assert.deepStrictEqual(open.errors, []);
+      assert.strictEqual(open.exp, 'true', `${mode}：打开后 aria-expanded 应为 true`);
+      assert.strictEqual(open.menu.role, 'menu');
+      assert.strictEqual(open.menu.label, '状态');
+      assert.deepStrictEqual(open.menu.items, [
+        ['menuitemradio', 'doing', 'false', '正在做'], ['menuitemradio', 'todo', 'true', '待做'], ['menuitemradio', 'done', 'false', '完成'], ['menuitemradio', 'question', 'false', '待定'],
+        ['menuitem', '', null, '清除状态']]);
+      assert.strictEqual(open.focus, 'menu:todo', `${mode}：打开后焦点停在当前状态上`);
+      // 菜单在窗口里，贴着按钮下方
+      const pos = await b.eval(`const m = document.querySelector('.menu').getBoundingClientRect(), a = document.querySelector('.dp .st-btn').getBoundingClientRect();
+        return { inView: m.left >= 0 && m.right <= innerWidth && m.bottom <= innerHeight, below: m.top >= a.bottom - 1 && m.top - a.bottom < 8 };`);
+      assert.ok(pos.inView && pos.below, `${mode}：菜单位置 ${JSON.stringify(pos)}`);
+      // 再点一次按钮：关
+      const toggled = await b.eval(`document.querySelector('.dp .st-btn').click();` + ST_STATE);
+      assert.strictEqual(toggled.menu, null, `${mode}：再点按钮应该关菜单`);
+      assert.strictEqual(toggled.exp, 'false');
+      // 点外面：关
+      const outside = await b.eval(`document.querySelector('.dp .st-btn').click(); const was = !!document.querySelector('.menu');
+        document.querySelector('.dp .crumbs').click();
+        return { was, now: !!document.querySelector('.menu'), exp: document.querySelector('.dp .st-btn').getAttribute('aria-expanded') };`);
+      assert.deepStrictEqual(outside, { was: true, now: false, exp: 'false' }, `${mode}：点外面应该关菜单`);
+      // 选当前的：不发；选「完成」：发和原来分段按钮一样的消息；清除：发空状态
+      const sent = await b.eval(`
+        const pick = s => { document.querySelector('.dp .st-btn').click(); [...document.querySelectorAll('.menu button')].find(x => x.dataset.s === s).click(); };
+        pick('todo'); const afterSame = window.__posted.filter(m => m.type === 'edit').length;
+        pick('done'); pick('');
+        return { afterSame, edits: JSON.parse(JSON.stringify(window.__posted.filter(m => m.type === 'edit'))), menu: !!document.querySelector('.menu'), focusBtn: document.activeElement === document.querySelector('.dp .st-btn') };`);
+      assert.strictEqual(sent.afterSame, 0, `${mode}：选当前状态不该发消息`);
+      assert.deepStrictEqual(sent.edits, [
+        { type: 'edit', uri: 'file:///tree.md', action: 'setStatus', node: 'C2.2', status: 'done' },
+        { type: 'edit', uri: 'file:///tree.md', action: 'setStatus', node: 'C2.2', status: '' }]);
+      assert.strictEqual(sent.menu, false, `${mode}：选完菜单要关`);
+      assert.ok(sent.focusBtn, `${mode}：选完焦点回到状态按钮`);
+    } finally { b.close(); }
+  }
+  // 没有状态的需求：菜单里没有「清除状态」，也没有勾选项
+  const n = await openPage2('st-menu-none.html', { selId: 'C2.3' }, 320);
+  try {
+    const r = await n.eval(`document.querySelector('.dp .st-btn').click();` + ST_STATE);
+    assert.deepStrictEqual(r.menu.items.map(x => x[1]), ['doing', 'todo', 'done', 'question']);
+    assert.ok(r.menu.items.every(x => x[2] === 'false'));
+  } finally { n.close(); }
+});
+
+test('详情状态：键盘能用——回车 / 空格 / 下方向键打开，方向键在菜单里移动并绕回，Esc 关上并把焦点还给按钮，回车选中', { skip, timeout: 90000 }, async () => {
+  const b = await openPage2('st-keys.html', { selId: 'C2.2' }, 320);
+  try {
+    const st = () => b.eval(ST_STATE);
+    await b.eval(`document.querySelector('.dp .st-btn').focus()`);
+    await press(b, 'Enter');
+    let r = await st();
+    assert.ok(r.menu, '回车应该打开菜单');
+    assert.strictEqual(r.exp, 'true');
+    assert.strictEqual(r.focus, 'menu:todo');
+    await press(b, 'ArrowDown'); assert.strictEqual((await st()).focus, 'menu:done');
+    await press(b, 'ArrowDown'); await press(b, 'ArrowDown'); assert.strictEqual((await st()).focus, 'menu:', '下到「清除状态」');
+    await press(b, 'ArrowDown'); assert.strictEqual((await st()).focus, 'menu:doing', '到底了绕回第一项');
+    await press(b, 'ArrowUp'); assert.strictEqual((await st()).focus, 'menu:', '往上绕到最后一项');
+    await press(b, 'Home'); assert.strictEqual((await st()).focus, 'menu:doing');
+    await press(b, 'End'); assert.strictEqual((await st()).focus, 'menu:');
+    await press(b, 'Escape');
+    r = await st();
+    assert.strictEqual(r.menu, null, 'Esc 应该关菜单');
+    assert.strictEqual(r.exp, 'false');
+    assert.strictEqual(r.focus, 'btn', 'Esc 后焦点回到按钮');
+    assert.strictEqual(r.posted.length, 0, 'Esc 不该改状态');
+    await press(b, ' ');
+    assert.ok((await st()).menu, '空格也能打开');
+    await press(b, 'Escape');
+    await press(b, 'ArrowDown');
+    assert.ok((await st()).menu, '下方向键也能打开');
+    await press(b, 'ArrowUp'); // 待做 → 正在做
+    await press(b, 'Enter');
+    r = await st();
+    assert.strictEqual(r.menu, null);
+    assert.deepStrictEqual(r.posted.map(m => [m.action, m.node, m.status]), [['setStatus', 'C2.2', 'doing']]);
+    assert.strictEqual(r.focus, 'btn');
+    assert.deepStrictEqual(r.errors, []);
+  } finally { b.close(); }
+});
+
+test('详情状态：英文菜单全是英文；深浅色、高对比度、侧栏和导图下文字对比度 ≥ 4.5，有焦点环，平时没有底色，比标题小，不溢出', { skip, timeout: 150000 }, async () => {
+  const en = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
+  const e = await openPage2('st-en.html', { lang: 'en', selId: 'R3.2' }, 300, { tree: en });
+  try {
+    const r = await e.eval(`document.querySelector('.dp .st-btn').click();` + ST_STATE);
+    assert.strictEqual(r.menu.label, 'Status');
+    assert.deepStrictEqual(r.menu.items.map(x => x[3]), ['In progress', 'To do', 'Done', 'Undecided', 'Clear status']);
+    assert.deepStrictEqual(r.menu.items.map(x => x[2]), ['true', 'false', 'false', 'false', null]);
+  } finally { e.close(); }
+  for (const [theme, mode, width] of [['dark', 'side', 260], ['light', 'side', 340], ['hc', 'side', 320], ['light', 'map', 1300], ['dark', 'map', 1300]]) {
+    const b = await openPage2(`st-look-${theme}-${mode}.html`, { theme, mode, selId: 'C2.1', width, height: 800 }, width);
+    try {
+      await press(b, 'Tab'); // 键盘操作过，:focus-visible 才会生效
+      const r = await b.eval(`${CONTRAST}
+        const btn = document.querySelector('.dp .st-btn'), title = document.querySelector('.dp .sh-title strong');
+        const out = { label: contrast(btn.querySelector('.st-l')), h: btn.getBoundingClientRect().height, fs: parseFloat(getComputedStyle(btn).fontSize), titleFs: parseFloat(getComputedStyle(title).fontSize),
+          bg: getComputedStyle(btn).backgroundColor, overflow: document.documentElement.scrollWidth - innerWidth, right: btn.getBoundingClientRect().right <= innerWidth };
+        btn.focus(); const cs = getComputedStyle(btn); out.ring = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) >= 1;
+        btn.click(); out.menuC = Math.min(...[...document.querySelectorAll('.menu button')].map(contrast));
+        return out;`);
+      assert.ok(r.label >= 4.5, `${theme}/${mode}：状态文字对比度 ${r.label.toFixed(2)}`);
+      assert.ok(r.menuC >= 4.5, `${theme}/${mode}：菜单文字对比度 ${r.menuC.toFixed(2)}`);
+      assert.ok(r.h >= 22, `${theme}/${mode}：按钮太矮 ${r.h}`);
+      assert.ok(r.fs < r.titleFs, `${theme}/${mode}：状态按钮要比标题小`);
+      assert.ok(/rgba\(0, 0, 0, 0\)|transparent/.test(r.bg), `${theme}/${mode}：平时不该有底色（${r.bg}）`);
+      assert.ok(r.ring, `${theme}/${mode}：没有焦点环`);
+      assert.ok(r.overflow <= 0 && r.right, `${theme}/${mode}：横向溢出`);
+    } finally { b.close(); }
+  }
+});
+
+test('最近改动：删掉自动记忆里重复的一句（memory_remove）按界面语言写出记忆文件名和那句话', { skip, timeout: 90000 }, async () => {
+  const now = Date.now();
+  const changes = [
+    { id: 'm1', time: now - 60000, source: '你', summary: ['删掉记忆 feedback_tone.md 里的「少用你」'], undone: false,
+      ops: [{ op: 'memory_remove', dir: 'C:/x/memory', file: 'feedback_tone.md', text: '少用你', wholeFile: false, undo: [] }] },
+    { id: 'm2', time: now - 120000, source: '你', summary: ['删掉记忆文件 style.md（「不引原话」）'], undone: false,
+      ops: [{ op: 'memory_remove', dir: 'C:/x/memory', file: 'style.md', text: '不引原话'.repeat(20), wholeFile: true, undo: [] }] },
+  ];
+  const lines = b => b.eval(`return [...document.querySelectorAll('.chg .cs')].map(e => e.textContent)`);
+  const z = await openPage2('mem-zh.html', { selId: 'C2.2', changes }, 320);
+  try {
+    const r = await lines(z);
+    assert.strictEqual(r[0], '删掉记忆 feedback_tone.md 里的「少用你」');
+    assert.match(r[1], /^删掉记忆文件 style\.md（「(不引原话)+不引原…」）$/);
+    assert.ok(r[1].length < 90, '太长的句子要截短');
+  } finally { z.close(); }
+  const e = await openPage2('mem-en.html', { selId: 'C2.2', changes, lang: 'en' }, 320);
+  try {
+    const r = await lines(e);
+    assert.strictEqual(r[0], 'Removed "少用你" from memory feedback_tone.md');
+    assert.match(r[1], /^Deleted memory file style\.md \("(不引原话)+不引原…"\)$/);
+    assert.ok(!r.some(l => /删掉/.test(l)), '英文界面不该用存下来的中文说明');
+  } finally { e.close(); }
+});
+
+test('久未动：同一个需求已经作为问题在问（问题还开着）时，详情里不再显示久未动提示；没问、问的是别的需求、已经答过时照常显示', { skip, timeout: 120000 }, async () => {
+  const q = (node, status = 'open') => ({ id: 'q-' + node, kind: 'stale', node, status, staleKey: node + '@1', text: 'x', options: [] });
+  for (const [name, questions, want] of [
+    ['none', [], true],
+    ['asked', [q('C2.1')], false],
+    ['other', [q('C2')], true],
+    ['answered', [q('C2.1', 'answered')], true],
+    ['notStale', [{ ...q('C2.1'), kind: 'conflict' }], true],
+  ]) {
+    for (const mode of ['side', 'map']) {
+      const b = await openPage2(`stale-q-${name}-${mode}.html`, { selId: 'C2.1', sinceDays: 10, questions, mode, width: mode === 'map' ? 1300 : 320, height: 800 }, mode === 'map' ? 1300 : 320);
+      try {
+        const r = await b.eval(`return { hint: !!document.querySelector('.dp .hint'), errors: window.__errors };`);
+        assert.deepStrictEqual(r.errors, []);
+        assert.strictEqual(r.hint, want, `${name}/${mode}：久未动提示应该${want ? '显示' : '隐藏'}`);
+      } finally { b.close(); }
+    }
+  }
 });

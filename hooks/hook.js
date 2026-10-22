@@ -12,15 +12,13 @@
 //   单轮判断漏掉的长期要求补上。只在其中有实质内容（不全是「好」「继续」）时才调用模型
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { parse, nodeForFile } = require('../src/parser');
-const { mentionContext, isMachinePrompt } = require('../src/mention');
+const { parse, nodeForFile, pathOf } = require('../src/parser');
+const { mentionContext, isMachinePrompt, renderNode } = require('../src/mention');
+const { autoLoads } = require('../src/compile');
 const store = require('../src/store');
-
-const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-const STATE_DIR = () => path.join(os.tmpdir(), 'reqtree');
+const { tmpDir: STATE_DIR, EDIT_TOOLS, findTreeUp, appendTmpLog } = require('../src/common');
 
 // 这次工具调用改了哪个文件（绝对路径）。只认编辑类工具：命令行改的文件靠猜不可靠，
 // 每条命令都启动一次 node 也不划算（这台机器约 0.2 秒），AI 改文件绝大多数走 Edit/Write
@@ -59,7 +57,7 @@ function recordLoad(input, treePath) {
   });
 }
 
-// 每个会话三个小文件，各自只有一个写入方：
+// 每个会话四个小文件，各自只有一个写入方：
 // - <hash>.json：最近两轮 { user, ai, start } + 最近 RECENT_MAX 句用户原话 recent（补漏用），只有 UserPromptSubmit 写
 // - <hash>.sweep.json：上次补漏查到哪一句 { last: start }，只有 Stop / PreCompact 写
 // - <hash>.compact.json：上次上下文压缩的时间 { time }，只有 PreCompact 写（压缩后送过的规则要重送）
@@ -87,6 +85,7 @@ function readSession(file) {
   return {
     turns: Array.isArray(s.turns) ? s.turns.filter(ok) : [], recent: Array.isArray(s.recent) ? s.recent.filter(ok) : [],
     sent: s.sent && typeof s.sent === 'object' ? s.sent : {}, sentAt: s.sentAt || 0, machineAt: s.machineAt || 0,
+    compileWarned: s.compileWarned || 0,
   };
 }
 
@@ -117,6 +116,46 @@ function withReply(turns, reply) {
   return turns.map(t => (t.start === reply.start && !t.ai ? { ...t, ai: reply.ai } : t));
 }
 
+// ---------- 补送：原生路径规则没加载时 ----------
+// Claude Code 有过路径规则不加载的 bug（#23478、#33581、#61357，最后一个以「不修」关闭：改到匹配的文件时规则没加载）。
+// AI 改了需求 X 的文件，这一路上（不含根节点）有规则文件的需求，这个会话、这个 agent 却没有加载记录（InstructionsLoaded，见 recordLoad），
+// 就把 X 的规则作为 PostToolUse 的 additionalContext 补送一次，并在 context.jsonl 记一条 reason 'fallback'（顺便统计原生加载失灵有多常见）。
+// 不补的情况：这个会话一条加载记录都没有（老版本没有 InstructionsLoaded，补了就是每个需求都补一遍）；
+// 用户点名时已经送过 X（UserPromptSubmit 的 sent）；之前补送过（标记文件用 'wx' 独占创建，几个 PostToolUse 同时跑也只补一次）。
+// PostToolUse 在后台运行，加载记录也是后台写的，可能晚到一点：有记录但缺这一路的，最多等 FALLBACK_WAIT_MS 再判断
+const FALLBACK_WAIT_MS = () => { const v = process.env.REQTREE_FALLBACK_WAIT_MS; return v != null && v !== '' ? Number(v) : 1500; };
+const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function fallback(treePath, node, rel, input, trace) {
+  const expected = pathOf(node).filter(n => n.parent && n.parent.parent && n.rules.length && autoLoads(n)).map(n => n.id);
+  if (!expected.length) return null;
+  const session = input.session_id || null, agent = input.agent_id || null;
+  const sentByMention = readSession(stateFile(treePath, session)).sent;
+  if (sentByMention[node.id]) return null;
+  const marker = stateFile(treePath, session, `.fallback-${agent || 'main'}-${node.id}`);
+  if (fs.existsSync(marker)) return null;
+  let missing = expected;
+  for (const until = Date.now() + FALLBACK_WAIT_MS(); ;) {
+    const mine = store.readContext(treePath, 24 * 3600000).filter(e => e.session === session && (e.agent || null) === agent);
+    // 一条都没有：会话开始时总目录就该加载了，到改文件时还没有，说明这个版本不发 InstructionsLoaded，不用等
+    if (!mine.length) return null;
+    const got = new Set(mine.filter(e => e.source === 'reqtree' && e.node).map(e => e.node));
+    missing = expected.filter(id => !got.has(id));
+    if (!missing.length) return null;
+    if (Date.now() >= until) break;
+    sleep(100);
+  }
+  try { fs.mkdirSync(path.dirname(marker), { recursive: true }); fs.writeFileSync(marker, String(Date.now()), { flag: 'wx' }); } catch { return null; }
+  const body = renderNode(node);
+  if (!body) return null;
+  const text = `需求树：改到 ${rel} 时，Claude Code 没有加载这个需求的规则文件（原生的按路径加载有时会失灵），这里补上：\n\n${body}`;
+  store.appendContext(treePath, {
+    session, agent, file: `reqtree-fallback/${node.id}`, chars: [...text].length, reason: 'fallback', memory: null, source: 'reqtree',
+    node: node.id, trigger: rel, parent: null, missing, time: Date.now(),
+  });
+  trace.fallback = { node: node.id, missing };
+  return text;
+}
+
 function startRecorder(job) {
   const dir = STATE_DIR();
   fs.mkdirSync(dir, { recursive: true });
@@ -130,7 +169,7 @@ function cleanOldState() {
   const cutoff = Date.now() - 7 * 86400000;
   try {
     for (const f of fs.readdirSync(STATE_DIR())) {
-      if (!/^([0-9a-f]{32}(\.ai|\.sweep|\.compact)?|job-.*)\.json$/.test(f)) continue;
+      if (!/^([0-9a-f]{32}(\.ai|\.sweep|\.compact|\.fallback-[^.]+-[A-Za-z0-9.]+)?|job-.*)\.json$/.test(f)) continue;
       const p = path.join(STATE_DIR(), f);
       if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
     }
@@ -140,7 +179,8 @@ function cleanOldState() {
 function main(input, trace) {
   if (process.env.REQTREE_RECORDER) return; // 记录员自己调用 claude 时不要再触发
   const cwd = input.cwd || process.cwd();
-  const treePath = store.findTree(cwd);
+  // 从 cwd 往上找（Claude Code 可能在项目的子目录里启动）
+  const treePath = findTreeUp(cwd);
   trace.tree = !!treePath;
   if (!treePath) return;
   const event = input.hook_event_name;
@@ -165,6 +205,15 @@ function main(input, trace) {
       st.turns = [...st.turns, { user: input.prompt, ai: '', start }].slice(-2);
       st.recent = [...st.recent, { user: input.prompt.slice(0, RECENT_CLIP), start }].slice(-RECENT_MAX);
     }
+    // 编译失败时，原生规则文件可能是旧的。面板上有红色提示，但不开面板的人看不到：
+    // 每次失败在下一句用户的话时告诉 AI 一次（编译结果的时间变了才算新的一次）
+    const notes = [];
+    const comp = store.readCompileStatus(treePath);
+    if (comp && !comp.ok && comp.time !== st.compileWarned) {
+      notes.push(`需求树编译失败：${comp.message}。.claude/rules/reqtree/ 里的规则可能是旧的，以 ${path.basename(treePath)} 为准。`);
+      st.compileWarned = comp.time;
+      trace.compileWarned = true;
+    }
     // 被提到的需求的规则（Codex 的 hook 自己做，传 REQTREE_NO_MENTION 关掉这里）
     let out = '';
     if (input.prompt && !process.env.REQTREE_NO_MENTION) {
@@ -178,9 +227,10 @@ function main(input, trace) {
         for (const { id, hash } of m.ids) st.sent[id] = hash;
         st.sentAt = Date.now();
         trace.mention = m.ids.map(x => x.id);
-        out = JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: m.text } });
+        notes.push(m.text);
       }
     }
+    if (notes.length) out = JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: notes.join('\n\n') } });
     store.writeJson(f, st);
     return out;
   }
@@ -199,6 +249,7 @@ function main(input, trace) {
   if (event === 'PostToolUse') {
     const root = parse(fs.readFileSync(treePath, 'utf8'));
     const realTree = realPath(treePath);
+    const fallbacks = [];
     for (const file of editedFiles(input, cwd)) {
       const f = realPath(file);
       if (store.samePath(f, realTree)) { store.compileTree(treePath); continue; }
@@ -207,7 +258,10 @@ function main(input, trace) {
       const node = nodeForFile(root, rel);
       trace.rel = rel; trace.node = node && node.id;
       store.appendActivity(treePath, { node: node ? node.id : null, file: rel, time: Date.now(), session: input.session_id, agent: input.agent_id || null });
+      const fb = node && fallback(treePath, node, rel, input, trace);
+      if (fb) fallbacks.push(fb);
     }
+    if (fallbacks.length) return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: fallbacks.join('\n\n') } });
     return;
   }
 
@@ -246,17 +300,12 @@ function main(input, trace) {
 
 // 每次触发记一行到临时目录的 hook.log，排查"hook 到底有没有跑、Claude Code 传了什么"用
 function writeTrace(input, trace) {
-  try {
-    const f = path.join(STATE_DIR(), 'hook.log');
-    fs.mkdirSync(path.dirname(f), { recursive: true });
-    if (fs.existsSync(f) && fs.statSync(f).size > 512 * 1024) fs.renameSync(f, f + '.old');
-    const ti = input.tool_input || {};
-    fs.appendFileSync(f, JSON.stringify({
-      t: new Date().toISOString(), ev: input.hook_event_name, tool: input.tool_name, agent: input.agent_id,
-      session: (input.session_id || '').slice(0, 8), file: ti.file_path, hasPrompt: !!input.prompt,
-      hasLastMsg: !!input.last_assistant_message, ...trace,
-    }) + '\n');
-  } catch {}
+  const ti = input.tool_input || {};
+  appendTmpLog('hook.log', JSON.stringify({
+    t: new Date().toISOString(), ev: input.hook_event_name, tool: input.tool_name, agent: input.agent_id,
+    session: (input.session_id || '').slice(0, 8), file: ti.file_path, hasPrompt: !!input.prompt,
+    hasLastMsg: !!input.last_assistant_message, ...trace,
+  }));
 }
 
 let buf = '';

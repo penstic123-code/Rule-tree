@@ -38,7 +38,8 @@ function ruleGroups(node, lines = []) {
 const CONTEXT_WINDOW_MS = 24 * 3600 * 1000;
 const CONTEXT_SESSIONS = 5;
 // 按需加载的原因：AI 碰到匹配 paths: 的文件、进了有 CLAUDE.md 的子文件夹。其余（会话开始、压缩后重载）是常驻
-const ON_DEMAND = new Set(['path_glob_match', 'nested_traversal']);
+// fallback：原生没加载、hook 补送的（hooks/hook.js fallback）
+const ON_DEMAND = new Set(['path_glob_match', 'nested_traversal', 'fallback']);
 
 // 把 context.jsonl 的记录按会话汇总：最近 24 小时、最多 5 个会话，新的在前。
 // 同一个文件在一个会话里只算一次（压缩后重载、子 agent 再加载都不重复计字数），字数取最后一次；
@@ -120,6 +121,8 @@ function fileData(tree, now = Date.now()) {
     config: tree.config || null, // 用户开关 { recorder: 'turn' | 'off' }
     compile: tree.compile || null, // 编译结果 { ok, message, time }
     context: contextData(tree.context, now), // 上下文用量表，见 contextData
+    // 开着的问题（只给面板判断要不要隐藏重复的提示；askQuestions 为 off 时插件传空数组）
+    questions: (tree.questions || []).map(q => ({ id: q.id, kind: q.kind, node: q.node, status: q.status })),
   };
 }
 

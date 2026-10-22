@@ -278,8 +278,8 @@
   // 状态菜单：和详情面板的状态按钮走同一条路（按需求 ID 改、记进改动记录、能撤销）
   function openMenu(anchor, key, uri) {
     const n = allNodes().find(x => x.n.key === key).n;
-    D.showMenu(anchor, [...['doing', 'todo', 'done', 'question'].map(s => ({ html: D.dot(s) + STATUS_LABEL[s], data: { s }, checked: n.status === s, run: () => post({ type: 'edit', action: 'setStatus', uri, node: n.id, status: s }) })),
-      { label: T('v.clearStatus'), data: { s: '' }, run: () => post({ type: 'edit', action: 'setStatus', uri, node: n.id, status: '' }) }]);
+    D.showMenu(anchor, [...D.STATUS_ORDER.map(s => ({ html: D.dot(s, false) + STATUS_LABEL[s], data: { s }, checked: n.status === s, run: () => post({ type: 'edit', action: 'setStatus', uri, node: n.id, status: s }) })),
+      { label: T('v.clearStatus'), data: { s: '' }, run: () => post({ type: 'edit', action: 'setStatus', uri, node: n.id, status: '' }) }], { label: T('d.status'), cls: 'st-menu' });
   }
 
   // 设置菜单：只放真正需要用户取舍的开关。记下的要求一律直接生效，记错了在「最近改动」里撤销

@@ -10,13 +10,16 @@ const { viewData } = require('../src/viewmodel');
 // mode: 'side' 侧栏（默认）| 'map' 导图
 // compile：编译结果 { ok, message, time }（测「规则没有生成」提示）；deliver=false：不自动推数据，测试调 window.__deliver() 再推
 // sinceDays：开始跟踪是几天前（默认 1 天，不会出现「久未动」；给 10 就能看到久未动的标记）
-function build({ state: extraState = {}, treeFile, theme = 'dark', selId, activeId, width = 340, height = 900, recorder = null, touched = {}, mode = 'side', changes = [], unmapped = [], compile, deliver = true, sinceDays = 1, context = [], lang = 'zh' }) {
+// questions：还开着的问题 [{ kind: 'stale', node, status: 'open' }]
+function build({ state: extraState = {}, treeFile, theme = 'dark', selId, activeId, width = 340, height = 900, recorder = null, touched = {}, mode = 'side', changes = [], unmapped = [], compile, deliver = true, sinceDays = 1, context = [], lang = 'zh', questions = [] }) {
   const uri = 'file:///tree.md';
   const now = Date.now();
   const activity = activeId ? [{ node: activeId, file: 'DataScience/ch01-cholera.html', time: now }] : [];
   const config = { recorder: 'turn' };
   const since = now - sinceDays * 86400000;
-  const data = viewData([{ uri, name: path.basename(treeFile), text: fs.readFileSync(treeFile, 'utf8'), activity, touched, since, recorder, config, changes, unmapped, compile, context: typeof context === 'function' ? context(now) : context }], now);
+  const data = viewData([{ uri, name: path.basename(treeFile), text: fs.readFileSync(treeFile, 'utf8'), activity, touched, since, recorder, config, changes, unmapped, compile, context: typeof context === 'function' ? context(now) : context, questions }], now);
+  // 还开着的问题（插件从 src/questions.js 读）：viewmodel 没带过去时这里补上，面板据此不重复提示久未动
+  for (const f of data.files) if (!f.questions) f.questions = questions;
 
   // VS Code 默认 Dark Modern / Light Modern 的主要颜色
   const THEMES = {

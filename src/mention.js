@@ -14,14 +14,17 @@ const MAX_NODES = 3;
 const MAX_CHARS = 1500;
 const SCAN_CHARS = 500;
 const SKIP_CHARS = 2000;
-const isRoot = n => !n.parent || !n.parent.parent;
+const { isRoot } = require('./common');
 
 // 不是用户打的字：Claude Code / Codex 把后台任务通知、子 agent 回报、斜杠命令和 ! 命令的输出也当成一条 prompt 送进 UserPromptSubmit
-const MACHINE = /^<(task-notification|agent-message|command-|local-command|bash-)/;
+// 标记不一定在最开头：有的版本前面先加一段「[SYSTEM NOTIFICATION - NOT USER INPUT]」之类的说明（2026-10-22 审查发现），
+// 所以在开头 MACHINE_SCAN 个字里找写在一行开头的标签。用户在句子中间提到这些标签（「放一个 <task-notification> 的示例」）不算
+const MACHINE = /(^|\n)\s*<(task-notification|agent-message|command-|local-command|bash-)|^\[SYSTEM NOTIFICATION/;
+const MACHINE_SCAN = 300;
 function isMachinePrompt(prompt) {
   let s = String(prompt || '').replace(/^\s+/, '');
   for (let m; (m = s.match(/^<system-reminder>[\s\S]*?<\/system-reminder>\s*/));) s = s.slice(m[0].length);
-  return MACHINE.test(s);
+  return MACHINE.test(s.slice(0, MACHINE_SCAN));
 }
 // 用来匹配的那部分：去掉代码块和引用行，只留前 SCAN_CHARS 个字
 function userText(prompt) {

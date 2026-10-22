@@ -11,7 +11,6 @@
 // 每个单元编译成 .reqtree/rules/<ID>.md。上级的范围包住下级时，改下级的文件会匹配好几个单元——全读，
 // 和 Claude Code 原生路径规则按 glob 嵌套继承是同一个意思。根节点的规则是全局的，直接写在托管块里。
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { parse, walk, pathOf, nodeForFile } = require('../parser');
@@ -30,7 +29,7 @@ const BLOCK_WARN_BYTES = 16 * 1024;
 // （codex-rs/hooks/src/output_spill.rs、codex-rs/utils/string/src/truncate.rs approx_token_count），超过的存进文件、只给预览。留点余量
 const CONTEXT_LIMIT = 9000;
 
-const isRoot = node => !node.parent || !node.parent.parent;
+const { isRoot, tmpDir } = require('../common');
 
 // ---------- 分组 ----------
 
@@ -305,7 +304,7 @@ function recorderCommand(projectDir) {
 // 会话状态：已经送过哪些单元（id → 内容哈希）。每个会话一个小文件
 function sessionFile(projectDir, session) {
   const norm = process.platform === 'win32' ? projectDir.toLowerCase() : projectDir;
-  return path.join(os.tmpdir(), 'reqtree', 'codex-' + crypto.createHash('md5').update(norm + '|' + (session || '')).digest('hex') + '.json');
+  return path.join(tmpDir(), 'codex-' + crypto.createHash('md5').update(norm + '|' + (session || '')).digest('hex') + '.json');
 }
 
 module.exports = {
