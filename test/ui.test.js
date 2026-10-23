@@ -682,7 +682,7 @@ test('导图：数据到达前滚轮、缩放、工具栏按钮不报错', { ski
       const svg = document.getElementById('canvas');
       svg.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: 300, clientY: 300, bubbles: true, cancelable: true }));
       svg.dispatchEvent(new PointerEvent('pointerdown', { clientX: 300, clientY: 300, bubbles: true }));
-      for (const a of ['zoomIn', 'zoomOut', 'compactAll', 'rulesAll', 'hideDone', 'hideDone', 'follow', 'mapMore', 'fit']) document.querySelector('[data-act="' + a + '"]').click();
+      for (const a of ['zoomIn', 'zoomOut', 'compactAll', 'rulesAll', 'hideDone', 'hideDone', 'mapMore', 'fit']) document.querySelector('[data-act="' + a + '"]').click();
       window.dispatchEvent(new Event('resize'));
       const before = window.__errors.slice();
       window.__deliver();
@@ -1083,8 +1083,8 @@ test('跟随 AI（导图）：AI 改的卡片不在视野里时平移进来、�
     assert.ok(r.after, '没有把 AI 在改的卡片移进视野');
     assert.ok(r.flash && r.halo, '没有闪一下 / 没有光晕');
     assert.deepStrictEqual(r.errors, []);
-    const t = await b.eval(`document.querySelector('.toolbar [data-act="follow"]').click(); return [window.__state.follow, document.querySelector('.toolbar [data-act="follow"]').getAttribute('aria-pressed')];`);
-    assert.deepStrictEqual(t, [false, 'false']);
+    const t = await b.eval(`const had = !!document.querySelector('.toolbar [data-act="follow"]'); document.querySelector('.toolbar [data-act="mapMore"]').click(); const it = [...document.querySelectorAll('.menu [role^="menuitem"]')].find(x => x.textContent.includes(${JSON.stringify("Follow AI")}) || x.textContent.includes('跟随')); const was = it && it.getAttribute('aria-checked'); it && it.click(); return [had, was, window.__state.follow];`);
+    assert.deepStrictEqual(t, [false, 'true', false], '跟随 AI 要收在 ⋯ 菜单里，默认开着，点一下关掉');
   } finally { b.close(); }
 });
 

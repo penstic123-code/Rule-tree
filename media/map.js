@@ -236,7 +236,6 @@
     set('compactAll', !defaultOpen);
     set('rulesAll', defaultOpen);
     set('hideDone', hideDone);
-    set('follow', follow);
   }
 
   function render() {
@@ -493,12 +492,12 @@
     if (!a) return;
     const act = a.dataset.act;
     if (act === 'fit') { if (data && data.files.length) animateTo(fitTarget(lastItems)); return; }
-    if (act === 'follow') { follow = !follow; a.setAttribute('aria-pressed', String(follow)); persist(); return; }
     if (act === 'crumb' || act === 'focus') { if (data) setFocus(a.dataset.key); return; }
     if (act === 'pick') { if (data) select(a.dataset.key); return; }
     if (act === 'unfocus') { if (data) setFocus(null); return; }
     if (act === 'mapMore') {
       D.showMenu(a, [
+        { label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },
         { label: T('m.expandAll'), run: () => runTree('expandAll') },
         { label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); if (data) render(); } },
         { label: T('ctx.menu'), run: () => { if (data && data.files.length) D.showContext(file(), { now: data.now, onPick: select }); } },

@@ -13,7 +13,7 @@
 .tseg button:focus-visible, .tzoom button:focus-visible { outline-offset: -2px; }
 .tzoom button { padding: 0 var(--sp-2); }
 .tzoom .zpct { min-width: 52px; font-variant-numeric: tabular-nums; }
-.toolbar .ttog, .toolbar .follow { min-height: var(--h-ctl); }
+.toolbar .ttog { min-height: var(--h-ctl); }
 .toolbar .tmore { height: var(--h-ctl); }
 /* 记录员出错、规则没有生成：红色提示，样式沿用 view.css 的 .banner.err */
 #alerts { flex: none; }
