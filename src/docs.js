@@ -42,7 +42,7 @@ function readLine(projectDir, node) {
   const docs = node.docs.filter(d => exists(projectDir, d));
   if (!docs.length) return '';
   const list = docs.map(d => { const u = purpose(projectDir, d); return `\`${d}\`${u ? `（${u}）` : ''}`; }).join('、');
-  return `动手前先读背景文档：${list}。文档和需求树说法不同时以需求树为准；做完一块，顺手更新文档里的进度和章节表。`;
+  return `动手前先读背景文档：${list}。文档和需求树说法不同时以需求树为准；做完一块，文档里的进度这类内容过时了就顺手更新。`;
 }
 
 module.exports = { resolve, exists, purpose, readLine };
