@@ -298,7 +298,8 @@
       ['off', T('v.recOff'), cfg.recorder === 'off'],
     ].map(([v, label, on]) => ({ label, checked: on, radio: true, data: { v }, run: () => post({ type: 'setConfig', uri, patch: { recorder: v } }) }))
       // 跟随 AI 默认开着，开关放在设置里（以前在顶栏占一个大按钮，用户觉得没必要）
-      .concat([{ label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },
+      .concat([{ label: T('v.aiFindings'), checked: cfg.aiFindings !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { aiFindings: cfg.aiFindings === false } }) },
+        { label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },
         { label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); render(); } },
         { label: T('ctx.menu'), run: () => openContext(uri) }]));
   }

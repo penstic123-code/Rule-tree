@@ -2,6 +2,7 @@
 // 把需求树整理成面板要显示的数据。不依赖 VS Code：插件、预览工具、测试共用。
 const { parse, effectiveRules, pathOf, norm } = require('./parser');
 const { autoLoads } = require('./compile');
+const Docs = require('./docs');
 
 const ACTIVE_FOR_MS = 3 * 60 * 1000;
 // 「🔨 久未动」的天数：面板、命令行 check 只用这一份（界面文案从 viewData().staleDays 取）
@@ -106,6 +107,8 @@ function fileData(tree, now = Date.now()) {
       active: active.get(n.id) || null,
       stale: isStale(n, touched, since, now),
       files: n.files,
+      // 挂的文档（> 文档：），ok 是文件在不在
+      docs: n.docs.map(d => ({ path: d, ok: !tree.dir || Docs.exists(tree.dir, d) })),
       // 有规则却不会自动加载给 AI（判断和编译用同一个函数）
       noScope: n.rules.length > 0 && !autoLoads(n),
       ruleCount: n.rules.length,

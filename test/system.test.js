@@ -158,12 +158,12 @@ test('state.json：旧的 recorder.json / compile.json / touched.json / config.s
   assert.strictEqual(store.readCompileStatus(tree).message, '旧错误');
   assert.deepStrictEqual(store.readTouched(tree), { C2: 7 });
   assert.strictEqual(store.readState(tree).since, 8);
-  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8 }, 'confirm、since 不再是配置');
+  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true }, 'confirm、since 不再是配置');
   assert.ok(fs.existsSync(meta('recorder.json')) && !fs.existsSync(meta('state.json')));
   // 第一次写：全部搬进 state.json，旧文件删掉，config 只留开关
   store.touch(tree, ['C2.1']);
   for (const f of ['recorder.json', 'compile.json', 'touched.json']) assert.ok(!fs.existsSync(meta(f)), f);
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(meta('config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8 });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(meta('config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true });
   const s = JSON.parse(fs.readFileSync(meta('state.json'), 'utf8'));
   assert.strictEqual(s.since, 8);
   assert.strictEqual(s.recorder.message, '记下 1 条');
@@ -189,9 +189,9 @@ test('state.json：多个进程同时读改写，一条都不丢', async () => {
 test('config.json：只认 recorder 一个开关，面板传来别的键（如旧的 confirm）不写', () => {
   const dir = project();
   const tree = path.join(dir, '需求树.md');
-  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'turn', sweepEvery: 8 });
+  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'turn', sweepEvery: 8, aiFindings: true });
   store.writeConfig(tree, { recorder: 'off', confirm: true, junk: 1 });
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8 });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true });
 });
 
 test('升级时只清一次旧标记：记成一条可撤销的改动；之后 🆕 🗑 开头的规则是普通文字，写多少次都不动', () => {
@@ -836,7 +836,7 @@ test('插件：确认模式的消息（accept/reject/moveUp/acceptAll/rejectAll�
     for (const type of ['accept', 'reject', 'moveUp', 'acceptAll', 'rejectAll']) await panel.handle({ type, uri, line, expect: TREE.split('\n')[line] });
     assert.strictEqual(fs.readFileSync(tree, 'utf8'), TREE, '这些消息不该再改树');
     await panel.handle({ type: 'setConfig', uri, patch: { confirm: true, recorder: 'off' } });
-    assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8 });
+    assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true });
     assert.ok(!('confirm' in JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8'))));
     // 面板拿到行号后，树的上方被插了一行：按原文找回来
     const raw = TREE.split('\n')[1];

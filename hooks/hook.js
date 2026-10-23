@@ -18,6 +18,7 @@ const { parse, nodeForFile, pathOf } = require('../src/parser');
 const { mentionContext, isMachinePrompt, renderNode } = require('../src/mention');
 const { autoLoads } = require('../src/compile');
 const store = require('../src/store');
+const Docs = require('../src/docs');
 const { tmpDir: STATE_DIR, EDIT_TOOLS, findTreeUp, appendTmpLog } = require('../src/common');
 
 // 这次工具调用改了哪个文件（绝对路径）。只认编辑类工具：命令行改的文件靠猜不可靠，
@@ -126,7 +127,7 @@ function withReply(turns, reply) {
 const FALLBACK_WAIT_MS = () => { const v = process.env.REQTREE_FALLBACK_WAIT_MS; return v != null && v !== '' ? Number(v) : 1500; };
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function fallback(treePath, node, rel, input, trace) {
-  const expected = pathOf(node).filter(n => n.parent && n.parent.parent && n.rules.length && autoLoads(n)).map(n => n.id);
+  const expected = pathOf(node).filter(n => n.parent && n.parent.parent && (n.rules.length || n.docs.some(d => Docs.exists(path.dirname(treePath), d))) && autoLoads(n)).map(n => n.id);
   if (!expected.length) return null;
   const session = input.session_id || null, agent = input.agent_id || null;
   const sentByMention = readSession(stateFile(treePath, session)).sent;
@@ -145,7 +146,7 @@ function fallback(treePath, node, rel, input, trace) {
     sleep(100);
   }
   try { fs.mkdirSync(path.dirname(marker), { recursive: true }); fs.writeFileSync(marker, String(Date.now()), { flag: 'wx' }); } catch { return null; }
-  const body = renderNode(node);
+  const body = renderNode(node, path.dirname(treePath));
   if (!body) return null;
   const text = `需求树：改到 ${rel} 时，Claude Code 没有加载这个需求的规则文件（原生的按路径加载有时会失灵），这里补上：\n\n${body}`;
   store.appendContext(treePath, {
@@ -234,7 +235,7 @@ function main(input, trace) {
       const md5 = t => crypto.createHash('md5').update(t).digest('hex').slice(0, 12);
       // 这个会话最近两小时 AI 改过的需求：只说「第1章」时用来判断是哪门课
       const active = store.readActivity(treePath, 2 * 3600000).filter(e => e.session === input.session_id && e.node).map(e => e.node);
-      const m = mentionContext(parse(fs.readFileSync(treePath, 'utf8')), input.prompt, st.sent, md5, { active });
+      const m = mentionContext(parse(fs.readFileSync(treePath, 'utf8')), input.prompt, st.sent, md5, { active, projectDir: path.dirname(treePath) });
       if (m) {
         for (const { id, hash } of m.ids) st.sent[id] = hash;
         st.sentAt = Date.now();

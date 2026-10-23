@@ -14,11 +14,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { parse, walk, pathOf, nodeForFile } = require('../parser');
+const Docs = require('../docs');
 
 const RULES_DIR = path.join('.reqtree', 'rules');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 .reqtree/rules/_index.md 里；输出格式变了就加 1（同 compile.js 的 FORMAT）
-const FORMAT = '<!-- reqtree:codex-format 3 -->';
+const FORMAT = '<!-- reqtree:codex-format 4 -->';
 const BEGIN = '<!-- reqtree:begin -->';
 const END = '<!-- reqtree:end -->';
 // 安装过 Codex 目标的标记，也存记录员的模型设置（用户可以手改）
@@ -34,7 +35,8 @@ const { isRoot, tmpDir } = require('../common');
 // ---------- 分组 ----------
 
 // 有规则的单元：[{ id, owner, globs, members[] }]；members 按树里的顺序
-function units(root) {
+// docLine(node)：这个需求的背景文档那一句（没有返回 ''）
+function units(root, docLine = () => '') {
   const out = [];
   for (const owner of walk(root)) {
     if (isRoot(owner) || !owner.files.length) continue;
@@ -44,7 +46,7 @@ function units(root) {
       for (const c of n.children) if (!c.files.length) visit(c);
     };
     visit(owner);
-    if (members.some(m => m.rules.length)) out.push({ id: owner.id, owner, globs: owner.files, members });
+    if (members.some(m => m.rules.length || docLine(m))) out.push({ id: owner.id, owner, globs: owner.files, members });
   }
   return out;
 }
@@ -61,12 +63,14 @@ function overrideNote(node, rule) {
   return '';
 }
 
-function renderUnit(u, treeName) {
+function renderUnit(u, treeName, docLine = () => '') {
   const lines = [MARK, `# 需求 ${pathOf(u.owner).map(n => `${n.id} ${n.title}`).join(' → ')}`,
     `适用文件：${u.globs.map(g => '`' + g + '`').join('、')}`, ''];
   for (const m of u.members) {
-    if (!m.rules.length) continue;
+    const doc = docLine(m);
+    if (!m.rules.length && !doc) continue;
     if (m !== u.owner) lines.push(`## ${m.id} ${m.title}`);
+    if (doc) lines.push(doc, '');
     for (const r of m.rules) lines.push(`- ${r.text}${overrideNote(m, r)}`);
     lines.push('');
   }
@@ -75,7 +79,7 @@ function renderUnit(u, treeName) {
 }
 
 // 托管块。eol 跟着用户的 AGENTS.md 走
-function renderBlock(root, treeName, us) {
+function renderBlock(root, treeName, us, docLine = () => '') {
   const doing = [...walk(root)].filter(n => n.status === 'doing').map(n => `${n.id} ${n.title}`);
   const glob = globalRules(root);
   const lines = [
@@ -87,8 +91,9 @@ function renderBlock(root, treeName, us) {
   if (doing.length) lines.push(`进行中：${doing.join('、')}。`);
   lines.push('用户提出的长期要求由后台记录员在每轮结束后写进需求树，你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。');
   lines.push('项目的长期要求和规则只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 AGENTS.md，免得同一条规则记两处。');
-  if (glob.length) {
-    lines.push('', '### 全局规则', '');
+  const rootDocs = root.children.filter(isRoot).map(docLine).filter(Boolean);
+  if (glob.length || rootDocs.length) {
+    lines.push('', '### 全局规则', '', ...rootDocs.map(l => `- ${l}`));
     for (const { node, rule } of glob) lines.push(`- ${rule.text}`);
   }
   if (us.length) {
@@ -167,9 +172,10 @@ function compile(treePath) {
   const treeName = path.basename(treePath);
   const dir = path.join(projectDir, RULES_DIR);
   const root = parse(fs.readFileSync(treePath, 'utf8'));
-  const us = units(root);
+  const docLine = n => Docs.readLine(projectDir, n);
+  const us = units(root, docLine);
   const files = new Map([['_index.md', `${MARK}\n${FORMAT}\n需求树规则（Codex）。索引在项目根的 AGENTS.md 托管块里。\n`]]);
-  for (const u of us) files.set(`${u.id}.md`, renderUnit(u, treeName));
+  for (const u of us) files.set(`${u.id}.md`, renderUnit(u, treeName, docLine));
 
   fs.mkdirSync(dir, { recursive: true });
   const written = [], removed = [], warnings = [];
@@ -188,7 +194,7 @@ function compile(treePath) {
   const agents = agentsFile(projectDir);
   let before = '';
   try { before = fs.readFileSync(agents, 'utf8'); } catch {}
-  const block = renderBlock(root, treeName, us);
+  const block = renderBlock(root, treeName, us, docLine);
   const found = findBlock(before);
   if (found && found.broken) warnings.push(`${path.basename(agents)} 里需求树的部分不完整（有开始标记 ${BEGIN}，没有结束标记 ${END}），没有更新它；补上结束标记或删掉开始标记后再编译`);
   const after = upsertBlock(before, block);
@@ -248,8 +254,8 @@ function relTo(projectDir, cwd, p) {
 const matchesGlobs = (globs, rel) => !!nodeForFile({ children: [{ files: globs, children: [], level: 1 }] }, rel);
 
 // 这些文件涉及哪些单元（按树里的顺序，上级在前）
-function unitsForFiles(root, rels) {
-  return units(root).filter(u => rels.some(rel => matchesGlobs(u.globs, rel)));
+function unitsForFiles(root, rels, docLine) {
+  return units(root, docLine).filter(u => rels.some(rel => matchesGlobs(u.globs, rel)));
 }
 
 // 命令里直接读了 .reqtree/rules/<ID>.md：AI 已经照 AGENTS.md 的索引看过这份

@@ -2,7 +2,7 @@
   "name": "reqtree",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "publisher": "shidipeng",
   "license": "MIT",
   "repository": {

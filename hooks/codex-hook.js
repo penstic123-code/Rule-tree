@@ -15,6 +15,7 @@ const { spawnSync } = require('child_process');
 const { parse, nodeForFile, findById, pathOf } = require('../src/parser');
 const store = require('../src/store');
 const codex = require('../src/targets/codex');
+const Docs = require('../src/docs');
 const { mentionContext, isMachinePrompt } = require('../src/mention');
 
 const HOOK = path.join(__dirname, 'hook.js');
@@ -58,7 +59,7 @@ function context(event, text) {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
 }
 
-const unitText = (u, treeName) => codex.renderUnit(u, treeName).split('\n').filter(l => !l.startsWith('<!--')).join('\n').trim();
+const unitText = (u, treeName, docLine) => codex.renderUnit(u, treeName, docLine).split('\n').filter(l => !l.startsWith('<!--')).join('\n').trim();
 
 function main(input, trace) {
   if (process.env.REQTREE_RECORDER) return ''; // 记录员自己调用 codex 时不要再触发
@@ -67,6 +68,7 @@ function main(input, trace) {
   trace.tree = !!treePath;
   if (!treePath) return '';
   const projectDir = path.dirname(treePath);
+  const docLine = n => Docs.readLine(projectDir, n);
   const treeName = path.basename(treePath);
   const event = input.hook_event_name;
   const sf = codex.sessionFile(projectDir, input.session_id);
@@ -98,9 +100,9 @@ function main(input, trace) {
       const root = parse(fs.readFileSync(treePath, 'utf8'));
       const mine = Object.fromEntries(Object.entries(st.sent).filter(([k]) => k.startsWith('@')).map(([k, v]) => [k.slice(1), v]));
       const active = store.readActivity(treePath, 2 * 3600000).filter(e => e.session === input.session_id && e.node).map(e => e.node);
-      const m = mentionContext(root, input.prompt, mine, codex.hash, { active });
+      const m = mentionContext(root, input.prompt, mine, codex.hash, { active, projectDir });
       if (m) {
-        const units = codex.units(root);
+        const units = codex.units(root, docLine);
         for (const { id, hash } of m.ids) {
           st.sent['@' + id] = hash;
           // 提到的需求自己的单元，以及上级里只有自己一个成员的单元（它们的规则已经作为「来自上级」写在里面）
@@ -108,7 +110,7 @@ function main(input, trace) {
           for (const u of units) {
             const self = u.id === id;
             const ancestor = node && u.owner !== node && pathOf(node).includes(u.owner) && u.members.length === 1;
-            if (self || ancestor) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName));
+            if (self || ancestor) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName, docLine));
           }
         }
         mention = m.text;
@@ -152,18 +154,18 @@ function main(input, trace) {
     }
 
     // AI 照 AGENTS.md 的索引自己读了规则文件：记成已送
-    const all = codex.units(root);
+    const all = codex.units(root, docLine);
     for (const id of codex.readRuleIds(rels)) {
       const u = all.find(x => x.id === id);
-      if (u) st.sent[id] = codex.hash(codex.renderUnit(u, treeName));
+      if (u) st.sent[id] = codex.hash(codex.renderUnit(u, treeName, docLine));
     }
-    const due = codex.unitsForFiles(root, rels).filter(u => st.sent[u.id] !== codex.hash(codex.renderUnit(u, treeName)));
+    const due = codex.unitsForFiles(root, rels, docLine).filter(u => st.sent[u.id] !== codex.hash(codex.renderUnit(u, treeName, docLine)));
     if (due.length) {
-      for (const u of due) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName));
+      for (const u of due) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName, docLine));
       // 放不下的单元换成「去读规则文件」
       let body = '需求树：你正在处理的文件属于下面的需求，照这些规则做（每份本会话只发一次，后面不再重复）。';
       for (const u of due) {
-        const t = unitText(u, treeName);
+        const t = unitText(u, treeName, docLine);
         body += fits(`${body}\n\n${t}`) ? `\n\n${t}` : `\n\n${u.id} ${u.owner.title} 的规则较长，请读 .reqtree/rules/${u.id}.md。`;
       }
       out = context(event, clip(body));

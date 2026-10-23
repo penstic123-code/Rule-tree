@@ -6,18 +6,20 @@
 // - 继承交给 glob 嵌套：C2 是 DataScience/**，C2.1 是 DataScience/ch01-*.html，改第1章时两份都会加载。
 //   所以每个节点只写自己的规则，不抄上级。
 // - 覆盖写成明确说明（"在本范围内以此为准，取代上级…"），否则两条矛盾时 Claude 可能任选一条。
+// - 背景文档（> 文档：）不搬进来，只写一句「动手前先读」（src/docs.js）。
 // - 没写文件对应的节点：沿用最近上级的范围。只有根节点的规则是全局的（不写 paths，每次都加载）；
 //   其他节点一路都没有文件对应就不编译——不然某门课的规则会在做别的课时也被加载。面板和 check 会提醒。
 const fs = require('fs');
 const path = require('path');
 const { parse, walk, pathOf } = require('./parser');
 const codex = require('./targets/codex');
+const Docs = require('./docs');
 
 const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 _index.md 里。编译的输出或说明文字变了就加 1：ensureCompiled 只比时间，
 // 旧版本生成的文件可能比树还新，不看版本的话升级后会一直留着过时的说明（比如「标 🆕，等用户确认」）
-const FORMAT = '<!-- reqtree:format 5 -->';
+const FORMAT = '<!-- reqtree:format 6 -->';
 
 // 节点的生效范围：自己的 files，或最近上级的；都没有返回 null（全局）
 function scopeOf(node) {
@@ -31,9 +33,11 @@ const { isRoot } = require('./common');
 // 编译、面板提醒、check 三处共用，免得判断不一致
 const autoLoads = node => isRoot(node) || !!scopeOf(node);
 
-function compileNode(node, treeName) {
+// projectDir 给了才写背景文档那一句（读文档开头的用途）
+function compileNode(node, treeName, projectDir) {
   const own = node.rules;
-  if (!own.length || !autoLoads(node)) return null;
+  const docLine = projectDir ? Docs.readLine(projectDir, node) : '';
+  if ((!own.length && !docLine) || !autoLoads(node)) return null;
   // 带键的规则覆盖最近上级里同键的生效规则
   const overrides = new Map();
   for (const r of own) {
@@ -48,6 +52,7 @@ function compileNode(node, treeName) {
   const lines = [];
   if (scope) lines.push('---', 'paths:', ...scope.map(g => `  - ${JSON.stringify(g)}`), '---');
   lines.push(MARK, `## 需求 ${where}`, '');
+  if (docLine) lines.push(docLine, '');
   for (const r of own) {
     const o = overrides.get(r.line);
     lines.push(`- ${r.text}` + (o ? `（在本范围内以此为准，取代上级 ${o.owner.id} 的「${o.text}」）` : ''));
@@ -111,7 +116,7 @@ function compileClaude(treePath) {
   const root = parse(fs.readFileSync(treePath, 'utf8'));
   const files = new Map([['_index.md', compileIndex(root, treeName)]]);
   for (const n of walk(root)) {
-    const text = compileNode(n, treeName);
+    const text = compileNode(n, treeName, projectDir);
     if (text) files.set(`${n.id}.md`, text);
   }
 

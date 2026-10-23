@@ -15,6 +15,7 @@ const MAX_CHARS = 1500;
 const SCAN_CHARS = 500;
 const SKIP_CHARS = 2000;
 const { isRoot } = require('./common');
+const Docs = require('./docs');
 
 // 不是用户打的字：Claude Code / Codex 把后台任务通知、子 agent 回报、斜杠命令和 ! 命令的输出也当成一条 prompt 送进 UserPromptSubmit
 // 标记不一定在最开头：有的版本前面先加一段「[SYSTEM NOTIFICATION - NOT USER INPUT]」之类的说明（2026-10-22 审查发现），
@@ -102,11 +103,14 @@ function overrideNote(node, rule) {
   }
   return '';
 }
-function renderNode(node) {
+// projectDir 给了就带上这一路（不含根）挂的背景文档那一句
+function renderNode(node, projectDir) {
   const chain = pathOf(node);
   const lines = [`## 需求 ${chain.map(n => `${n.id} ${n.title}`).join(' → ')}`];
   const scope = chain.slice().reverse().find(n => n.files.length);
   if (scope) lines.push(`适用文件：${scope.files.join('、')}`);
+  const head = lines.length;
+  if (projectDir) for (const a of chain) if (!isRoot(a) && a.docs.length) { const l = Docs.readLine(projectDir, a); if (l) lines.push(l); }
   // 上级（不含根）的规则，被下级同键覆盖的不列
   const keys = new Set(node.rules.filter(r => r.key).map(r => r.key));
   for (const a of chain.slice(0, -1)) {
@@ -119,7 +123,7 @@ function renderNode(node) {
     for (const c of n.children) if (!c.files.length) visit(c, false);
   };
   visit(node, true);
-  return lines.length > (scope ? 2 : 1) ? lines.join('\n') : '';
+  return lines.length > head ? lines.join('\n') : '';
 }
 
 // 给 hook 用：没送过的被提到的需求 → { text, ids }；sent 是 { id: 内容哈希 }（同一会话送过且内容没变的不再送）
@@ -127,7 +131,7 @@ function mentionContext(root, prompt, sent = {}, hash = s => s, opts = {}) {
   const blocks = [], ids = [];
   let size = 0;
   for (const n of mentionedNodes(root, prompt, opts)) {
-    const body = renderNode(n);
+    const body = renderNode(n, opts.projectDir);
     if (!body || sent[n.id] === hash(body)) continue;
     if (size + body.length > MAX_CHARS && blocks.length) break;
     const cut = body.length > MAX_CHARS ? body.slice(0, MAX_CHARS) + '\n…（规则太多，其余见需求树）' : body;

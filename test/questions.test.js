@@ -570,6 +570,8 @@ test('插件：「需求树：体检」合并重复、调用（假）模型，�
   process.env.FAKE_OUT = JSON.stringify({ questions: [CONFLICT_Q] });
   try {
     await api.prompted;
+    // 「查什么」的多选框：用默认勾选的（全选）
+    fakeVscode.pick = (items, opts) => (opts && opts.canPickMany ? items.filter(i => i.picked && i.id !== 'full') : undefined);
     const r = await fake.commands['reqtree.checkup']();
     assert.strictEqual(r.merged.length, 1);
     assert.ok(fake.shown.includes('需求树体检：合并了 1 条重复规则，有 1 个问题等你回答'), fake.shown.join('\n'));
@@ -578,5 +580,5 @@ test('插件：「需求树：体检」合并重复、调用（假）模型，�
     assert.match(note.m, /（建议：AI 课用5（本课例外））$/);
     assert.ok(!note.items.some(i => /（现在）/.test(i.title)), '体检的建议没有先写进树，不标「现在」');
     assert.ok(!read(tree).includes('不超过5个'));
-  } finally { delete process.env.FAKE_OUT; dispose(); }
+  } finally { delete process.env.FAKE_OUT; fakeVscode.pick = null; dispose(); }
 });

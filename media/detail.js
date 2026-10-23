@@ -237,6 +237,8 @@
     const scope = n.files.length ? n.files.map(g => `<code>${esc(g)}</code>`).join(T('d.scopeJoin'))
       : n.noScope ? `<span class="warn-t">${T('d.scopeNone')}</span>`
       : from && from !== n ? `<span>${esc(T('d.scopeSame', from.title))}</span>` : `<span>${T('d.scopeSameAny')}</span>`;
+    // 挂的文档：AI 改到这个需求的文件时会被提醒先读；点开文档
+    if (n.docs && n.docs.length) h += `<div class="files" title="${T('d.docsTip')}"><span class="fk">${T('d.docs')}</span><span class="fv">${n.docs.map(d => `<button class="lnk${d.ok ? '' : ' warn-t'}" data-act="openDoc" data-doc="${esc(d.path)}" ${U}${d.ok ? '' : ` title="${T('d.docGone')}"`}>${esc(d.path)}</button>`).join(T('d.scopeJoin'))}</span></div>`;
     h += `<div class="files${n.noScope ? ' warn' : ''}" title="${T('d.scopeTip')}"><span class="fk">${T('d.scope')}</span><span class="fv">${scope}</span><span class="fsep" aria-hidden="true">·</span><button class="lnk" ${E('setFiles')}>${n.files.length || !n.noScope ? T('d.change') : T('d.set')}</button></div>`;
     return h;
   }
@@ -503,6 +505,7 @@
       case 'edit': return { type: 'edit', uri, action: d.a, node: d.node, text: d.text, from: d.from, status: d.status, file: d.file };
       case 'undo': return { type: 'undo', uri, id: d.id };
       case 'open': return { type: 'open', uri, line: +d.line, expect: d.raw };
+      case 'openDoc': return { type: 'openDoc', uri, doc: d.doc };
       default: return null;
     }
   }

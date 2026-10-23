@@ -20,6 +20,9 @@ const RULE_RE = /^\s*[-*]\s+(.*)$/;
 const KEY_RE = /^\[([^\]]+)\]\s*(.*)$/;
 // 节点对应的文件：> 文件：DataScience/ch01-*.html, DataScience/css/**
 const FILES_RE = /^\s*>\s*(?:文件|files)\s*[:：]\s*(.+)$/i;
+// 节点的背景文档（章节表、进度、经验）：> 文档：DataScience/_CHAPTERS.md, DataScience/项目规则与经验.md
+// 不搬进规则，编译时只写一句「动手前先读」，AI 改到这个需求的文件时看到
+const DOCS_RE = /^\s*>\s*(?:文档|docs?)\s*[:：]\s*(.+)$/i;
 
 function splitStatus(text) {
   let rest = text.replace(/️/g, '').trim();
@@ -35,7 +38,7 @@ function splitStatus(text) {
 // （见 legacyCleanupOps），之后用户写以 🗑 开头的规则也不会被误删。
 function parse(text) {
   const lines = text.split(/\r?\n/);
-  const root = { id: '', title: '', level: 0, line: -1, status: null, rules: [], notes: [], files: [], children: [], parent: null };
+  const root = { id: '', title: '', level: 0, line: -1, status: null, rules: [], notes: [], files: [], docs: [], children: [], parent: null };
   const stack = [root];
   let fence = null; // 代码块的围栏字符：``` 或 ~~~，只有同一种字符才能关上
   let inComment = false;
@@ -58,7 +61,7 @@ function parse(text) {
         id: m ? m[1] : null,
         title: (m ? m[2] : rest).trim(),
         level, line: i, status,
-        rules: [], notes: [], files: [], children: [], parent,
+        rules: [], notes: [], files: [], docs: [], children: [], parent,
       };
       parent.children.push(node);
       stack.push(node);
@@ -69,6 +72,11 @@ function parse(text) {
     const f = raw.match(FILES_RE);
     if (f && node !== root) {
       node.files.push(...splitGlobs(f[1]));
+      return;
+    }
+    const d = raw.match(DOCS_RE);
+    if (d && node !== root) {
+      for (const p of splitGlobs(d[1])) if (!node.docs.includes(p)) node.docs.push(p);
       return;
     }
     const r = raw.match(RULE_RE);

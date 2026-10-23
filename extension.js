@@ -9,7 +9,8 @@ const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./src/viewmodel'
 const { suggest } = require('./src/guess');
 const reqtree = require('./bin/reqtree');
 const Q = require('./src/questions');
-const { runCheckup } = require('./src/checkup');
+const { runCheckup, checkPlan } = require('./src/checkup');
+const CHECK_PICK_KEY = 'reqtree.checkupParts';
 const memory = require('./src/memory');
 const STRINGS = require('./media/strings');
 
@@ -126,6 +127,7 @@ class Panel {
         context: store.readContext(p, CONTEXT_WINDOW_MS),
         questions: openQuestionsOf(p),
         categories: require('./src/categories').read(p), // 体检分好的规则分类，只改面板显示
+        dir: path.dirname(p), // 查挂的文档在不在
       };
     });
     this.push();
@@ -281,16 +283,44 @@ class Panel {
       if (!pick) return;
       p = pick.p;
     }
-    const run = () => runCheckup(p, { read: currentText, write: writeTree, memory: memoryMode() === 'treeOnly' ? false : undefined });
+    // 查什么：规则、记忆、文档（含 CLAUDE.md / AGENTS.md），默认全选，记住上次的选择；「全部重查」不管上次查过没有
+    const memOff = memoryMode() === 'treeOnly';
+    const st = this.context.workspaceState;
+    const last = (st && st.get(CHECK_PICK_KEY)) || ['rules', 'memory', 'docs'];
+    const items = [
+      { id: 'rules', label: T('q.pickRules'), detail: T('q.pickRulesTip') },
+      ...(memOff ? [] : [{ id: 'memory', label: T('q.pickMemory'), detail: T('q.pickMemoryTip') }]),
+      { id: 'docs', label: T('q.pickDocs'), detail: T('q.pickDocsTip') },
+      { id: 'full', label: T('q.pickFull'), detail: T('q.pickFullTip') },
+    ].map(i => ({ ...i, picked: last.includes(i.id) }));
+    const chosen = await vscode.window.showQuickPick(items, { canPickMany: true, placeHolder: T('q.pickWhat'), ignoreFocusOut: true });
+    if (!chosen || !chosen.some(c => c.id !== 'full')) return;
+    const ids = chosen.map(c => c.id);
+    if (st) st.update(CHECK_PICK_KEY, ids.filter(i => i !== 'full'));
+    const parts = { rules: ids.includes('rules'), memory: ids.includes('memory'), docs: ids.includes('docs') };
+    const full = ids.includes('full');
+    const memory = memOff ? false : undefined;
+    // 要调用好几次模型时先说一声
+    let plan = null;
+    try { plan = checkPlan(p, { read: currentText, parts, full, memory }); } catch {}
+    if (plan && plan.calls > 1) {
+      const go = await vscode.window.showInformationMessage(T('q.checkPlan', plan.notes.length, plan.docs.length, plan.calls), { modal: true }, T('q.checkGo'));
+      if (go !== T('q.checkGo')) return;
+    }
+    const run = () => runCheckup(p, { read: currentText, write: writeTree, memory, parts, full });
     const r = vscode.window.withProgress && vscode.ProgressLocation
       ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('q.checking') }, run)
       : await run();
     this.load();
     if (r.error) vscode.window.showWarningMessage(T('q.checkFail', errText(r.error)));
-    const asked = r.questions.length + r.stale.length + r.memory.length + (r.scope || []).length;
+    const asked = r.questions.length + r.stale.length + r.memory.length + (r.scope || []).length + (r.docs || []).length;
     vscode.window.showInformationMessage(T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length));
     if (r.noFiles && r.noFiles.length) vscode.window.showWarningMessage(T('q.noFiles', r.noFiles));
     if (r.missing && r.missing.length) vscode.window.showWarningMessage(T('q.missing', r.missing));
+    if (r.docMissing && r.docMissing.length) vscode.window.showWarningMessage(T('q.docMissing', r.docMissing));
+    if (r.docUnlinked && r.docUnlinked.length) vscode.window.showInformationMessage(T('q.docUnlinked', r.docUnlinked));
+    if (r.docDup && r.docDup.length) vscode.window.showInformationMessage(T('q.docDup', r.docDup));
+    if (r.toDoc && r.toDoc.length) vscode.window.showInformationMessage(T('q.toDoc', r.toDoc));
     // 不弹通知的设置下，用户刚主动体检、正等着结果：直接打开问题列表
     if (asked && askMode() !== 'notify') await this.questionsCommand();
     return r;
@@ -431,6 +461,13 @@ class Panel {
       case 'openMap': return this.openMap();
       case 'checkup': return this.checkupCommand();
       case 'create': return create();
+      case 'openDoc': {
+        // 打开需求挂的文档；只开项目里的文件
+        const f = p && require('./src/docs').resolve(path.dirname(p), String(msg.doc || ''));
+        if (!f || !fs.existsSync(f)) { vscode.window.showWarningMessage(T('x.docGone', String(msg.doc || ''))); return; }
+        await vscode.window.showTextDocument(vscode.Uri.file(f));
+        return;
+      }
       case 'open': {
         if (!p) return;
         // 面板上的行号可能已经过时（记录员刚改过文件）：按当时那一行的原文找回来，找不到就用原行号
@@ -440,7 +477,7 @@ class Panel {
         return;
       }
       case 'setConfig':
-        // 只有「每轮记录 / 暂停记录员」一个开关（writeConfig 只认 recorder）。只影响记录员下一次怎么做，不用重编
+        // 「每轮记录 / 暂停记录员」和「记下 AI 发现的做法」（writeConfig 只认 DEFAULT_CONFIG 里的键）。只影响记录员下一次怎么做，不用重编
         // 写不进去（state.lock 一直被占）时要告诉用户，不然点了没反应、菜单还停在旧选项
         if (!p) return;
         try { store.writeConfig(p, msg.patch || {}); }

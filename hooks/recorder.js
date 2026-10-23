@@ -174,7 +174,7 @@ function isTrivial(msg) {
 }
 
 // notes：这一轮 AI 写进自动记忆的笔记 [{ file, text }]（hook 从 PostToolUse 记下的，见 job.memory）
-function buildPrompt(tree, turns, touched, unmapped, notes = []) {
+function buildPrompt(tree, turns, touched, unmapped, notes = [], aiFindings = false) {
   const latest = turns[turns.length - 1];
   const earlier = turns.slice(0, -1).map(t => `用户：${t.user}\nAI：${t.ai}`);
   const noteBlock = notes.length ? `\n<这一轮 AI 写进它自己的自动记忆的笔记>\n${notes.map(n => `文件 ${n.file}：\n${n.text}`).join('\n---\n')}\n</这一轮 AI 写进它自己的自动记忆的笔记>\n` : '';
@@ -211,7 +211,8 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
    - 这个项目整体怎么做事、怎么写、怎么沟通的偏好（如"交流用中文""反馈含糊先问清""文风要平实"），不是某门课、某个模块内容特有的，挂到最顶上那个需求——哪怕说的时候进行中某一章。只有那一块内容本身的决定才挂在那一块上。
    - 子需求要在本范围内推翻上级的规则时，用 override_rule（node 是子需求，from 是上级 ID，text 是上级原文，new 是新内容）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
-2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，按第 4 条问「做完了吗」，default 是「还没」（ops 为空）。
+${aiFindings ? `   - AI 在这一轮回复里明确说出的、以后改这块还用得上的做法或坑（例：「qa.mjs 必须传绝对路径，相对路径会静默得到空结果」「这个接口要先登录再调」），用户没有反对的，也记成规则，挂在对应需求上，规则开头写「（AI 发现）」。只记确定的、能照着做的；这一轮的进展、猜测、一次性的修复步骤不记。
+` : ''}2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，按第 4 条问「做完了吗」，default 是「还没」（ops 为空）。
 3. 没归属的文件如果明显属于某个需求，用 add_files 给出 glob（如 DataScience/ch02-*.html）；拿不准就不给。
 4. 拿不准就问：只在真有歧义、只有用户能定的时候问——这句话管全项目还是只管当前这门课或这一章；新说法是取代旧规则、缩小范围还是补充；某需求做完没有。先把最可能的做法照常写进 ops，同时在 questions 里问：text 是一句简短的问题，options 是 2–4 种做法（label 几个字，ops 是这种做法完整的改动，可以为空），default 是已写进 ops 的那个选项的序号（从 0 起）。每轮最多 2 个问题；有把握的直接改，不要问。${noteTask}
 
@@ -418,7 +419,7 @@ async function main(jobPath) {
     if (turns.length && config.recorder !== 'off' && (!isTrivial(latest) || notes.length)) {
       const lines = text.split(/\r?\n/).length;
       const tree = lines > BIG_TREE_LINES ? outline(text, touched) : text;
-      const out = await askJson(buildPrompt(tree, turns, touched, unmapped, notes));
+      const out = await askJson(buildPrompt(tree, turns, touched, unmapped, notes, config.aiFindings !== false));
       if (!Array.isArray(out.ops) && !Array.isArray(out.questions)) throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
       // memory_absorb 只认这一轮写过的笔记；换成删整份记忆（先备份，可撤销）
       const own = new Map(notes.map(n => [n.file, n]));

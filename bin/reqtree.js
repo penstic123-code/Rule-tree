@@ -213,7 +213,7 @@ const USAGE = `用法：
   reqtree rules <文件> <ID>     打印某个节点实际生效的规则（含继承与覆盖）
   reqtree check <文件>          检查重复 ID、重复规则键、重复规则、很久没动的 🔨（只读）
   reqtree check <文件> --fix    体检：合并重复规则（留后写的），很久没动的 🔨 和可能冲突的规则变成问题
-                                （冲突要调用一次模型；加 --no-model 不调用）；也按分工整理 Claude Code 自动记忆：已在树里的删掉，该进树的问你（--no-memory 不查）
+                                （冲突要调用一次模型；加 --no-model 不调用）；也按分工整理 Claude Code 自动记忆：已在树里的删掉，该进树的问你（--no-memory 不查）；还查挂的文档和 CLAUDE.md、AGENTS.md 里写成规则的地方（只查上次之后改过的，--full 全部重查）
   reqtree questions <文件>      列出等你回答的问题
   reqtree answer <文件> <问题ID> <选项序号|dismiss>   回答问题（序号从 1 起；dismiss 保持现在的样子）
   reqtree compile <文件>        编译成 Claude Code 原生规则（.claude/rules/reqtree/）`;
@@ -227,15 +227,20 @@ function printQuestion(q) {
   });
 }
 
-async function checkFix(file, { model, memoryOn = true }) {
+async function checkFix(file, { model, memoryOn = true, full = false }) {
   const { runCheckup } = require('../src/checkup');
-  const r = await runCheckup(file, { model, memory: memoryOn ? undefined : false });
+  const r = await runCheckup(file, { model, memory: memoryOn ? undefined : false, full });
+  if (r.checked && r.checked.calls) console.log(`看了 ${r.checked.notes} 份记忆、${r.checked.docs} 份文档（上次体检后没改过的跳过；--full 全部重查），调用模型 ${r.checked.calls} 次`);
   for (const o of r.merged) console.log(`合并重复规则：删掉 ${o.node} 的「${o.text}」（留后写的那条）`);
   for (const o of r.removed) console.log(`删掉记忆 ${o.file}：内容已经在需求树或 CLAUDE.md 里（备份在 .reqtree/memory-backup/，可以撤销）`);
   if (r.noFiles.length) console.log(`提醒：${r.noFiles.join('、')} 有规则，可它们和上级都没有对应的文件，这些规则不会自动加载给 AI`);
   if (r.categorized.length) console.log(`给 ${r.categorized.join('、')} 的规则分了组（只改面板上的显示）`);
   for (const m of r.missing) console.log(`提醒：${m.node} ${m.title} 标着进行中，可对应的文件（${m.globs.join(', ')}）一个也找不到`);
-  const asked = [...r.stale, ...r.scope, ...r.memory, ...r.questions];
+  for (const d of r.docMissing) console.log(`提醒：${d.node} 挂的文档 ${d.doc} 找不到`);
+  for (const d of r.docUnlinked) console.log(`提醒：${d.doc} 在 ${d.node} 的文件夹里，却没挂上（在需求下写「> 文档：${d.doc}」）`);
+  for (const d of r.docDup) console.log(`文档里和需求树重复、可以删的：${d.doc}「${d.text}」（树里在 ${d.node}）`);
+  for (const d of r.toDoc) console.log(`记忆 ${d.file} 像是 ${d.node} 的经验或进度，建议挪进${d.docs.length ? ` ${d.docs[0]}` : '它的文档'}`);
+  const asked = [...r.stale, ...r.scope, ...r.memory, ...r.questions, ...r.docs];
   for (const q of asked) printQuestion(q);
   if (r.error) console.error(`查冲突时调用模型出错：${r.error.message}`);
   console.log(`合并 ${r.merged.length} 条重复规则，${r.removed.length ? `删掉 ${r.removed.length} 份已在树里的记忆，` : ''}新提出 ${asked.length} 个问题${asked.length ? '（在 VS Code 里回答，或者 reqtree answer <文件> <问题ID> <选项序号>）' : ''}`);
@@ -253,7 +258,7 @@ if (require.main === module) {
   const flags = process.argv.slice(4); // 文件之后的参数
 
   if (cmd === 'check' && flags.includes('--fix')) {
-    checkFix(path.resolve(file), { model: !flags.includes('--no-model'), memoryOn: !flags.includes('--no-memory') })
+    checkFix(path.resolve(file), { model: !flags.includes('--no-model'), memoryOn: !flags.includes('--no-memory'), full: flags.includes('--full') })
       .then(code => process.exit(code), e => { console.error(e.message); process.exit(1); });
     return;
   }

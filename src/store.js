@@ -116,7 +116,8 @@ const stateLock = treePath => metaFile(treePath, 'state.lock');
 // ---------- 用户开关：config.json ----------
 // 开关 recorder，补漏间隔 sweepEvery（每 N 轮把最近 N 句用户原话再交给记录员查一遍漏记，0 关掉）。只认 DEFAULT_CONFIG 里有的键：旧版本的 confirm（「先让我确认」，已去掉）、
 // since（已搬到 state.json）读的时候忽略，迁移时删掉；面板传来别的键也不写。
-const DEFAULT_CONFIG = { recorder: 'turn', sweepEvery: 8 };
+// aiFindings：AI 在回复里说出的、以后还用得上的做法和坑也记成规则（开头标「（AI 发现）」），默认开
+const DEFAULT_CONFIG = { recorder: 'turn', sweepEvery: 8, aiFindings: true };
 const pickConfig = c => Object.fromEntries(Object.keys(DEFAULT_CONFIG).map(k => [k, c[k] === undefined ? DEFAULT_CONFIG[k] : c[k]]));
 const rawConfig = treePath => readJson(metaFile(treePath, 'config.json'), null);
 const readConfig = treePath => pickConfig(rawConfig(treePath) || {});
