@@ -102,7 +102,7 @@ function docList(root, projectDir) {
   return out;
 }
 
-// 本地检查（不调用模型）：挂的文档不存在；需求的文件夹里有 .md 却没挂（只看「文件夹/**」这种范围的第一层）
+// 本地检查（不调用模型）：挂的文档不存在；需求的文件夹里有 .md、这个需求却一份文档都没挂（只看「文件夹/**」这种范围的第一层）
 const NOT_DOCS = /^(readme|changelog|license|licence|contributing|claude|agents)\b/i;
 function docProblems(text, projectDir, treePath) {
   const root = parse(text);
@@ -112,8 +112,9 @@ function docProblems(text, projectDir, treePath) {
     if (!Docs.exists(projectDir, d)) docMissing.push({ node: n.id, doc: d });
   }
   const treeName = treePath ? path.basename(treePath) : '';
+  // 已经挂了文档的需求不再提醒其余的 .md（那是有意只挂入口文档，比如子任务简报、样例不用 AI 每次先读）
   for (const n of walk(root)) {
-    if (!n.id) continue;
+    if (!n.id || n.docs.length) continue;
     for (const g of n.files) {
       const m = g.match(/^([^*?{}[\]]+)\/\*\*$/);
       if (!m) continue;

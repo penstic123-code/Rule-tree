@@ -61,11 +61,15 @@ test('编译：规则文件里多一句「动手前先读」带用途；不存�
   assert.match(c2, /`d\/notes\.md`（第二课笔记）/);
 });
 
-test('体检（本地）：挂了却不存在的文档、文件夹里没挂的 .md（README 不算）', () => {
+test('体检（本地）：挂了却不存在的文档；一份都没挂的需求，文件夹里的 .md 提醒挂上（README 不算；挂了入口文档的不提醒其余的）', () => {
   const { dir, tree } = project();
+  fs.mkdirSync(path.join(dir, 'e'));
+  fs.writeFileSync(path.join(dir, 'e', '进度.md'), '# 进度\n');
+  fs.writeFileSync(path.join(dir, 'e', 'README.md'), '# r\n');
+  fs.appendFileSync(tree, '\n## C3 第三课\n> 文件：e/**\n- 规则\n');
   const r = docProblems(fs.readFileSync(tree, 'utf8'), dir, tree);
   assert.deepStrictEqual(r.docMissing, [{ node: 'C1', doc: 'c/gone.md' }]);
-  assert.deepStrictEqual(r.docUnlinked.map(d => d.doc), ['c/项目规则与经验.md']);
+  assert.deepStrictEqual(r.docUnlinked.map(d => d.doc), ['e/进度.md']);
 });
 
 test('体检：可以只查文档；文档里重复的提醒、该搬进树的变成问题；没改过的下次不再看，全部重查才看', async () => {
