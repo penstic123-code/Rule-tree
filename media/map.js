@@ -22,10 +22,11 @@
   // 跟随 AI：AI 开始改某个需求时，把它的卡片平移到视野里、闪一下（默认开）
   let follow = saved.follow !== false;
   let hideDone = !!saved.hideDone; // 隐藏已完成的需求（和它下面的）
-  let inheritOpen = !!saved.inheritOpen;
+  // 详情里展开了哪几节（{ inh, kids, recent, unmapped }），默认都收起；旧版本只记了继承的规则展开没有
+  let folds = saved.folds || (saved.inheritOpen ? { inh: true } : {});
   // 编号（R3.2 这种）默认不显示，⋯ 菜单里能打开
   let showIds = !!saved.showIds;
-  const persist = () => vscode.setState({ selected, dim, collapsed: [...collapsed], view, defaultOpen, cardOpen: Object.fromEntries(cardOpen), focus, follow, hideDone, inheritOpen, showIds });
+  const persist = () => vscode.setState({ selected, dim, collapsed: [...collapsed], view, defaultOpen, cardOpen: Object.fromEntries(cardOpen), focus, follow, hideDone, folds, showIds });
   const post = msg => vscode.postMessage(msg);
 
   // 布局：卡片宽、标题行高、层间距、兄弟间距、规则最多列几条
@@ -300,7 +301,7 @@
     if (!view) view = fitTarget(items);
     applyView();
     const selNode = selected && findNode(selected);
-    side.innerHTML = D.html(f, selNode, { ...data, inheritOpen, showIds, focusable: true, focusKey: focus, focusLabel: T('d.focusMap') });
+    side.innerHTML = D.html(f, selNode, { ...data, folds, showIds, focusable: true, focusKey: focus, focusLabel: T('d.focusMap') });
     side.classList.toggle('none', !selNode); // 窄的时候详情在下面，没选中就收成一行
     document.getElementById('alerts').innerHTML = D.alertsHtml(f, data.now);
     renderSummary();
@@ -506,7 +507,7 @@
       return;
     }
     const loc = D.local(a, post);
-    if (loc) { if ('inheritOpen' in loc) { inheritOpen = loc.inheritOpen; persist(); } return; }
+    if (loc) { if (loc.fold) { folds = { ...folds, [loc.fold[0]]: loc.fold[1] }; persist(); } return; }
     if (act === 'zoomIn' || act === 'zoomOut') { if (view) { zoom(view.k * (act === 'zoomIn' ? 1.2 : 1 / 1.2)); applyView(); persist(); } return; }
     if (TREE_ACTS[act]) { runTree(act); return; }
     const m = D.message(a);

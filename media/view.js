@@ -12,18 +12,20 @@
   // 树的高度：默认跟着内容走（最多占一半多），详情占剩下的；拖过分隔条就用拖出来的高度
   let treeHeight = saved.treeHeight || null;
   // 只看这一支：树里只留从根到它的路径和它下面的整棵子树（null = 显示全部）
-  let focus = saved.focus || null;
+  // 侧栏不再有进入「只看这一支」的按钮（侧栏本来就窄，用户觉得没意义；导图里还有）。旧版本记下的聚焦不再恢复
+  let focus = null;
   // 跟随 AI：AI 开始改某个需求时，展开它的上级、滚过去、闪一下（默认开）
   let follow = saved.follow !== false;
   // 上级规则超过 3 条时是否展开（整个会话共用一个开关）
-  let inheritOpen = !!saved.inheritOpen;
+  // 详情里展开了哪几节（{ inh, kids, recent, unmapped }），默认都收起；旧版本只记了继承的规则展开没有
+  let folds = saved.folds || (saved.inheritOpen ? { inh: true } : {});
   // 编号（R3.2 这种）默认不显示，设置菜单里能打开
   let showIds = !!saved.showIds;
   // 选中一行后，不在它这一支（上级路径 + 子树）的行稍微变淡；点树的空白处或 Esc 取消（选中不变）
   let dim = !!saved.dim;
   let branch = null;
 
-  const persist = () => vscode.setState({ selected, dim, collapsed: [...collapsed], treeHeight, focus, follow, inheritOpen, showIds });
+  const persist = () => vscode.setState({ selected, dim, collapsed: [...collapsed], treeHeight, focus, follow, folds, showIds });
   const post = msg => vscode.postMessage(msg);
   const ago = t => D.ago(t, data.now || Date.now());
 
@@ -85,7 +87,7 @@
     const cfg = data.files[0].config || {};
     const paused = cfg.recorder === 'off';
     html += `<div class="statusbar"><span class="status" title="${T('v.recTip')}">${paused ? T('v.recPaused') : last ? esc(T('v.recLast', ago(last.time), D.recorderText(last, lastFile, showIds))) : T('v.recNever')}</span>
-      <button class="follow" data-act="follow" aria-pressed="${follow}" title="${T('v.followTip')}"><span class="fdot" aria-hidden="true"></span>${T('follow')}</button>
+      <button class="ibtn mapbtn" data-act="checkup" title="${T('v.checkupTip')}">${D.icon('check', 14)}${T('v.checkup')}</button>
       <button class="ibtn mapbtn" data-act="openMap" title="${T('v.mapTip')}">${D.icon('map', 14)}${T('v.map')}</button>
       <button class="ibtn gear" data-act="settings" data-uri="${esc(data.files[0].uri)}" title="${T('v.settings')}" aria-label="${T('v.settings')}">${D.icon('gear', 15)}</button></div>`;
     if (fp) html += focusBar(fp.p);
@@ -148,7 +150,7 @@
   // 详情用公共组件 detail.js，和导图右侧一模一样
   function detailHtml(nodes) {
     const hit = nodes.find(x => x.n.key === selected);
-    return D.html(hit ? hit.file : data.files[0], hit && hit.n, { ...data, inheritOpen, showIds, focusable: true, focusKey: focus, focusLabel: T('d.focusSide') });
+    return D.html(hit ? hit.file : data.files[0], hit && hit.n, { ...data, folds, showIds });
   }
 
   // ---------- 只看这一支 ----------
@@ -223,7 +225,7 @@
       if (act === 'unfocus') { setFocus(null); return; }
       if (act === 'pick') { reveal(actEl.dataset.key); select(actEl.dataset.key); return; }
       const loc = D.local(actEl, post);
-      if (loc) { if ('inheritOpen' in loc) { inheritOpen = loc.inheritOpen; persist(); } return; }
+      if (loc) { if (loc.fold) { folds = { ...folds, [loc.fold[0]]: loc.fold[1] }; persist(); } return; }
       const m = D.message(actEl, uri);
       if (m) { post(m); return; }
       post({ type: act });
@@ -295,7 +297,9 @@
       ['turn', T('v.recTurn'), cfg.recorder !== 'off'],
       ['off', T('v.recOff'), cfg.recorder === 'off'],
     ].map(([v, label, on]) => ({ label, checked: on, radio: true, data: { v }, run: () => post({ type: 'setConfig', uri, patch: { recorder: v } }) }))
-      .concat([{ label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); render(); } },
+      // 跟随 AI 默认开着，开关放在设置里（以前在顶栏占一个大按钮，用户觉得没必要）
+      .concat([{ label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },
+        { label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); render(); } },
         { label: T('ctx.menu'), run: () => openContext(uri) }]));
   }
 

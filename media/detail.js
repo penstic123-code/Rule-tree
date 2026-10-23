@@ -8,7 +8,6 @@
   const STATUS_LABEL = { todo: T('st.todo'), doing: T('st.doing'), done: T('st.done'), question: T('st.question') };
   // 状态菜单里的顺序（侧栏树行的菜单和详情的状态按钮共用）
   const STATUS_ORDER = ['doing', 'todo', 'done', 'question'];
-  const INHERIT_FOLD = 3; // 上级规则超过几条就默认收起
   const ago = (t, now = Date.now()) => {
     const s = Math.max(0, Math.round((now - t) / 1000));
     return s < 60 ? T('ago.now') : s < 3600 ? T('ago.m', Math.round(s / 60)) : s < 86400 ? T('ago.h', Math.round(s / 3600)) : T('ago.d', Math.round(s / 86400));
@@ -156,12 +155,12 @@
   }
 
   // 需求详情：侧栏和导图共用。n 为空时显示最近改动和还没归属的文件。
-  // data 提供 now、staleDays；页面另外给 inheritOpen（继承的规则展开没有）、showIds、focusable / focusKey / focusLabel
+  // data 提供 now、staleDays；页面另外给 folds（哪几节展开了，见 foldSec）、showIds、focusable / focusKey / focusLabel
   // 分节顺序：本需求的规则、继承的规则、子需求、最近改动 / 未归属的文件、生效范围。每节结尾一根淡线
   function html(file, n, data = {}) {
     const now = data.now;
     const U = `data-uri="${esc(file.uri)}"`;
-    const recent = recentHtml(file, now, !!data.showIds) + unmappedHtml(file);
+    const recent = recentHtml(file, now, !!data.showIds, data) + unmappedHtml(file, data);
     if (!n) {
       return `<div class="dp-empty"><div class="empty">${T('d.empty')}</div>
         <button class="btn ghost new-btn" data-act="edit" data-a="addChild" data-node="${esc(file.nodes[0]?.id || '')}" ${U}>${icon('plus', 12)}${T('d.newReq')}</button></div>${recent}`;
@@ -215,17 +214,14 @@
     const total = up.reduce((k, g) => k + g.rules.length, 0);
     if (total) {
       const body = up.map(g => `<div class="gsub">${esc(ids ? T('d.fromId', g.ownerId, g.ownerTitle) : T('d.from', g.ownerTitle))}</div>${rules(g, g.rules)}`).join('');
-      const label = `<span class="gt">${T('d.inherited')}</span><span class="gn">${total}</span>`;
-      if (total > INHERIT_FOLD) {
-        const open = !!data.inheritOpen;
-        h += sec('s-inh', `<button class="gh inh-tg" data-act="inherit" aria-expanded="${open}" aria-controls="inh-body" title="${T('d.inheritedTip')}">${label}${icon('chev', 12)}</button>
-          <div class="inh-body" id="inh-body"${open ? '' : ' hidden'}>${body}</div>`);
-      } else h += sec('s-inh', `<div class="gh" title="${T('d.inheritedTip')}">${label}</div><div class="inh-body">${body}</div>`);
+      h += foldSec('s-inh', 'inh', data, T('d.inherited'), total, body, '', T('d.inheritedTip'));
     }
 
     // 子需求：状态点 + 名字，点一下选中；没有就只留小标题和「+ 添加」
-    h += sec('s-kids', head(T('d.kids'), n.children.length, addLink('addChild', T('d.addChildTip')))
-      + (n.children.length ? `<ul class="kids">${n.children.map(c => `<li><button class="kid" data-act="pick" data-key="${esc(c.key)}" title="${esc(c.id + ' ' + c.title)}">${dot(c.status)}${ids ? `<span class="kid-id">${esc(c.id)}</span>` : ''}<span class="kid-t">${esc(c.title)}</span></button></li>`).join('')}</ul>` : ''));
+    const addKid = addLink('addChild', T('d.addChildTip'));
+    h += n.children.length
+      ? foldSec('s-kids', 'kids', data, T('d.kids'), n.children.length, `<ul class="kids">${n.children.map(c => `<li><button class="kid" data-act="pick" data-key="${esc(c.key)}" title="${esc(c.id + ' ' + c.title)}">${dot(c.status)}${ids ? `<span class="kid-id">${esc(c.id)}</span>` : ''}<span class="kid-t">${esc(c.title)}</span></button></li>`).join('')}</ul>`, addKid)
+      : sec('s-kids', head(T('d.kids'), 0, addKid));
 
     h += recent;
 
@@ -238,28 +234,36 @@
     return h;
   }
 
-  // 可以收起的一节（最近改动、未归属的文件）：小标题样式和上面一致，结尾也是一根淡线
-  const foldSection = (cls, title, count, body) => `<details class="sec ${cls}" open><summary class="gh"><span class="gt">${title}</span><span class="gn">${count}</span>${icon('chev', 12)}</summary><ul class="chgs">${body}</ul></details>`;
+  // 可以收起的一节（继承的规则、子需求、最近改动、未归属的文件）：小标题本身是开关，默认收起；
+  // 只有「本需求的规则」一直展开。展开了哪几节由页面记在 webview state 里（data.folds），数据刷新、换需求都保持。
+  // add：小标题右边的「+ 添加」（不在开关按钮里面）；tip：开关的悬停提示
+  function foldSec(cls, key, data, title, count, body, add = '', tip = '') {
+    const open = !!(data.folds && data.folds[key]);
+    // 继承的规则沿用以前的类名和 id（inh-tg、inh-body）
+    const id = key === 'inh' ? 'inh-body' : `fold-${key}`;
+    return `<section class="sec ${cls}"><div class="gh fold-h"><button class="fold-tg${key === 'inh' ? ' inh-tg' : ''}" data-act="fold" data-sec="${key}" aria-expanded="${open}" aria-controls="${id}"${tip ? ` title="${tip}"` : ''}><span class="gt">${title}</span>${count ? `<span class="gn">${count}</span>` : ''}${icon('chev', 12)}</button>${add}</div>
+      <div class="inh-body fold-body" id="${id}"${open ? '' : ' hidden'}>${body}</div></section>`;
+  }
 
   // 最近改动：记录员和你的改动都在这里，记错了点「撤销」。
   // undoable === false 是旧版本留下、反操作已经翻译不了的改动：不给撤销按钮，免得点了没反应
-  function recentHtml(file, now, showIds) {
+  function recentHtml(file, now, showIds, data = {}) {
     const list = (file.changes || []).slice(0, 6);
     if (!list.length) return '';
-    return foldSection('s-recent', T('d.recent'), list.length, list.map(c => {
+    return foldSec('s-recent', 'recent', data, T('d.recent'), list.length, `<ul class="chgs">${list.map(c => {
       const fixed = !c.undone && c.undoable === false;
       return `<li class="chg${c.undone ? ' undone' : ''}">
       <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source === '升级' ? T('x.upgradeName') : c.source === '体检' ? T('x.checkupName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
       ${changeLines(c, file, showIds).map(s => `<div class="cs">${esc(s)}</div>`).join('')}</li>`;
-    }).join(''));
+    }).join('')}</ul>`);
   }
 
   // AI 改了、但还不属于任何需求的文件：一键归到需求，以后改它们时就会带上对应规则
-  function unmappedHtml(file) {
+  function unmappedHtml(file, data = {}) {
     const list = file.unmapped || [];
     if (!list.length) return '';
-    return foldSection('s-unmapped', T('d.unmapped'), list.length, list.map(f => `<li class="chg">
-      <div class="cs"><code>${esc(f)}</code><button class="lnk" data-act="edit" data-a="assignFile" data-file="${esc(f)}" data-uri="${esc(file.uri)}">${T('d.assign')}</button></div></li>`).join(''));
+    return foldSec('s-unmapped', 'unmapped', data, T('d.unmapped'), list.length, `<ul class="chgs">${list.map(f => `<li class="chg">
+      <div class="cs"><code>${esc(f)}</code><button class="lnk" data-act="edit" data-a="assignFile" data-file="${esc(f)}" data-uri="${esc(file.uri)}">${T('d.assign')}</button></div></li>`).join('')}</ul>`);
   }
 
   // ---------- 在面板里直接改名：点标题或铅笔，标题变成输入框。回车保存，Esc 取消，点别处也保存；空名字不收 ----------
@@ -451,16 +455,16 @@
   }
 
   // 只改面板自己的点击（展开上级规则、⋯ 菜单）。post 用来把菜单里选的操作发给插件。
-  // 返回 { inheritOpen } 给页面记下；处理了但没状态要记返回 {}；不认识返回 null
+  // 返回 { fold: [哪一节, 展开没有] } 给页面记下；处理了但没状态要记返回 {}；不认识返回 null
   function local(a, post) {
     const d = a.dataset;
     if (d.act === 'rename') { startRename(a, post); return {}; }
-    if (d.act === 'inherit') {
+    if (d.act === 'fold') {
       const open = a.getAttribute('aria-expanded') !== 'true';
       a.setAttribute('aria-expanded', String(open));
       const body = document.getElementById(a.getAttribute('aria-controls'));
       if (body) body.hidden = !open;
-      return { inheritOpen: open };
+      return { fold: [d.sec, open] };
     }
     if (d.act === 'statusMenu') {
       if (openMenuEl && menuAnchor === a) { closeMenu(); return {}; }

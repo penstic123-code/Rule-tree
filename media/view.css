@@ -102,7 +102,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .lnk:hover { text-decoration: underline; }
 /* 焦点环：强调色，外扩 2px，不压住文字 */
-.btn:focus-visible, .ibtn:focus-visible, .dp .ib:focus-visible, .dp .st-btn:focus-visible, .inh-tg:focus-visible, .lnk:focus-visible, .kid:focus-visible,
+.btn:focus-visible, .ibtn:focus-visible, .dp .ib:focus-visible, .dp .st-btn:focus-visible, .inh-tg:focus-visible, .fold-tg:focus-visible, .lnk:focus-visible, .kid:focus-visible,
 .menu button:focus-visible, .follow:focus-visible, .crumb:focus-visible, .tseg button:focus-visible, .tzoom button:focus-visible, .ttog:focus-visible,
 .dp .sec > summary:focus-visible, .sh-title strong:focus-visible {
   outline: 1px solid var(--accent); outline-offset: 2px;

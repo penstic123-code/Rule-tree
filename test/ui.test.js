@@ -812,7 +812,7 @@ test('详情：没有大按钮，每节「+ 添加」都是同样的链接样式
           seg: [...document.querySelectorAll('.st-btn')].map(e => Math.round(e.getBoundingClientRect().height)),
           focus: css('--vscode-focusBorder'), rings: {}, contrast: {},
         };
-        for (const s of ['.dp .lnk', '.st-btn', '.dp .ib', '.inh-tg', '.follow', '.statusbar .ibtn']) {
+        for (const s of ['.dp .lnk', '.st-btn', '.dp .ib', '.inh-tg', '.statusbar .ibtn']) {
           const el = document.querySelector(s); if (!el) { out.rings[s] = 'missing'; continue; }
           el.focus(); const cs = getComputedStyle(el);
           out.rings[s] = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) >= 1 && cs.outlineColor === out.focus;
@@ -835,31 +835,34 @@ test('详情：没有大按钮，每节「+ 添加」都是同样的链接样式
   }
 });
 
-test('详情：上级规则超过 3 条默认收成一行，回车或点击展开，展开状态记在 webview state；3 条以内直接显示', { skip, timeout: 60000 }, async () => {
+test('详情：只有本需求的规则展开，继承的规则、子需求、最近改动默认收起；回车或点击展开，展开状态记在 webview state', { skip, timeout: 60000 }, async () => {
   const b = await openPage2('polish-inherit.html', { selId: 'C2.2' }, 340);
   try {
     const before = await b.eval(`
       const tg = document.querySelector('.inh-tg');
       return { text: tg && tg.textContent.replace(/\\s+/g, ''), expanded: tg && tg.getAttribute('aria-expanded'), hidden: document.getElementById('inh-body').hidden,
-        own: [...document.querySelectorAll('.dp .rule')].filter(r => r.getClientRects().length).length };`);
+        own: [...document.querySelectorAll('.dp .rule')].filter(r => r.getClientRects().length).length,
+        allClosed: [...document.querySelectorAll('.dp .fold-tg')].every(t => t.getAttribute('aria-expanded') === 'false'),
+        folds: document.querySelectorAll('.dp .fold-tg').length };`);
     assert.strictEqual(before.text, '继承的规则4');
     assert.strictEqual(before.expanded, 'false');
     assert.strictEqual(before.hidden, true);
     assert.strictEqual(before.own, 2, '自己的规则要一直显示，上级的收起');
+    assert.ok(before.folds >= 1 && before.allClosed, '可以收起的节默认都要收起');
     // 键盘：聚焦后按回车
     await b.eval(`document.querySelector('.inh-tg').focus()`);
     await b.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
     await b.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
     const after = await b.eval(`
       const tg = document.querySelector('.inh-tg');
-      const out = { expanded: tg.getAttribute('aria-expanded'), hidden: document.getElementById('inh-body').hidden, saved: window.__state && window.__state.inheritOpen,
+      const out = { expanded: tg.getAttribute('aria-expanded'), hidden: document.getElementById('inh-body').hidden, saved: window.__state && window.__state.folds && window.__state.folds.inh,
         visible: [...document.querySelectorAll('.dp .rule')].filter(r => r.getClientRects().length).length };
       // 换一个需求：还是展开的；再点一下收起
       document.querySelector('.row[data-key$="#C2.1"]').click();
       out.keep = document.querySelector('.inh-tg').getAttribute('aria-expanded');
       document.querySelector('.inh-tg').click();
-      out.closed = document.querySelector('.inh-tg').getAttribute('aria-expanded') === 'false' && window.__state.inheritOpen === false;
-      // G1.1 只有 3 条上级规则：不折叠
+      out.closed = document.querySelector('.inh-tg').getAttribute('aria-expanded') === 'false' && window.__state.folds.inh === false;
+      // G1.1 只有 3 条上级规则：也是收起的（上一步收起了）
       document.querySelector('.row[data-key$="#G1.1"]').click();
       out.small = { toggle: !!document.querySelector('.inh-tg'), rules: document.querySelectorAll('.dp .rule').length };
       return out;`);
@@ -869,7 +872,7 @@ test('详情：上级规则超过 3 条默认收成一行，回车或点击展�
     assert.strictEqual(after.visible, 6);
     assert.strictEqual(after.keep, 'true', '换需求后展开状态丢了');
     assert.ok(after.closed, '点击没有收起');
-    assert.deepStrictEqual(after.small, { toggle: false, rules: 4 });
+    assert.deepStrictEqual(after.small, { toggle: true, rules: 4 });
   } finally { b.close(); }
 });
 
@@ -999,66 +1002,32 @@ test('导图：聚焦的需求被删掉后自动退出；减少动态时镜头�
   } finally { b.close(); }
 });
 
-test('侧栏：只看这一支（路径 + 子树、详情变高），Esc / 显示全部 / 点空白处 / 点路径都能用，状态记住', { skip, timeout: 60000 }, async () => {
-  const b = await openPage2('polish-focus-side.html', { selId: 'C2', height: 700 }, 300);
+test('侧栏：没有「只看这一支」按钮（侧栏太窄，用户觉得没意义；导图里还有），旧版本记下的聚焦不再恢复', { skip, timeout: 60000 }, async () => {
+  const b = await openPage2('polish-focus-side.html', { selId: 'C2', height: 700, state: { focus: U('C2') } }, 300);
   try {
     const r = await b.eval(`
-      const rows = () => [...document.querySelectorAll('.row')].map(r => r.dataset.key.split('#')[1] + (r.classList.contains('anc') ? '^' : ''));
-      const detailH = () => document.querySelector('.detail').getBoundingClientRect().height;
-      const out = { before: rows(), h0: detailH() };
-      document.querySelector('.dp [data-act="focus"]').click();
-      out.focused = rows(); out.h1 = detailH(); out.saved = window.__state.focus;
-      out.crumbs = [...document.querySelectorAll('.focusbar .crumb')].map(c => c.textContent);
-      out.noBtn = !document.querySelector('.dp [data-act="focus"]');
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      out.esc = rows().length; out.savedEsc = window.__state.focus;
-      document.querySelector('.dp [data-act="focus"]').click();
-      document.querySelector('.focusbar [data-act="unfocus"]').click();
-      out.unfocus = rows().length;
-      document.querySelector('.dp [data-act="focus"]').click();
-      document.querySelector('.tree').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      out.blank = rows().length;
-      // 选 C2.2 再聚焦，点路径里的 C2 换到 C2 这一支
-      document.querySelector('.row[data-key$="#C2.2"]').click();
-      document.querySelector('.dp [data-act="focus"]').click();
-      out.deep = rows();
-      document.querySelector('.focusbar .crumb[data-key$="#C2"]').click();
-      out.crumb = rows();
-      // 点路标行（上级 P）：换到 P 这一支
-      document.querySelector('.row.anc').click();
-      out.anc = rows().length;
-      out.errors = window.__errors;
-      return out;`);
-    assert.strictEqual(r.before.length, 9);
-    assert.deepStrictEqual(r.focused, ['P^', 'C2', 'C2.1', 'C2.2', 'C2.3'], '只看这一支后还显示别的分支');
-    assert.ok(r.h1 > r.h0, `详情没有变高：${r.h0} → ${r.h1}`);
-    assert.strictEqual(r.saved, U('C2'));
-    assert.deepStrictEqual(r.crumbs, ['示例项目', '数据科学课']);
-    assert.ok(r.noBtn, '已经在看这一支时不该再显示按钮');
-    assert.strictEqual(r.esc, 9); assert.strictEqual(r.savedEsc, null);
-    assert.strictEqual(r.unfocus, 9);
-    assert.strictEqual(r.blank, 9, '点空白处没退出');
-    assert.deepStrictEqual(r.deep, ['P^', 'C2^', 'C2.2']);
-    assert.deepStrictEqual(r.crumb, ['P^', 'C2', 'C2.1', 'C2.2', 'C2.3']);
-    assert.strictEqual(r.anc, 9);
+      return { rows: document.querySelectorAll('.row').length, btn: !!document.querySelector('.dp [data-act="focus"]'),
+        bar: !!document.querySelector('.focusbar'), checkup: !!document.querySelector('.statusbar [data-act="checkup"]'), errors: window.__errors };`);
+    assert.strictEqual(r.rows, 9, '旧的聚焦状态还在起作用');
+    assert.strictEqual(r.btn, false);
+    assert.strictEqual(r.bar, false);
+    assert.ok(r.checkup, '侧栏顶部要有「体检」按钮');
     assert.deepStrictEqual(r.errors, []);
   } finally { b.close(); }
-  // 刷新后还记得；聚焦的需求不存在了就自动退出
-  for (const [focus, want] of [['C2', 5], ['C9', 9]]) {
-    const b2 = await openPage2(`polish-focus-side-${focus}.html`, { selId: 'C2', state: { focus } }, 300);
-    try { assert.strictEqual(await b2.eval(`return document.querySelectorAll('.row').length`), want, `focus=${focus}`); } finally { b2.close(); }
-  }
 });
 
-test('跟随 AI（侧栏）：自动展开、滚进视野、闪一下；不改选中；输入框有焦点时不跳；开关记住；减少动态时直接跳', { skip, timeout: 90000 }, async () => {
+test('跟随 AI（侧栏）：默认开着，开关在齿轮菜单里；自动展开、滚进视野、闪一下；不改选中；输入框有焦点时不跳；开关记住；减少动态时直接跳', { skip, timeout: 90000 }, async () => {
   // 侧栏矮一点，树滚得动；C2 先折叠，C2.3 藏在里面
   const opts = { selId: 'G1', height: 330, state: { collapsed: [U('C2')], detailHeight: 120 } };
+  // 打开齿轮菜单，找到「跟随 AI」那一项
+  const FOLLOW_ITEM = `(document.querySelector('.statusbar [data-act="settings"]').click(), [...document.querySelectorAll('.menu button')].find(x => x.textContent.includes('跟随 AI')))`;
   const inView = id => `(() => { const row = document.querySelector('.row[data-key$="#${id}"]'); if (!row) return false; const r = row.getBoundingClientRect(), t = document.querySelector('.tree').getBoundingClientRect(); return r.top >= t.top - 1 && r.bottom <= t.bottom + 1; })()`;
   for (const reduced of [false, true]) {
     const b = await openPage2(`polish-follow-${reduced ? 'reduced' : 'smooth'}.html`, opts, 300, { reduced });
     try {
       const r = await b.eval(`
-        const out = { follow: document.querySelector('.follow').getAttribute('aria-pressed') };
+        const out = { follow: !document.querySelector('.statusbar .follow') && ${FOLLOW_ITEM}.getAttribute('aria-checked') };
+        ReqDetail.closeMenu();
         document.querySelector('.tree').scrollTop = 0;
         ${ACTIVATE('C2.3')}
         return new Promise(res => setTimeout(() => {
@@ -1087,16 +1056,17 @@ test('跟随 AI（侧栏）：自动展开、滚进视野、闪一下；不改�
       assert.deepStrictEqual(busy, { scroll: 0, flash: false }, '用户在输入时跳走了');
       // 关掉开关：记进 state，之后不再跟随
       const off = await b.eval(`
-        document.querySelector('.follow').click();
+        ${FOLLOW_ITEM}.click();
         const saved = window.__state.follow;
+        const pressed = ${FOLLOW_ITEM}.getAttribute('aria-checked'); ReqDetail.closeMenu();
         ${ACTIVATE('G1.1')}
-        return new Promise(res => setTimeout(() => res({ saved, pressed: document.querySelector('.follow').getAttribute('aria-pressed'), flash: !!document.querySelector('.row.flash') }), 100));`);
+        return new Promise(res => setTimeout(() => res({ saved, pressed, flash: !!document.querySelector('.row.flash') }), 100));`);
       assert.deepStrictEqual(off, { saved: false, pressed: 'false', flash: false });
     } finally { b.close(); }
   }
   // 开关关着刷新：还是关着
   const b = await openPage2('polish-follow-off.html', { ...opts, state: { ...opts.state, follow: false } }, 300);
-  try { assert.strictEqual(await b.eval(`return document.querySelector('.follow').getAttribute('aria-pressed')`), 'false'); } finally { b.close(); }
+  try { assert.strictEqual(await b.eval(`return ${FOLLOW_ITEM}.getAttribute('aria-checked')`), 'false'); } finally { b.close(); }
 });
 
 test('跟随 AI（导图）：AI 改的卡片不在视野里时平移进来、闪一下、有光晕；开关记住', { skip, timeout: 60000 }, async () => {

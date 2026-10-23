@@ -428,6 +428,7 @@ class Panel {
     switch (msg.type) {
       case 'ready': return this.push();
       case 'openMap': return this.openMap();
+      case 'checkup': return this.checkupCommand();
       case 'create': return create();
       case 'open': {
         if (!p) return;
