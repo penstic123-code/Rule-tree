@@ -266,6 +266,8 @@ for (const theme of ['dark', 'light']) {
         await b.load(html);
         const r = await b.eval(`${CONTRAST}
           const out = {};
+          // 详情里收起的节（最近改动、未归属的文件……）先全部展开，里面的按钮也要检查
+          document.querySelectorAll('.dp .fold-tg[aria-expanded="false"]').forEach(t => t.click());
           out.overflowX = document.documentElement.scrollWidth - innerWidth;
           out.rows = document.querySelectorAll('.row').length;
           out.detailTitle = document.querySelector('.dp .sh strong')?.textContent;
