@@ -233,7 +233,7 @@ async function checkFix(file, { model, memoryOn = true }) {
   for (const o of r.merged) console.log(`合并重复规则：删掉 ${o.node} 的「${o.text}」（留后写的那条）`);
   for (const o of r.removed) console.log(`删掉记忆 ${o.file}：内容已经在需求树或 CLAUDE.md 里（备份在 .reqtree/memory-backup/，可以撤销）`);
   if (r.noFiles.length) console.log(`提醒：${r.noFiles.join('、')} 有规则，可它们和上级都没有对应的文件，这些规则不会自动加载给 AI`);
-  for (const m of r.missing) console.log(`提醒：${m.node} ${m.title} 标着正在做或完成，可对应的文件（${m.globs.join(', ')}）一个也找不到`);
+  for (const m of r.missing) console.log(`提醒：${m.node} ${m.title} 标着进行中，可对应的文件（${m.globs.join(', ')}）一个也找不到`);
   const asked = [...r.stale, ...r.scope, ...r.memory, ...r.questions];
   for (const q of asked) printQuestion(q);
   if (r.error) console.error(`查冲突时调用模型出错：${r.error.message}`);

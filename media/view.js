@@ -131,7 +131,7 @@
     if (n.active) meta.push(`<span class="chip ai" title="${esc(T('ai.editing', n.active.file))}">${D.icon('ai', 12)}<span class="ct">${esc(n.active.file.split('/').pop())}</span></span>`);
     else if (kids && !open && D.hasActive(n)) meta.push(`<span class="chip ai" role="img" title="${T('ai.below')}" aria-label="${T('ai.below')}">${D.icon('ai', 12)}</span>`);
     else if (n.stale) meta.push(`<span class="chip stale" title="${esc(T('stale.tip', data.staleDays))}">${D.icon('stale', 12)}<span class="ct">${T('stale.chip')}</span></span>`);
-    const acts = `<span class="acts"><button class="ibtn" data-act="status" title="${T('v.changeStatus')}" aria-label="${T('v.changeStatus')}">${D.icon('status', 13)}</button><button class="ibtn" data-act="open" data-line="${n.line}" data-raw="${esc(n.raw)}" ${U} title="${T('menu.open')}" aria-label="${T('menu.open')}">${D.icon('open', 13)}</button></span>`;
+    const acts = `<span class="acts"><button class="ibtn" data-act="status" title="${T('v.changeStatus')}" aria-label="${T('v.changeStatus')}">${D.icon('status', 13)}</button></span>`;
     const rowCls = ['row', n.key === selected ? 'sel' : '', n.active ? 'ai-on' : '', isAnc ? 'anc' : '', branch && !branch.has(n.key) ? 'dim' : ''].filter(Boolean).join(' ');
     return `<li class="${cls}" style="--branch: var(${n.branch})">
       <div class="${rowCls}" tabindex="0" role="treeitem" aria-expanded="${kids ? open : ''}" data-key="${esc(n.key)}" ${U}>

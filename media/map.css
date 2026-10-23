@@ -1,6 +1,6 @@
 /* 导图视图：在 view.css（颜色、圆角、间距变量，按钮）基础上补工具栏、画布和卡片。
    卡片是中性的一种底色 + 细边；上两层的标题行有一条中性色的底；连线是一种灰色。
-   有颜色的只有：选中卡片的强调色边框、正在做的强调色圆点、AI 正在改的强调色徽章和光晕 */
+   有颜色的只有：选中卡片的强调色边框、进行中的强调色圆点、AI 正在改的强调色徽章和光晕 */
 
 /* ---------- 工具栏：一行，四组，统一 24px 高 ---------- */
 .toolbar { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-3); border-bottom: 1px solid var(--c-border); flex-wrap: wrap; min-height: 40px; }
@@ -58,7 +58,7 @@
 .cmeta { font-size: 11px; fill: var(--c-muted); }
 .cai-t { font-size: 11px; fill: var(--accent-text); font-weight: 600; }
 
-/* 状态点（单色）：正在做是强调色实心点；待做空心圈、完成一个勾、待定圈里问号，都是灰色 */
+/* 状态点（单色）：进行中是强调色实心点；待做空心圈、完成一个勾、待定圈里问号，都是灰色 */
 .st-doing { fill: var(--st-doing); }
 .st-doing-ring { fill: none; stroke: color-mix(in srgb, var(--st-doing) 35%, transparent); stroke-width: 1.5; }
 .st-tick { fill: none; stroke: var(--st-done); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

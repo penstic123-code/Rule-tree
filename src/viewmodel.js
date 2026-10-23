@@ -9,7 +9,7 @@ const STALE_DAYS = 3;
 // 第二层（大类）各用一种颜色，往下继承；第一层用前景色
 const BRANCH = ['--blue', '--purple', '--green', '--orange', '--yellow', '--red'];
 
-// 正在做，但很久没被 AI 改过。只看叶子：上级的 🔨 由下级撑着。
+// 进行中，但很久没被 AI 改过。只看叶子：上级的 🔨 由下级撑着。
 // since 是开始跟踪的时间，没有就从现在算（刚装好不误报）
 function isStale(node, touched = {}, since, now = Date.now()) {
   if (node.status !== 'doing' || node.children.some(c => c.status === 'doing')) return false;

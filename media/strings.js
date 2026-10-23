@@ -4,7 +4,7 @@
 (function (root) {
   const zh = {
     // 状态
-    'st.todo': '待做', 'st.doing': '正在做', 'st.done': '完成', 'st.question': '待定', 'st.none': '没有状态',
+    'st.todo': '待做', 'st.doing': '进行中', 'st.doingTip': '进行中：这个需求还没做完。不表示现在有 AI 在改；AI 正在改的需求会另外标出「AI 正在改」', 'st.done': '完成', 'st.question': '待定', 'st.none': '没有状态',
     // 时间
     'ago.now': '刚刚', 'ago.m': n => `${n} 分钟前`, 'ago.h': n => `${n} 小时前`, 'ago.d': n => `${n} 天前`,
     // 顶部红色提示
@@ -23,7 +23,7 @@
     'd.add': '添加', 'd.addRuleTip': '给这个需求加一条规则', 'd.addChildTip': '在这个需求下面新建子需求',
     'd.focusSide': '只看这一支', 'd.focusMap': '聚焦这一支', 'd.focusTip': '只留下这个需求和它下面的需求（Esc 退出）',
     'd.renameTip': id => `${id} · 点击改名`, 'd.rename': '改名', 'd.more': '更多操作', 'd.status': '状态', 'd.statusBtn': l => `状态：${l}`,
-    'd.stale': days => `标着正在做，但${days ? ` ${days} 天内` : '最近'} AI 没改过它的文件。做完了就在上面把状态改成「完成」。`,
+    'd.stale': days => `标着进行中，但${days ? ` ${days} 天内` : '最近'} AI 没改过它的文件。做完了就在上面把状态改成「完成」。`,
     'd.ownRules': '本需求的规则', 'd.noOwnRules': '还没有，只用上级的。',
     'd.kids': '子需求',
     'd.inherited': '继承的规则', 'd.inheritedTip': '上级需求的规则，这里也适用',
@@ -36,7 +36,7 @@
     'd.undo': '撤销', 'd.undone': '已撤销', 'd.cantUndo': '不能撤销', 'd.assign': '归到需求…',
     'd.nameLabel': '需求的名字', 'd.nameEmpty': '名字不能为空',
     // ⋯ 菜单
-    'menu.copyRules': '复制规则（贴给 AI）', 'menu.copyId': id => `复制编号 ${id}`, 'menu.open': '打开原文', 'menu.delete': '删除需求…',
+    'menu.copyId': id => `复制编号 ${id}`, 'menu.open': '打开原文', 'menu.delete': '删除需求…',
     // 上下文用量
     'ctx.title': '上下文用量', 'ctx.close': '关闭',
     'ctx.sub': 'AI 每次对话会带上一些规则文件。常驻的，每个会话一开始就带着；按需的，AI 碰到相关文件时才加载。',
@@ -59,8 +59,8 @@
     'f.nav': '只看这一支', 'f.crumbTip': t => `改看「${t}」这一支`, 'f.showAll': '显示全部',
     'f.exitSide': '退出只看这一支（Esc）', 'f.exitMap': '退出聚焦（Esc，或点画布空白处）',
     'ai.editing': f => `AI 正在改 ${f}`, 'ai.below': '下面有需求 AI 正在改', 'ai.sum': 'AI 正在改',
-    'stale.chip': '久未动', 'stale.tip': days => `标着正在做，但${days ? ` ${days} 天内` : '最近'} AI 没改过它的文件。做完了还是暂停了？`,
-    'stale.mapTip': days => `标着正在做，但${days ? ` ${days} 天内` : '最近'} AI 没改过它的文件`,
+    'stale.chip': '久未动', 'stale.tip': days => `标着进行中，但${days ? ` ${days} 天内` : '最近'} AI 没改过它的文件。做完了还是暂停了？`,
+    'stale.mapTip': days => `标着进行中，但${days ? ` ${days} 天内` : '最近'} AI 没改过它的文件`,
     'v.changeStatus': '改状态', 'v.clearStatus': '清除状态',
     'v.recTurn': '每轮记录新要求', 'v.recOff': '暂停记录员（省额度）', 'showIds': '显示编号',
     // 导图
@@ -83,8 +83,8 @@
     'op.delete_node': n => `删除需求${n}`, 'op.override_rule': (n, t, nw) => `在${n}里把上级的「${t}」改成「${nw}」`,
     'op.memory_remove': (f, t, whole) => (whole ? `删掉记忆文件 ${f}（「${t}」）` : `删掉记忆 ${f} 里的「${t}」`),
     'chg.legacy': n => `清掉旧版本留下的待确认标记（${n} 处）`, 'x.upgradeName': '升级',
-    'rec.rules': n => `记下 ${n} 条`, 'rec.absorbed': n => `把 ${n} 份记忆收进需求树`, 'rec.done': names => `${names}标为完成`, 'rec.doing': names => `${names}标为正在做`,
-    'rec.queued': n => `${n} 条改动等你保存需求树后写入`, 'rec.none': '这一轮没有新要求', 'rec.paused': '已暂停（只标正在做，不记新要求）',
+    'rec.rules': n => `记下 ${n} 条`, 'rec.absorbed': n => `把 ${n} 份记忆收进需求树`, 'rec.done': names => `${names}标为完成`, 'rec.doing': names => `${names}标为进行中`,
+    'rec.queued': n => `${n} 条改动等你保存需求树后写入`, 'rec.none': '这一轮没有新要求', 'rec.paused': '已暂停（只标进行中，不记新要求）',
     'rec.sweep': n => `补漏记下 ${n} 条`, 'rec.sweepNone': n => `补漏查了 ${n} 句，没有漏的`, 'rec.sweepFail': m => `补漏失败：${m}`,
     'rec.sep': '；', 'rec.join': '、',
     'rec.err.timeout': s => `调用模型超时（${s} 秒没有返回）`, 'rec.err.spawn': m => `调用模型失败：${m}`, 'rec.err.model': m => `模型返回错误：${m}`,
@@ -113,7 +113,7 @@
     'x.useGuess': g => `用 ${g}`, 'x.guessed': '按名字猜的', 'x.pickFolder': '自己选文件夹…', 'x.later': '先不设',
     'x.inherit': title => `沿用「${title}」的范围`, 'x.laterTip': '以后可以在详情里设置', 'x.pickThese': '选这些',
     'x.outside': p => `需求树：${p} 不在项目里，跳过`, 'x.saveFail': msg => `需求树：设置没保存（${msg}），请稍后再试一次`,
-    'x.undoFail': '需求树：没能撤销（已经撤销过了，或者那里的内容后来又被改掉了）', 'x.copied': id => `已复制 ${id} 的生效规则`,
+    'x.undoFail': '需求树：没能撤销（已经撤销过了，或者那里的内容后来又被改掉了）',
     'x.openFolder': '请先打开一个文件夹', 'x.enableFail': msg => `需求树：启用失败（${msg}）`,
     'x.enabled': '需求树已启用。新开一个 Claude Code 会话后生效。',
     'x.askEnable': where => `在这个项目启用需求树？${where}`, 'x.enable': '启用', 'x.never': '不再提示',
@@ -132,7 +132,7 @@
     'q.checkDone': (merged, asked, removed = 0) => `需求树体检：合并了 ${merged} 条重复规则${removed ? `，删掉 ${removed} 份已经在树里的记忆（可在「最近改动」里撤销）` : ''}，${asked ? `有 ${asked} 个问题等你回答` : '没有要问你的'}`,
     'q.checkFail': msg => `需求树体检：查冲突时出错（${msg}）`, 'q.whichTree': '体检哪一棵需求树？',
     'q.noFiles': ids => `需求树：${ids.join('、')} 有规则，可它们和上级都没有对应的文件，这些规则不会自动加载给 AI。给它们设上文件（详情里「对应文件」），或者把规则挪到别处。`,
-    'q.missing': list => `需求树：${list.map(m => `${m.title}（${m.globs.join('、')}）`).join('、')} 标着正在做，可对应的文件一个也找不到。路径写错了，还是文件已经删了？`,
+    'q.missing': list => `需求树：${list.map(m => `${m.title}（${m.globs.join('、')}）`).join('、')} 标着进行中，可对应的文件一个也找不到。路径写错了，还是文件已经删了？`,
     'q.memCovered': (file, where) => `记忆 ${file} 说的事，${where === 'CLAUDE.md' ? 'CLAUDE.md' : `需求树（${where}）`}里已经有了，删掉这份记忆吗？`,
     'x.checkupName': '体检',
     'q.memDup': (rule, file, node) => `「${rule}」在记忆（${file}）和需求树（${node}）里各有一份，删哪份？`,
@@ -150,7 +150,7 @@
   };
 
   const en = {
-    'st.todo': 'To do', 'st.doing': 'In progress', 'st.done': 'Done', 'st.question': 'Undecided', 'st.none': 'No status',
+    'st.todo': 'To do', 'st.doing': 'In progress', 'st.doingTip': "In progress: this requirement isn't finished. It doesn't mean an AI is working on it now; that shows separately as 'AI editing'", 'st.done': 'Done', 'st.question': 'Undecided', 'st.none': 'No status',
     'ago.now': 'just now', 'ago.m': n => `${n} min ago`, 'ago.h': n => `${n} h ago`, 'ago.d': n => `${n} d ago`,
     'alert.recorder': (ago, msg) => `Recorder error (${ago}): ${msg}`,
     'alert.compile': msg => `Rules weren't generated: ${msg}`,
@@ -178,7 +178,7 @@
     'd.recent': 'Recent changes', 'd.unmapped': 'Unassigned files',
     'd.undo': 'Undo', 'd.undone': 'undone', 'd.cantUndo': "can't undo", 'd.assign': 'Assign…',
     'd.nameLabel': 'Requirement name', 'd.nameEmpty': "Name can't be empty",
-    'menu.copyRules': 'Copy rules (to paste to the AI)', 'menu.copyId': id => `Copy ID ${id}`, 'menu.open': 'Open in editor', 'menu.delete': 'Delete requirement…',
+    'menu.copyId': id => `Copy ID ${id}`, 'menu.open': 'Open in editor', 'menu.delete': 'Delete requirement…',
     'ctx.title': 'Context usage', 'ctx.close': 'Close',
     'ctx.sub': 'In every conversation the AI carries some rule files. Always-loaded ones come with every session from the start; on-demand ones load only when the AI touches related files.',
     'ctx.empty': 'Start a new session, and this will show which rules the AI loaded',
@@ -250,7 +250,7 @@
     'x.useGuess': g => `Use ${g}`, 'x.guessed': 'guessed from the name', 'x.pickFolder': 'Pick a folder…', 'x.later': 'Not now',
     'x.inherit': title => `Use the scope of "${title}"`, 'x.laterTip': 'You can set it later in the details', 'x.pickThese': 'Select',
     'x.outside': p => `ReqTree: ${p} is outside the project, skipped`, 'x.saveFail': msg => `ReqTree: settings not saved (${msg}); please try again`,
-    'x.undoFail': "ReqTree: couldn't undo (already undone, or that part was changed later)", 'x.copied': id => `Copied the rules that apply to ${id}`,
+    'x.undoFail': "ReqTree: couldn't undo (already undone, or that part was changed later)",
     'x.openFolder': 'Open a folder first', 'x.enableFail': msg => `ReqTree: couldn't enable (${msg})`,
     'x.enabled': 'ReqTree is enabled. It takes effect in a new Claude Code session.',
     'x.askEnable': where => `Enable ReqTree in this project?${where}`, 'x.enable': 'Enable', 'x.never': "Don't ask again",

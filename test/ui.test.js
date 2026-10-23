@@ -257,7 +257,7 @@ for (const theme of ['dark', 'light']) {
         treeFile, theme, selId: 'C2.2', activeId: 'C2.1', width,
         changes: [{ id: 'c1', time: Date.now() - 60000, source: '记录员', summary: ['把 C2.1 的「开场用勇士」改成「开场用霍乱」'], undone: false }],
         unmapped: ['notes/plan.md'],
-        recorder: { ok: true, time: Date.now() - 120000, message: '记下 2 条要求；C2.1 标为正在做' },
+        recorder: { ok: true, time: Date.now() - 120000, message: '记下 2 条要求；C2.1 标为进行中' },
         touched: { 'C2.1': Date.now() },
       }));
       const b = new Browser();
@@ -484,12 +484,12 @@ async function openPage(name, opts, width) {
   return b;
 }
 
-test('侧栏：树行上的「打开原文」「改状态」发出的消息都带 uri，改状态走可撤销的 edit', { skip, timeout: 60000 }, async () => {
+test('侧栏：树行上的「改状态」发出的消息都带 uri，改状态走可撤销的 edit；树行和「…」菜单里没有「打开原文」（点规则就能跳到原文）', { skip, timeout: 60000 }, async () => {
   const b = await openPage('reg-row-uri.html', { activeId: 'C2.1' }, 340);
   try {
     const r = await b.eval(`
       const row = id => document.querySelector('.row[data-key$="#' + id + '"]');
-      row('C2.1').querySelector('[data-act="open"]').click();
+      const openBtn = !!row('C2.1').querySelector('[data-act="open"]');
       row('C2.1').querySelector('[data-act="status"]').click();
       [...document.querySelectorAll('.menu button')].find(x => x.dataset.s === 'done').click();
       row('C2.1').querySelector('[data-act="status"]').click();
@@ -499,10 +499,10 @@ test('侧栏：树行上的「打开原文」「改状态」发出的消息都�
       const fb = ReqDetail.message(bare, 'file:///fallback.md');
       // 确认模式的消息已经没有了：旧按钮就算还在，也不发
       const gone = ['accept', 'reject', 'moveUp'].map(a => { const x = document.createElement('button'); x.dataset.act = a; return ReqDetail.message(x, 'file:///x.md'); });
-      return { posted: window.__posted.filter(m => m.type !== 'ready'), fb, gone, errors: window.__errors };`);
+      return { posted: window.__posted.filter(m => m.type !== 'ready'), fb, gone, openBtn, errors: window.__errors };`);
     assert.deepStrictEqual(r.errors, []);
-    const [open, st1, st2] = r.posted;
-    assert.strictEqual(open.type, 'open');
+    assert.strictEqual(r.openBtn, false, '树行上不再有「打开原文」');
+    const [st1, st2] = r.posted;
     for (const m of r.posted) assert.strictEqual(m.uri, 'file:///tree.md', `${m.type} 没带 uri`);
     assert.deepStrictEqual({ ...st1 }, { type: 'edit', action: 'setStatus', node: 'C2.1', status: 'done', uri: 'file:///tree.md' });
     assert.strictEqual(st2.status, '', '清除状态');
@@ -602,7 +602,7 @@ test('导图：徽章和规则开关的文字不被截断、不超出底框；.t
 });
 
 test('图标：界面里没有 emoji；图标都 aria-hidden、跟随文字颜色；只有图标的按钮有名字（侧栏和导图，深浅两种主题）', { skip, timeout: 90000 }, async () => {
-  // sinceDays: 10 让 C2.1 以外没被 AI 改过的「正在做」变成久未动，把月亮图标也测到
+  // sinceDays: 10 让 C2.1 以外没被 AI 改过的「进行中」变成久未动，把月亮图标也测到
   for (const theme of ['dark', 'light']) {
     for (const [name, opts, w] of [
       [`reg-icons-side-${theme}.html`, { theme, selId: 'C2.1', activeId: 'C2.2', sinceDays: 10, changes: [{ id: 'c1', time: Date.now(), source: '记录员', summary: ['加了一条'], undone: false }], unmapped: ['a.md'] }, 340],
@@ -629,7 +629,7 @@ test('图标：界面里没有 emoji；图标都 aria-hidden、跟随文字颜�
         assert.deepStrictEqual(r.empty, [], `${name}：有图标没画出来`);
         assert.ok(r.staleIcon, `${name}：久未动没有月亮图标`);
         assert.ok(r.hintC >= 4.5 && r.staleC >= 4.5, `${name}：对比度不够 ${r.hintC.toFixed(2)} / ${r.staleC.toFixed(2)}`);
-        const want = name.includes('side') ? ['ai', 'chev', 'delete', 'edit', 'gear', 'map', 'more', 'open', 'plus', 'stale', 'status'] : ['ai', 'chev', 'more', 'stale'];
+        const want = name.includes('side') ? ['ai', 'chev', 'delete', 'edit', 'gear', 'map', 'more', 'plus', 'stale', 'status'] : ['ai', 'chev', 'more', 'stale'];
         for (const n of want) assert.ok(r.names.includes(n), `${name}：没用到图标 ${n}（用到的：${r.names}）`);
       } finally { b.close(); }
     }
@@ -1250,7 +1250,8 @@ test('编号默认不显示：标题悬停提示里有编号，⋯ 菜单能复�
     assert.strictEqual(r.before, 0);
     assert.match(r.tip, /^C2\.2/);
     assert.ok(r.menu.some(x => /复制编号 C2\.2/.test(x)), r.menu.join());
-    assert.ok(r.menu.some(x => /复制规则/.test(x)) && r.menu.some(x => /删除需求/.test(x)) && r.menu.some(x => /打开原文/.test(x)));
+    assert.ok(r.menu.some(x => /删除需求/.test(x)));
+    assert.ok(!r.menu.some(x => /复制规则|打开原文/.test(x)), '「复制规则」「打开原文」已删：规则会自动加载，点规则就能跳到原文');
     assert.strictEqual(r.role, 'menuitemcheckbox:false');
     assert.ok(r.after >= 10, `打开后应该显示编号：${r.after}`);
     assert.strictEqual(r.saved, true);
@@ -1466,7 +1467,7 @@ test('英文界面：新的改动记录、记录员状态、出错提示都按�
   const now = Date.now();
   // 新记录：带 ops（结构化），summary 是中文；旧记录：只有中文 summary、ops 认不出
   const changes = [
-    { id: 'n1', time: now - 60000, source: '记录员', summary: ['给 R3.2 加规则「x」', 'R3.2 标为正在做'], undone: false,
+    { id: 'n1', time: now - 60000, source: '记录员', summary: ['给 R3.2 加规则「x」', 'R3.2 标为进行中'], undone: false,
       ops: [{ op: 'add_rule', node: 'R3.2', text: 'Suspense within the first screen', undo: [{ op: 'remove_rule', node: 'R3.2', text: 'Suspense within the first screen' }] },
             { op: 'set_status', node: 'R3.2', status: 'doing', undo: [{ op: 'set_status', node: 'R3.2', status: null }] }] },
     { id: 'n2', time: now - 120000, source: '你', summary: ['R4 改名为「第2章」'], undone: false,
@@ -1475,7 +1476,7 @@ test('英文界面：新的改动记录、记录员状态、出错提示都按�
     { id: 'n3', time: now - 180000, source: '升级', summary: ['清掉旧版本留下的待确认标记（3 处）'], event: { k: 'chg.legacy', a: [3] }, undone: false, ops: [] },
     { id: 'old', time: now - 240000, source: '记录员', summary: ['old entry kept as stored'], undone: false, ops: [{ op: 'reject_pending', node: 'R1' }] },
   ];
-  const recorder = { ok: true, time: now - 30000, message: '记下 2 条；R3.2 标为正在做', parts: [{ k: 'rec.rules', a: [2] }, { k: 'rec.doing', a: [['R3.2']] }] };
+  const recorder = { ok: true, time: now - 30000, message: '记下 2 条；R3.2 标为进行中', parts: [{ k: 'rec.rules', a: [2] }, { k: 'rec.doing', a: [['R3.2']] }] };
   const compile = { ok: false, time: now, message: '需求树被占用，5 秒内没拿到锁', t: { k: 'err.busy', a: [5] } };
   const b = await openPage2('en-changes.html', { lang: 'en', selId: 'R3.2', changes, recorder, compile }, 320, { tree });
   try {
@@ -1529,7 +1530,7 @@ const ST_STATE = `
 
 test('详情状态：只显示当前状态（一个文字按钮），没有四格分段；有 aria-haspopup / aria-expanded，名字里带当前状态；中英文', { skip, timeout: 120000 }, async () => {
   const en = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
-  const cases = [['zh', 'C2.2', '待做', '状态：待做', TREE], ['zh', 'C2.1', '正在做', '状态：正在做', TREE], ['zh', 'C2.3', '没有状态', '状态：没有状态', TREE],
+  const cases = [['zh', 'C2.2', '待做', '状态：待做', TREE], ['zh', 'C2.1', '进行中', '状态：进行中', TREE], ['zh', 'C2.3', '没有状态', '状态：没有状态', TREE],
     ['en', 'R3.2', 'In progress', 'Status: In progress', en], ['en', 'R3.3', 'Undecided', 'Status: Undecided', en]];
   for (const [lang, selId, want, aria, tree] of cases) {
     const b = await openPage2(`st-only-${lang}-${selId}.html`, { lang, selId, theme: 'dark' }, 320, { tree });
@@ -1545,7 +1546,7 @@ test('详情状态：只显示当前状态（一个文字按钮），没有四�
       assert.strictEqual(r.menu, null, '菜单默认关着');
       // 其他状态的名字不出现在标题区
       const head = await b.eval(`return document.querySelector('.dp .sh').textContent`);
-      const all = lang === 'zh' ? ['待做', '正在做', '完成', '待定'] : ['To do', 'In progress', 'Done', 'Undecided'];
+      const all = lang === 'zh' ? ['待做', '进行中', '完成', '待定'] : ['To do', 'In progress', 'Done', 'Undecided'];
       for (const l of all.filter(l => l !== want)) assert.ok(!head.includes(l), `${selId}：标题区还显示了「${l}」`);
     } finally { b.close(); }
   }
@@ -1562,7 +1563,7 @@ test('详情状态：点开菜单列出四种状态（当前的 aria-checked）�
       assert.strictEqual(open.menu.role, 'menu');
       assert.strictEqual(open.menu.label, '状态');
       assert.deepStrictEqual(open.menu.items, [
-        ['menuitemradio', 'doing', 'false', '正在做'], ['menuitemradio', 'todo', 'true', '待做'], ['menuitemradio', 'done', 'false', '完成'], ['menuitemradio', 'question', 'false', '待定'],
+        ['menuitemradio', 'doing', 'false', '进行中'], ['menuitemradio', 'todo', 'true', '待做'], ['menuitemradio', 'done', 'false', '完成'], ['menuitemradio', 'question', 'false', '待定'],
         ['menuitem', '', null, '清除状态']]);
       assert.strictEqual(open.focus, 'menu:todo', `${mode}：打开后焦点停在当前状态上`);
       // 菜单在窗口里，贴着按钮下方
@@ -1628,7 +1629,7 @@ test('详情状态：键盘能用——回车 / 空格 / 下方向键打开，�
     await press(b, 'Escape');
     await press(b, 'ArrowDown');
     assert.ok((await st()).menu, '下方向键也能打开');
-    await press(b, 'ArrowUp'); // 待做 → 正在做
+    await press(b, 'ArrowUp'); // 待做 → 进行中
     await press(b, 'Enter');
     r = await st();
     assert.strictEqual(r.menu, null);

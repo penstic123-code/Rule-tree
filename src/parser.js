@@ -10,7 +10,7 @@ const STATUS = {
 };
 const STATUS_EMOJI = Object.fromEntries(Object.entries(STATUS).map(([e, s]) => [s, e]));
 // 状态的中文名（Node 端只此一份；浏览器端在 media/detail.js）
-const STATUS_LABEL = { done: '完成', doing: '正在做', todo: '待做', question: '待定' };
+const STATUS_LABEL = { done: '完成', doing: '进行中', todo: '待做', question: '待定' };
 
 // 需求 ID：C2、C2.1、P
 const ID_SRC = '[A-Z][A-Z0-9]*(?:\\.\\d+)*';

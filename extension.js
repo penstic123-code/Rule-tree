@@ -2,7 +2,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { parse, walk, findById, effectiveRules, pathOf, relocate, nodeForFile, splitGlobs } = require('./src/parser');
+const { parse, walk, findById, pathOf, relocate, nodeForFile, splitGlobs } = require('./src/parser');
 const store = require('./src/store');
 const { samePath } = store;
 const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./src/viewmodel');
@@ -449,16 +449,6 @@ class Panel {
       case 'undo':
         if (p && !(await store.undoChange(p, msg.id, { write: writeTree }))) vscode.window.showWarningMessage(T('x.undoFail'));
         return this.load();
-      case 'copy': {
-        const [uri, id] = msg.key.split('#');
-        const tree = this.treeOf(uri);
-        const n = tree && findById(parse(tree.text), id);
-        if (!n) return;
-        const lines = [`# ${pathOf(n).map(x => x.id + ' ' + x.title).join(' → ')}`, ''];
-        for (const r of effectiveRules(n)) lines.push(`- ${r.key ? `[${r.key}] ` : ''}${r.text}`);
-        await vscode.env.clipboard.writeText(lines.join('\n'));
-        vscode.window.showInformationMessage(T('x.copied', n.id));
-      }
     }
   }
 }

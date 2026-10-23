@@ -145,10 +145,11 @@
   }
 
   // 状态小圆点（HTML 版，侧栏和详情共用；导图在 map.js 里画同样的 SVG）。
-  // 单色方案：正在做是强调色实心点，待做是灰色空心圈，完成是灰色勾，待定是灰色圈里一个问号
+  // 单色方案：进行中是强调色实心点，待做是灰色空心圈，完成是灰色勾，待定是灰色圈里一个问号
   // withTip=false：旁边已经写了状态名（菜单、状态按钮），不再给小圆点单独的悬停提示
   function dot(s, withTip = true) {
-    const tip = withTip ? ` title="${STATUS_LABEL[s] || T('st.none')}"` : ' aria-hidden="true"';
+    // 「进行中」容易被看成「现在有 AI 在改」：悬停提示说清楚，AI 正在改的另有「AI 正在改」标记
+    const tip = withTip ? ` title="${s === 'doing' ? T('st.doingTip') : STATUS_LABEL[s] || T('st.none')}"` : ' aria-hidden="true"';
     if (s === 'done') return `<span class="st st-done"${tip}>${icon('check', 12)}</span>`;
     if (s === 'question') return `<span class="st st-question"${tip}>?</span>`;
     return `<span class="st st-${s || 'none'}"${tip}></span>`;
@@ -474,9 +475,7 @@
     if (d.act === 'more') {
       if (openMenuEl) { closeMenu(); return {}; }
       showMenu(a, [
-        { label: T('menu.copyRules'), run: () => post({ type: 'copy', key: d.key }) },
         { label: T('menu.copyId', d.node), run: () => copyText(d.node) },
-        { label: T('menu.open'), run: () => post({ type: 'open', uri: d.uri, line: +d.line, expect: d.raw }) },
         { label: T('menu.delete'), danger: true, run: () => post({ type: 'edit', uri: d.uri, action: 'delete', node: d.node }) },
       ]);
       return {};
@@ -492,7 +491,6 @@
     switch (d.act) {
       case 'edit': return { type: 'edit', uri, action: d.a, node: d.node, text: d.text, from: d.from, status: d.status, file: d.file };
       case 'undo': return { type: 'undo', uri, id: d.id };
-      case 'copy': return { type: 'copy', key: d.key };
       case 'open': return { type: 'open', uri, line: +d.line, expect: d.raw };
       default: return null;
     }

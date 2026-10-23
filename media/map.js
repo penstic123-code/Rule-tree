@@ -165,7 +165,7 @@
     return s;
   }
 
-  // 状态点，单色：正在做是强调色实心点，待做是灰色空心圈，完成是灰色勾，待定是灰色圈里的问号
+  // 状态点，单色：进行中是强调色实心点，待做是灰色空心圈，完成是灰色勾，待定是灰色圈里的问号
   function statusDot(s, cx, cy) {
     if (s === 'done') return `<path class="st-tick" d="M${cx - 4.5} ${cy + 0.2} l3 3.1 l6 -6.4"/>`;
     if (s === 'doing') return `<circle class="st-doing-ring" cx="${cx}" cy="${cy}" r="6"/><circle class="st-doing" cx="${cx}" cy="${cy}" r="3.5"/>`;

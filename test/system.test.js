@@ -331,7 +331,7 @@ test('编译：每个节点一份原生规则，继承交给 glob 嵌套，覆�
   assert.ok(!ruleFile(dir, 'C2.1').includes('不引原话'), '不抄上级规则，靠 glob 嵌套继承');
   assert.match(ruleFile(dir, 'C2.1'), /开场段落可以到 6 行（在本范围内以此为准，取代上级 P 的「段落不超过 4 行」）/);
   assert.match(ruleFile(dir, 'C2.2'), /"DataScience\/\*\*"/, '没写文件对应就沿用上级范围');
-  assert.match(ruleFile(dir, '_index'), /正在做：C2 数据科学课/);
+  assert.match(ruleFile(dir, '_index'), /进行中：C2 数据科学课/);
 });
 
 test('编译：旧版本残留的标记先清掉再编译（🆕 当普通规则、🗑 不编译）；删掉的节点清理掉；不碰用户自己的规则文件', () => {
@@ -555,7 +555,7 @@ test('记录员：树很大时只发精简版', () => {
   assert.match(r.calls[0].input, /开场用霍乱/, '本轮改过的分支保留原文');
 });
 
-test('记录员：暂停时不调用模型，只标正在做', () => {
+test('记录员：暂停时不调用模型，只标进行中', () => {
   const dir = project();
   store.writeConfig(path.join(dir, '需求树.md'), { recorder: 'off' });
   const r = runRecorder(dir, { turns: [{ user: '以后都不要用表情符号', ai: '好' }], touched: ['C2.1'] });
@@ -1294,7 +1294,7 @@ test('界面语言：记录员状态、锁的错误、升级清理都带结构�
   const S = require('../media/strings');
   const { describe, describeParts } = require('../hooks/recorder');
   const applied = [{ op: 'add_rule', node: 'C2' }, { op: 'replace_rule', node: 'C2' }, { op: 'set_status', node: 'C2.1', status: 'done' }, { op: 'set_status', node: 'C2.2', status: 'doing' }];
-  assert.strictEqual(describe(applied, 1), '记下 2 条；C2.1 标为完成；C2.2 标为正在做；1 条改动等你保存需求树后写入', '中文说明不变');
+  assert.strictEqual(describe(applied, 1), '记下 2 条；C2.1 标为完成；C2.2 标为进行中；1 条改动等你保存需求树后写入', '中文说明不变');
   const parts = describeParts(applied, 1);
   assert.deepStrictEqual(parts.map(p => p.k), ['rec.rules', 'rec.done', 'rec.doing', 'rec.queued']);
   for (const p of parts) assert.ok(p.k in S.zh && p.k in S.en, p.k);

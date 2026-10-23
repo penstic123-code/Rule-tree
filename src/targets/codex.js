@@ -18,7 +18,7 @@ const { parse, walk, pathOf, nodeForFile } = require('../parser');
 const RULES_DIR = path.join('.reqtree', 'rules');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 .reqtree/rules/_index.md 里；输出格式变了就加 1（同 compile.js 的 FORMAT）
-const FORMAT = '<!-- reqtree:codex-format 2 -->';
+const FORMAT = '<!-- reqtree:codex-format 3 -->';
 const BEGIN = '<!-- reqtree:begin -->';
 const END = '<!-- reqtree:end -->';
 // 安装过 Codex 目标的标记，也存记录员的模型设置（用户可以手改）
@@ -82,9 +82,9 @@ function renderBlock(root, treeName, us) {
     BEGIN,
     `## 需求树（${treeName}）`,
     '',
-    `本项目的需求和规则统一记在 ${treeName}：标题是需求，结尾 ✅完成 🔨正在做 ⏳待做 ❓待定；标题下的列表项是规则。这一段由需求树自动生成，不要手改；规则要改就改 ${treeName}。`,
+    `本项目的需求和规则统一记在 ${treeName}：标题是需求，结尾 ✅完成 🔨进行中 ⏳待做 ❓待定；标题下的列表项是规则。这一段由需求树自动生成，不要手改；规则要改就改 ${treeName}。`,
   ];
-  if (doing.length) lines.push(`正在做：${doing.join('、')}。`);
+  if (doing.length) lines.push(`进行中：${doing.join('、')}。`);
   lines.push('用户提出的长期要求由后台记录员在每轮结束后写进需求树，你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。');
   lines.push('项目的长期要求和规则只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 AGENTS.md，免得同一条规则记两处。');
   if (glob.length) {

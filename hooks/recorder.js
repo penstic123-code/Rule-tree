@@ -180,7 +180,7 @@ function buildPrompt(tree, turns, touched, unmapped, notes = []) {
   const noteBlock = notes.length ? `\n<这一轮 AI 写进它自己的自动记忆的笔记>\n${notes.map(n => `文件 ${n.file}：\n${n.text}`).join('\n---\n')}\n</这一轮 AI 写进它自己的自动记忆的笔记>\n` : '';
   const noteTask = notes.length ? `
 5. 自动记忆只该记和项目内容无关的事（用户本人的情况、工具和电脑环境、私人信息、外部资源在哪）。上面某份笔记整份都是这个项目的需求或规则时：先确保需求树里有（已有同一件事就不加；没有就照第 1 条加或改写），再输出 {"op":"memory_absorb","file":"文件名"} 删掉这份笔记。笔记里混着和项目无关的内容，或者拿不准的，不动它。` : '';
-  return `你是需求记录员。下面是一个项目的需求树（Markdown）：标题是需求，开头是 ID，结尾 ✅完成 🔨正在做 ⏳待做 ❓待定；标题下 "- " 开头的是规则，可带 [键]，子需求用同一个键覆盖母规则；"> 文件：" 是这个需求对应的文件。
+  return `你是需求记录员。下面是一个项目的需求树（Markdown）：标题是需求，开头是 ID，结尾 ✅完成 🔨进行中 ⏳待做 ❓待定；标题下 "- " 开头的是规则，可带 [键]，子需求用同一个键覆盖母规则；"> 文件：" 是这个需求对应的文件。
 
 <需求树>
 ${tree}
@@ -208,7 +208,7 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
          P 里旧「手账风全课通用」，新「手账风只属于第一篇」→ 缩小范围：remove_rule P 那条，在第一篇 add_rule；
          P 里旧「每章互动不超过4个」，新「第5章互动可以多一点」→ 只第5章例外：在第5章 override_rule。
    - 规则挂在它管辖范围最小的节点上；用户说"以后都""所有章节""每次"之类时，挂到覆盖这个范围的最高节点。最顶上那个需求只放明确对整个项目都成立的规则。
-   - 这个项目整体怎么做事、怎么写、怎么沟通的偏好（如"交流用中文""反馈含糊先问清""文风要平实"），不是某门课、某个模块内容特有的，挂到最顶上那个需求——哪怕说的时候正在做某一章。只有那一块内容本身的决定才挂在那一块上。
+   - 这个项目整体怎么做事、怎么写、怎么沟通的偏好（如"交流用中文""反馈含糊先问清""文风要平实"），不是某门课、某个模块内容特有的，挂到最顶上那个需求——哪怕说的时候进行中某一章。只有那一块内容本身的决定才挂在那一块上。
    - 子需求要在本范围内推翻上级的规则时，用 override_rule（node 是子需求，from 是上级 ID，text 是上级原文，new 是新内容）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
 2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，按第 4 条问「做完了吗」，default 是「还没」（ops 为空）。
@@ -369,9 +369,9 @@ function describeParts(applied, queued, asked = 0) {
 // 同样几段的中文（state.json 里的 message、recorder.log、命令行和旧版本的面板用）。
 // 和 media/strings.js 的中文一致（测试对照）；hook 运行时只复制 src/ 和 hooks/，读不到 media/，所以这里留一份
 const ZH = {
-  'rec.rules': n => `记下 ${n} 条`, 'rec.absorbed': n => `把 ${n} 份记忆收进需求树`,'rec.done': ids => `${ids.join('、')} 标为完成`, 'rec.doing': ids => `${ids.join('、')} 标为正在做`,
+  'rec.rules': n => `记下 ${n} 条`, 'rec.absorbed': n => `把 ${n} 份记忆收进需求树`,'rec.done': ids => `${ids.join('、')} 标为完成`, 'rec.doing': ids => `${ids.join('、')} 标为进行中`,
   'rec.queued': n => `${n} 条改动等你保存需求树后写入`, 'rec.asked': n => `${n} 件事拿不准，问你了`, 'rec.none': '这一轮没有新要求',
-  'rec.paused': '已暂停（只标正在做，不记新要求）', 'rec.sweep': n => `补漏记下 ${n} 条`, 'rec.sweepNone': n => `补漏查了 ${n} 句，没有漏的`,
+  'rec.paused': '已暂停（只标进行中，不记新要求）', 'rec.sweep': n => `补漏记下 ${n} 条`, 'rec.sweepNone': n => `补漏查了 ${n} 句，没有漏的`,
   'rec.sweepFail': m => `补漏失败：${m}`, 'rec.skipped': (n, first) => `${n} 条没写进去：${first}`,
 };
 const partText = p => { const v = ZH[p.k]; return typeof v === 'function' ? v(...(p.a || [])) : v; };

@@ -1,6 +1,6 @@
 {
   "displayName": "需求树 ReqTree",
-  "description": "给 AI 编程用的需求树：规则分层继承，按分支取规则，看得见正在做哪条。",
+  "description": "给 AI 编程用的需求树：规则分层继承，按分支取规则，看得见 AI 在改哪条。",
   "view.container": "需求树",
   "view.panel": "需求树",
   "cmd.create": "需求树：新建",
