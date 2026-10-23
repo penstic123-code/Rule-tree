@@ -125,6 +125,7 @@ class Panel {
         unmapped: unmappedFiles(p),
         context: store.readContext(p, CONTEXT_WINDOW_MS),
         questions: openQuestionsOf(p),
+        categories: require('./src/categories').read(p), // 体检分好的规则分类，只改面板显示
       };
     });
     this.push();
@@ -287,7 +288,7 @@ class Panel {
     this.load();
     if (r.error) vscode.window.showWarningMessage(T('q.checkFail', errText(r.error)));
     const asked = r.questions.length + r.stale.length + r.memory.length + (r.scope || []).length;
-    vscode.window.showInformationMessage(T('q.checkDone', r.merged.length, asked, (r.removed || []).length));
+    vscode.window.showInformationMessage(T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length));
     if (r.noFiles && r.noFiles.length) vscode.window.showWarningMessage(T('q.noFiles', r.noFiles));
     if (r.missing && r.missing.length) vscode.window.showWarningMessage(T('q.missing', r.missing));
     // 不弹通知的设置下，用户刚主动体检、正等着结果：直接打开问题列表

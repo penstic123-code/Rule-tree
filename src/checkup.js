@@ -75,7 +75,7 @@ const MEMORY_TASK = `另外逐份看自动记忆，每份在 memory 里写一项
 - keep：属于自动记忆该记的事，或者拿不准。
 `;
 
-function buildCheckPrompt(tree, memory = '', claudeMd = '') {
+function buildCheckPrompt(tree, memory = '', claudeMd = '', categoryTask = '') {
   return `你是需求树的体检员。下面是一个项目的需求树（Markdown）：标题是需求，开头是 ID；标题下 "- " 开头的是规则，可带 [键]；下级用和上级同一个 [键] 的规则，是有意在本范围内覆盖上级（不算冲突）。
 
 <需求树>
@@ -97,9 +97,9 @@ ${claudeMd}
 - 两条都留着：[]
 同一个需求里的两条冲突：留后面那条（remove_rule 前面的）、留前面那条（remove_rule 后面的）、两条都留着。
 default 是最可能的那个选项的序号（从 0 起）。最多 ${MAX_CHECK_QUESTIONS} 个问题。
-${memory ? MEMORY_TASK : ''}
+${memory ? MEMORY_TASK : ''}${categoryTask}
 只输出 JSON，不要任何别的文字；没有冲突就输出 {"questions":[]}：
-{"questions":[{"text":"全局写每章互动不超过4个，C1 写不超过5个：","options":[{"label":"C1 用5（本课例外）","ops":[...]},{"label":"统一用4","ops":[...]},{"label":"两条都留着","ops":[]}],"default":0}]${memory ? ',"memory":[{"file":"a.md","kind":"covered","where":"P"},{"file":"b.md","kind":"move","node":"C1","rules":["规则"],"whole":true},{"file":"c.md","kind":"conflict","node":"C2","rule":"树里原文","text":"记忆的说法","newer":"memory","whole":true},{"file":"d.md","kind":"stale","why":"那门课已经删了"},{"file":"e.md","kind":"keep"}]' : ''}}`;
+{"questions":[{"text":"全局写每章互动不超过4个，C1 写不超过5个：","options":[{"label":"C1 用5（本课例外）","ops":[...]},{"label":"统一用4","ops":[...]},{"label":"两条都留着","ops":[]}],"default":0}]${memory ? ',"memory":[{"file":"a.md","kind":"covered","where":"P"},{"file":"b.md","kind":"move","node":"C1","rules":["规则"],"whole":true},{"file":"c.md","kind":"conflict","node":"C2","rule":"树里原文","text":"记忆的说法","newer":"memory","whole":true},{"file":"d.md","kind":"stale","why":"那门课已经删了"},{"file":"e.md","kind":"keep"}]' : ''}${categoryTask ? ',"categories":[{"node":"P","groups":[{"name":"写作","rules":["树里原文"]}]}]' : ''}}`;
 }
 
 // 模型对每份记忆的判断 → { remove 直接删的改动, questions 要问的 }。文件、需求、规则对不上的丢掉。
@@ -261,7 +261,7 @@ const log = msg => { try { require('../hooks/recorder').log(msg); } catch {} };
 // memory：自动记忆文件夹，不传就按项目找（src/memory.js），false 不查记忆（设置 reqtree.memoryMode 为 treeOnly 时）。
 // 返回 { merged 删掉的重复规则, stale 新加的久未动问题, memory 新加的记忆问题, removed 直接删掉的记忆（已在树或 CLAUDE.md 里）,
 //        scope 新加的「文件找不到」问题, noFiles 规则不会加载的需求 ID, missing 标着 🔨 却找不到文件的需求 [{ node, title, globs }],
-//        questions 新加的冲突问题, error 调用模型出错的说明 }
+//        categorized 规则分了组的需求 ID（只改面板显示）, questions 新加的冲突问题, error 调用模型出错的说明 }
 async function runCheckup(treePath, { read, write, model = true, ask, memory } = {}) {
   const rec = require('../hooks/recorder');
   const mem = require('./memory');
@@ -271,7 +271,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory } =
   if (merged.length) rec.log(`体检：合并重复规则 ${JSON.stringify(merged.map(o => [o.node, o.text]))}`);
   let stale = [];
   try { stale = Q.staleQuestions(treePath); } catch (e) { rec.log('久未动的问题没生成：' + e.message); }
-  const result = { merged, stale, memory: [], removed: [], scope: [], noFiles: [], missing: [], questions: [], error: null };
+  const result = { merged, stale, memory: [], removed: [], scope: [], noFiles: [], missing: [], categorized: [], questions: [], error: null };
   const projectDir = path.dirname(treePath);
   const asked = new Set(Q.readQuestions(treePath).map(q => q.memKey).filter(Boolean));
 
@@ -309,7 +309,10 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory } =
     let claudeMd = '';
     try { claudeMd = clipChars(fs.readFileSync(path.join(projectDir, 'CLAUDE.md'), 'utf8'), CLAUDE_MD_CHARS); } catch {}
     const mp = notes.length ? memoryForPrompt(notes) : { text: '', shown: new Set(), clipped: new Set() };
-    const out = await (ask || rec.askJson)(buildCheckPrompt(text, mp.text, claudeMd));
+    const Cat = require('./categories');
+    const out = await (ask || rec.askJson)(buildCheckPrompt(text, mp.text, claudeMd, Cat.promptTask(text, Cat.read(treePath))));
+    // 规则分类：只改面板的显示方式
+    if (out && Array.isArray(out.categories)) try { result.categorized = Cat.save(treePath, text, out.categories); } catch (e) { rec.log('规则分类没存上：' + e.message); }
     const ctx = { root: parse(text), unmapped: [], user: '' };
     const picked = rec.pickQuestions(out && out.questions, { text, ops: [], ctx, allowed: CHECK_OPS, max: MAX_CHECK_QUESTIONS }).questions;
     // 同样的问题还开着就不再问一遍

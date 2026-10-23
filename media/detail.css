@@ -56,6 +56,10 @@
 .dp .fold-tg:hover .gt { text-decoration: underline; text-underline-offset: 3px; }
 .dp .fold-tg[aria-expanded="true"] .ico-chev { transform: rotate(90deg); }
 .dp .fold-h .gh-act { margin-left: var(--sp-3); }
+/* 规则分组（体检分的类，只改显示）：比「来自哪一级」再低一级的小标题 */
+.dp .gcat { display: flex; align-items: baseline; gap: var(--sp-2); margin: var(--sp-3) 0 0; font-size: 12px; font-weight: 600; line-height: 18px; color: var(--c-text); }
+.dp .gcat .gn { font-size: 11px; font-weight: 400; color: var(--c-muted); font-variant-numeric: tabular-nums; }
+.dp .gcat + .rules { margin-top: var(--sp-1); }
 
 /* 列表（规则、子需求、改动）：比小标题往里缩 12，前面一个灰色小圆点，折行时和第一行的字对齐 */
 .dp .rules, .dp .kids, .dp .chgs { list-style: none; margin: var(--sp-2) 0 0; padding: 0; }

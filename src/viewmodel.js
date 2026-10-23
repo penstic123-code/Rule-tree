@@ -1,6 +1,6 @@
 'use strict';
 // 把需求树整理成面板要显示的数据。不依赖 VS Code：插件、预览工具、测试共用。
-const { parse, effectiveRules, pathOf } = require('./parser');
+const { parse, effectiveRules, pathOf, norm } = require('./parser');
 const { autoLoads } = require('./compile');
 
 const ACTIVE_FOR_MS = 3 * 60 * 1000;
@@ -16,8 +16,9 @@ function isStale(node, touched = {}, since, now = Date.now()) {
   return now - Math.max(touched[node.id] || 0, since || now) >= STALE_DAYS * 86400000;
 }
 
-// 某个节点的规则，按来源分组（本节点在前），并标出每条规则相对这个节点的作用
-function ruleGroups(node, lines = []) {
+// 某个节点的规则，按来源分组（本节点在前），并标出每条规则相对这个节点的作用。
+// cats：体检分好的规则分类（src/categories.js），每条规则带上 cat（没分过是 null），面板按它分小组显示
+function ruleGroups(node, lines = [], cats = {}) {
   const winners = new Map();
   for (const r of effectiveRules(node)) if (r.key) winners.set(r.key, r);
   return pathOf(node).reverse().filter(n => n.rules.length).map(owner => ({
@@ -29,7 +30,8 @@ function ruleGroups(node, lines = []) {
       let state = owner === node ? 'own' : 'inherit', ref = null;
       if (w && w.owner !== owner) { state = 'overridden'; ref = w.owner.id; }
       else if (w && w.overrides) { state = 'overrides'; ref = w.overrides.owner.id; }
-      return { key: r.key, text: r.text, line: r.line, raw: lines[r.line], state, ref };
+      const cat = (cats[owner.id] && cats[owner.id][norm(r.text)]) || null;
+      return { key: r.key, text: r.text, line: r.line, raw: lines[r.line], state, ref, cat };
     }),
   }));
 }
@@ -83,7 +85,7 @@ function contextData(entries = [], now = Date.now()) {
   });
 }
 
-// tree = { uri, name, text, activity: [], touched: {}, since, recorder, config, changes, unmapped, compile, context: [] }
+// tree = { uri, name, text, activity: [], touched: {}, since, recorder, config, changes, unmapped, compile, context: [], categories: {} }
 // context 是 .reqtree/context.jsonl 里的记录（store.readContext）
 // since 是开始跟踪的时间（来自 .reqtree/state.json）
 function fileData(tree, now = Date.now()) {
@@ -108,7 +110,7 @@ function fileData(tree, now = Date.now()) {
       noScope: n.rules.length > 0 && !autoLoads(n),
       ruleCount: n.rules.length,
       crumbs: pathOf(n).slice(0, -1).map(p => `${p.id} ${p.title}`),
-      groups: ruleGroups(n, lines),
+      groups: ruleGroups(n, lines, tree.categories || {}),
       children: n.children.map((c, i) => conv(c, i, branch)),
     };
   };

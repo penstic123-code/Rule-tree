@@ -182,7 +182,14 @@
       else if (kind !== 'overridden') btns = `<button class="ib wide" ${E('overrideRule', `data-text="${esc(r.text)}" data-from="${esc(g.ownerId)}"`)} title="${T('d.rewriteHereTip')}">${T('d.rewriteHere')}</button>`;
       return `<li class="rule r-${kind}"${tip ? ` title="${esc(tip)}"` : ''}><span class="tx"><span class="rt">${esc(r.text)}</span>${tag ? `<span class="tag">${esc(tag)}</span>` : ''}</span><span class="rb">${btns}</span></li>`;
     };
-    const rules = (g, list) => `<ul class="rules">${list.map(r => rule(r, g)).join('')}</ul>`;
+    // 体检给规则分过组（src/categories.js）的，按组显示：每组一个小标题，组的顺序照模型给的，没分到组的放最后「其他」
+    const rules = (g, list) => {
+      if (!list.some(r => r.cat)) return `<ul class="rules">${list.map(r => rule(r, g)).join('')}</ul>`;
+      const byCat = new Map();
+      for (const r of list) { const c = r.cat || ''; if (!byCat.has(c)) byCat.set(c, []); byCat.get(c).push(r); }
+      const order = [...byCat.keys()].filter(Boolean).concat(byCat.has('') ? [''] : []);
+      return order.map(c => `<div class="gcat">${esc(c || T('d.otherCat'))}<span class="gn">${byCat.get(c).length}</span></div><ul class="rules">${byCat.get(c).map(r => rule(r, g)).join('')}</ul>`).join('');
+    };
     // 小标题：左边名字和条数，右边一个「+ 添加」（能加东西的节都一样）
     const addLink = (a, tip) => `<button class="lnk gh-act" ${E(a)} title="${tip}">${icon('plus', 12)}${T('d.add')}</button>`;
     const head = (title, count, add = '') => `<div class="gh"><span class="gt">${title}</span>${count ? `<span class="gn">${count}</span>` : ''}${add}</div>`;
