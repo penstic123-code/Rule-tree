@@ -1408,7 +1408,7 @@ test('英文界面：侧栏、详情、导图、菜单、上下文用量里都�
       assert.deepStrictEqual(r.withCtx, [], `${name}：上下文用量里还有中文`);
       assert.ok(r.menu.some(x => x.includes('Show IDs')), r.menu.join());
       assert.strictEqual(r.ctx, 'Always loaded 11,230 chars · On demand 1,175 chars');
-      assert.deepStrictEqual(r.more, ['Copy rules (to paste to the AI)', 'Copy ID R3.2', 'Open in editor', 'Delete requirement…']);
+      assert.deepStrictEqual(r.more, ['Copy ID R3.2', 'Delete requirement…']);
     } finally { b.close(); }
   }
 });
