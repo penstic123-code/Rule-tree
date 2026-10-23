@@ -286,8 +286,10 @@ class Panel {
       : await run();
     this.load();
     if (r.error) vscode.window.showWarningMessage(T('q.checkFail', errText(r.error)));
-    const asked = r.questions.length + r.stale.length + r.memory.length;
-    vscode.window.showInformationMessage(T('q.checkDone', r.merged.length, asked));
+    const asked = r.questions.length + r.stale.length + r.memory.length + (r.scope || []).length;
+    vscode.window.showInformationMessage(T('q.checkDone', r.merged.length, asked, (r.removed || []).length));
+    if (r.noFiles && r.noFiles.length) vscode.window.showWarningMessage(T('q.noFiles', r.noFiles));
+    if (r.missing && r.missing.length) vscode.window.showWarningMessage(T('q.missing', r.missing));
     // 不弹通知的设置下，用户刚主动体检、正等着结果：直接打开问题列表
     if (asked && askMode() !== 'notify') await this.questionsCommand();
     return r;

@@ -248,7 +248,7 @@
     return foldSection('s-recent', T('d.recent'), list.length, list.map(c => {
       const fixed = !c.undone && c.undoable === false;
       return `<li class="chg${c.undone ? ' undone' : ''}">
-      <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source === '升级' ? T('x.upgradeName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
+      <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source === '升级' ? T('x.upgradeName') : c.source === '体检' ? T('x.checkupName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
       ${changeLines(c, file, showIds).map(s => `<div class="cs">${esc(s)}</div>`).join('')}</li>`;
     }).join(''));
   }

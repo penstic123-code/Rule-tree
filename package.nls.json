@@ -18,7 +18,7 @@
   "config.askQuestions.notify": "Ask with a notification (it does not block you)",
   "config.askQuestions.panel": "Only show the count on the side bar icon; answer with \"ReqTree: Questions waiting for you\"",
   "config.askQuestions.off": "Don't ask; keep the recorder's choice",
-  "config.memoryMode": "How ReqTree works with Claude Code's auto memory.",
-  "config.memoryMode.dedupe": "Keep auto memory; the check-up finds rules that are both in memory and in the tree and asks which copy to delete",
-  "config.memoryMode.treeOnly": "Turn off auto memory for this project (writes \"autoMemoryEnabled\": false to .claude/settings.local.json); the tree is the only record"
+  "config.memoryMode": "How ReqTree and Claude Code's auto memory divide the work.",
+  "config.memoryMode.dedupe": "Divide the work (default): the tree holds the project's rules; auto memory keeps only things unrelated to the project's content (you, your tools and machine, private details such as servers and accounts). The recorder moves rules the AI writes into memory into the tree, and the check-up deletes notes already in the tree and asks about the rest",
+  "config.memoryMode.treeOnly": "Turn off auto memory for this project (writes \"autoMemoryEnabled\": false to .claude/settings.local.json); the tree is the only record. Notes about your tools, machine and private details then have nowhere to go"
 }

@@ -86,6 +86,47 @@ function readMemory(dir) {
   return names.map(f => { try { return readMemoryFile(dir, f); } catch { return null; } }).filter(Boolean);
 }
 
+// 一份记忆整份给模型看：{ file, type（user / feedback / project / reference，没写是 ''）, modified（YYYY-MM-DD）, mtime, description, body 正文 }
+function readNote(dir, file) {
+  const full = path.join(dir, file);
+  const raw = fs.readFileSync(full, 'utf8').replace(/^﻿/, '');
+  const lines = raw.split(/\r?\n/);
+  let type = '', modified = '', description = '', start = 0;
+  if (lines[0] === '---') {
+    const end = lines.indexOf('---', 1);
+    if (end > 0) {
+      for (const l of lines.slice(1, end)) {
+        let m;
+        // type: "user"、type: User 都算 user：类型决定能不能自动删，写法不同不能漏过
+        if ((m = l.match(/^\s*type:\s*(\S+)/))) type = m[1].replace(/^['"]|['"]$/g, '').toLowerCase();
+        else if ((m = l.match(/^\s*modified:\s*(\S+)/))) modified = m[1].slice(0, 10);
+        else if ((m = l.match(/^description:\s*(.+)$/))) description = m[1].trim();
+      }
+      start = end + 1;
+    }
+  }
+  const mtime = fs.statSync(full).mtimeMs;
+  if (!modified) modified = new Date(mtime).toISOString().slice(0, 10);
+  return { file, type, modified, mtime, description, body: lines.slice(start).join('\n').trim() };
+}
+function readNotes(dir) {
+  let names = [];
+  try { names = fs.readdirSync(dir).filter(isMemFile).sort(); } catch { return []; }
+  return names.map(f => { try { return readNote(dir, f); } catch { return null; } }).filter(Boolean);
+}
+
+// 这个文件是不是这个项目的一份记忆（不含 MEMORY.md 索引）：是就返回 { dir, file }。hook 用来认出 AI 这一轮写了记忆
+function noteOf(projectDir, filePath) {
+  const file = path.basename(filePath);
+  if (!isMemFile(file)) return null;
+  const dir = memoryDir(projectDir);
+  if (!dir) return null;
+  // ~/.claude 可能是符号链接或目录联接：两边都解析成真实路径再比
+  const real = p => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+  const same = (a, b) => { const x = real(a), y = real(b); return process.platform === 'linux' ? x === y : x.toLowerCase() === y.toLowerCase(); };
+  return same(dir, path.dirname(filePath)) ? { dir, file } : null;
+}
+
 // 记忆里的哪一句和需求树的哪条规则是同一件事（Dice ≥ 0.7）。每个（记忆文件, 规则）只取最像的一句
 function findDuplicates(treeText, dir) {
   const rules = [];
@@ -142,16 +183,16 @@ function backup(treePath, dir, file) {
 }
 
 // memory_remove：删掉记忆里的这一句；删完正文没别的内容（或者对上的是 description）就删整个文件，连同 MEMORY.md 里指向它的那一行。
-// 返回 applied（带 undo）或 null
+// whole: true 直接删整份（体检、记录员判断整份都已经在树里或该搬进树时用）。返回 applied（带 undo）或 null
 function removeMemory(treePath, op) {
   const { dir, file, text } = op;
   if (!dir || !isMemFile(file || '') || !fs.existsSync(path.join(dir, file))) return null;
   const m = readMemoryFile(dir, file);
-  const hit = m.lines.find(l => l.text === text) || m.lines.find(l => similarity(l.text, text) >= DUPLICATE);
-  const isDesc = !hit && m.description && (m.description === text || similarity(m.description, text) >= DUPLICATE);
-  if (!hit && !isDesc) return null;
+  const hit = op.whole ? null : (m.lines.find(l => l.text === text) || m.lines.find(l => similarity(l.text, text) >= DUPLICATE));
+  const isDesc = !op.whole && !hit && m.description && (m.description === text || similarity(m.description, text) >= DUPLICATE);
+  if (!op.whole && !hit && !isDesc) return null;
   const saved = backup(treePath, dir, file);
-  const whole = isDesc || m.lines.length <= 1;
+  const whole = !!op.whole || isDesc || m.lines.length <= 1;
   const undo = { op: 'memory_restore', dir, file, backup: saved };
   if (whole) {
     fs.unlinkSync(path.join(dir, file));
@@ -172,7 +213,7 @@ function removeMemory(treePath, op) {
     lines.splice(hit.i, 1);
     fs.writeFileSync(path.join(dir, file), lines.join(nl));
   }
-  return { op: 'memory_remove', dir, file, text: hit ? hit.text : m.description, wholeFile: whole, undo: [undo] };
+  return { op: 'memory_remove', dir, file, text: hit ? hit.text : (m.description || file), wholeFile: whole, undo: [undo] };
 }
 
 // memory_restore：把备份放回去；删过索引行的，索引里没有就放回原位置
@@ -214,6 +255,6 @@ function setAutoMemory(projectDir, enabled) {
 }
 
 module.exports = {
-  slugOf, gitRoot, memoryDir, readMemory, findDuplicates, checkDuplicate, memKey, memoryQuestion,
+  slugOf, gitRoot, memoryDir, readMemory, readNote, readNotes, noteOf, isMemFile, findDuplicates, checkDuplicate, memKey, memoryQuestion,
   removeMemory, restoreMemory, isMemoryOp, setAutoMemory, readSettings,
 };

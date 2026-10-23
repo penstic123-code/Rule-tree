@@ -156,6 +156,18 @@ function fallback(treePath, node, rel, input, trace) {
   return text;
 }
 
+// AI 这一轮写了自动记忆：记下来，Stop 时交给记录员。记忆该只记和项目内容无关的事（见 compile.js 的总目录说明），
+// 写进去的如果其实是项目规则，记录员把它收进树（见 recorder.js 的 memory_absorb）
+function noteMemoryWrite(treePath, file, input, trace) {
+  const m = require('../src/memory');
+  if (!m.isMemFile(path.basename(file))) return;
+  let note = null;
+  try { note = m.noteOf(path.dirname(realPath(treePath)), file); } catch {}
+  if (!note) return;
+  store.appendMemoryWrite(treePath, { ...note, time: Date.now(), session: input.session_id || null });
+  trace.memory = note.file;
+}
+
 function startRecorder(job) {
   const dir = STATE_DIR();
   fs.mkdirSync(dir, { recursive: true });
@@ -254,7 +266,9 @@ function main(input, trace) {
       const f = realPath(file);
       if (store.samePath(f, realTree)) { store.compileTree(treePath); continue; }
       const rel = path.relative(path.dirname(realTree), f).split(path.sep).join('/');
-      if (rel.startsWith('..') || /^\.(reqtree|claude)\//.test(rel)) continue;
+      // 项目外的文件只认一种：这个项目的自动记忆（Claude Code 放在 ~/.claude/projects/<项目>/memory/）
+      if (rel.startsWith('..') || path.isAbsolute(rel)) { noteMemoryWrite(treePath, f, input, trace); continue; }
+      if (/^\.(reqtree|claude)\//.test(rel)) continue;
       const node = nodeForFile(root, rel);
       trace.rel = rel; trace.node = node && node.id;
       store.appendActivity(treePath, { node: node ? node.id : null, file: rel, time: Date.now(), session: input.session_id, agent: input.agent_id || null });
@@ -290,9 +304,20 @@ function main(input, trace) {
     // 最后改动时间只用来提示「久未动」，这一轮没记上影响不大，记进 hook.log 方便排查
     const sweep = takeSweep(treePath, input.session_id, false);
     if (sweep) trace.sweep = sweep.length;
-    startRecorder({ treePath, turns, transcriptPath: input.transcript_path, touched, unmapped, ...(sweep ? { sweep } : {}) });
+    // 这一轮 AI 写过的记忆（同一份只给一次）。PostToolUse 也在后台跑，最后一次写记忆的记录可能比 Stop 晚到，
+    // 所以再直接看一眼记忆文件夹里这一轮改过的文件
+    const memory = [];
+    const addNote = (dir, file) => { if (dir && file && !memory.some(x => x.file === file)) memory.push({ dir, file }); };
+    for (const e of store.readMemoryWrites(treePath, Date.now() - since)) if (e.session === (input.session_id || null)) addNote(e.dir, e.file);
+    try {
+      const m = require('../src/memory');
+      const md = m.memoryDir(path.dirname(realPath(treePath)));
+      if (md) for (const f of fs.readdirSync(md)) if (m.isMemFile(f) && fs.statSync(path.join(md, f)).mtimeMs >= since) addNote(md, f);
+    } catch {}
+    startRecorder({ treePath, turns, transcriptPath: input.transcript_path, touched, unmapped, ...(sweep ? { sweep } : {}), ...(memory.length ? { memory } : {}) });
     if (touched.length) try { store.touch(treePath, touched); } catch (e) { trace.touchError = e.message; }
     store.trimActivity(treePath);
+    store.trimMemoryWrites(treePath);
     store.trimContext(treePath);
     cleanOldState();
   }

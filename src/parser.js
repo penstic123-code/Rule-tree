@@ -488,7 +488,7 @@ function applyOps(text, ops) {
 const SKIP_REASON = {
   'no-node': '找不到这个需求', 'no-rule': '找不到这条规则', empty: '内容是空的', same: '和现在一样',
   duplicate: '已经有意思一样的规则', 'bad-id': '编号不合法或已被占用', 'bad-status': '状态不认识', 'unknown-op': '不认识的操作',
-  'not-allowed': '记录员不许做这种改动', 'no-basis': '文件对应没有根据',
+  'not-allowed': '记录员不许做这种改动', 'no-basis': '文件对应没有根据', blocked: '树里对应的改动没写进去，记忆先留着',
 };
 
 // 旧版本「先让我确认」模式留下的标记：🆕 待确认新增，🗑 待确认删除。升级时 store 只清一次（state.json 记下

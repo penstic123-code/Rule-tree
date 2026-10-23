@@ -7,6 +7,7 @@
   const saved = vscode.getState() || {};
   let data = null;
   let selected = saved.selected || null;
+  let shownDetail; // 上一次画详情时选中的是哪个需求（undefined = 还没画过）
   let collapsed = new Set(saved.collapsed || []);
   // 树的高度：默认跟着内容走（最多占一半多），详情占剩下的；拖过分隔条就用拖出来的高度
   let treeHeight = saved.treeHeight || null;
@@ -69,6 +70,8 @@
     const fp = focusPath();
     if (focus && !fp) { focus = null; persist(); }
     const scroll = document.querySelector('.tree')?.scrollTop || 0;
+    // 详情区的滚动位置也留着：数据每次刷新都整页重画，以前看到一半会跳回顶部。换了一个需求才回顶部
+    const detailScroll = selected === shownDetail ? (document.querySelector('.detail')?.scrollTop || 0) : 0;
     branch = null;
     if (dim && selected && !fp) {
       const hit = nodes.find(x => x.n.key === selected);
@@ -100,6 +103,9 @@
     app.innerHTML = html;
     app.classList.toggle('app-focus', !!fp);
     document.querySelector('.tree').scrollTop = scroll;
+    const det = document.querySelector('.detail');
+    if (det && detailScroll) det.scrollTop = detailScroll;
+    shownDetail = selected;
   }
 
   // 只看这一支时顶部的路径：点上级切换到那一级，「显示全部」退出

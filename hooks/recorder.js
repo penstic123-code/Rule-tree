@@ -173,9 +173,13 @@ function isTrivial(msg) {
   return /[?？]\s*$/.test(s) && s.length < 30 && !/(以后|不要|别|改成|都要|应该|必须)/.test(s);
 }
 
-function buildPrompt(tree, turns, touched, unmapped) {
+// notes：这一轮 AI 写进自动记忆的笔记 [{ file, text }]（hook 从 PostToolUse 记下的，见 job.memory）
+function buildPrompt(tree, turns, touched, unmapped, notes = []) {
   const latest = turns[turns.length - 1];
   const earlier = turns.slice(0, -1).map(t => `用户：${t.user}\nAI：${t.ai}`);
+  const noteBlock = notes.length ? `\n<这一轮 AI 写进它自己的自动记忆的笔记>\n${notes.map(n => `文件 ${n.file}：\n${n.text}`).join('\n---\n')}\n</这一轮 AI 写进它自己的自动记忆的笔记>\n` : '';
+  const noteTask = notes.length ? `
+5. 自动记忆只该记和项目内容无关的事（用户本人的情况、工具和电脑环境、私人信息、外部资源在哪）。上面某份笔记整份都是这个项目的需求或规则时：先确保需求树里有（已有同一件事就不加；没有就照第 1 条加或改写），再输出 {"op":"memory_absorb","file":"文件名"} 删掉这份笔记。笔记里混着和项目无关的内容，或者拿不准的，不动它。` : '';
   return `你是需求记录员。下面是一个项目的需求树（Markdown）：标题是需求，开头是 ID，结尾 ✅完成 🔨正在做 ⏳待做 ❓待定；标题下 "- " 开头的是规则，可带 [键]，子需求用同一个键覆盖母规则；"> 文件：" 是这个需求对应的文件。
 
 <需求树>
@@ -186,7 +190,7 @@ ${earlier.length ? `\n<更早的对话（只作上下文）>\n${earlier.join('\n
 用户：${latest.user}
 AI：${latest.ai}
 </最新一轮>
-${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join('、')}` : ''}${unmapped.length ? `\n这一轮 AI 改了这些还没归属的文件：${unmapped.join('、')}` : ''}
+${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join('、')}` : ''}${unmapped.length ? `\n这一轮 AI 改了这些还没归属的文件：${unmapped.join('、')}` : ''}${noteBlock}
 
 请输出这一轮应该对需求树做的改动：
 1. 用户提出的长期要求（新规则、修改或否决已有规则、新需求）。AI 的建议只有在用户明确同意时才算。
@@ -194,6 +198,7 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
      例：「第5章用地铁线路图来举例」→ 记到第5章；「把第5章的地铁图改大一点」→ 一次性，不记。
    - 只有针对这次改动、做完就结束的指令（"把这段改短""修一下这个 bug"）、提问、闲聊不算。
    - 只记这个项目自己的需求：在讨论别的工具、别的项目（比如正在用的插件、另一个程序）时提的要求不记。
+   - 和项目内容无关的不记，那些归 AI 自己的自动记忆：用户的工具和电脑环境（如"别在会话中装插件""这台电脑的终端是 GBK"）、私人信息（服务器地址、账号、密码、本机路径、邮箱）。需求树会提交进仓库，私人信息绝不能写进树。
    - **先在树里找同一主题的已有规则**（同一件事，哪怕措辞不同）：
      · 意思已经包含 → 什么都不做；
      · 用户的新说法和它不一样（哪怕没说"改成"）→ 以最新的为准改写它，不要两条并存：replace_rule（old 填树里原文，不含 [键]）；
@@ -208,7 +213,7 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
 2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，按第 4 条问「做完了吗」，default 是「还没」（ops 为空）。
 3. 没归属的文件如果明显属于某个需求，用 add_files 给出 glob（如 DataScience/ch02-*.html）；拿不准就不给。
-4. 拿不准就问：只在真有歧义、只有用户能定的时候问——这句话管全项目还是只管当前这门课或这一章；新说法是取代旧规则、缩小范围还是补充；某需求做完没有。先把最可能的做法照常写进 ops，同时在 questions 里问：text 是一句简短的问题，options 是 2–4 种做法（label 几个字，ops 是这种做法完整的改动，可以为空），default 是已写进 ops 的那个选项的序号（从 0 起）。每轮最多 2 个问题；有把握的直接改，不要问。
+4. 拿不准就问：只在真有歧义、只有用户能定的时候问——这句话管全项目还是只管当前这门课或这一章；新说法是取代旧规则、缩小范围还是补充；某需求做完没有。先把最可能的做法照常写进 ops，同时在 questions 里问：text 是一句简短的问题，options 是 2–4 种做法（label 几个字，ops 是这种做法完整的改动，可以为空），default 是已写进 ops 的那个选项的序号（从 0 起）。每轮最多 2 个问题；有把握的直接改，不要问。${noteTask}
 
 只输出 JSON，不要任何别的文字；没有改动就输出 {"ops":[]}：
 {"ops":[{"op":"replace_rule","node":"ID","old":"树里原文","text":"新内容"},{"op":"add_rule","node":"ID","key":"可选","text":"..."},{"op":"remove_rule","node":"ID","text":"原文"},{"op":"override_rule","node":"子需求ID","from":"上级ID","text":"上级原文","new":"新内容"},{"op":"add_node","parent":"ID","id":"新ID","title":"..."},{"op":"set_status","node":"ID","status":"done 或 question"},{"op":"add_files","node":"ID","globs":["..."]}],
@@ -327,12 +332,31 @@ async function askModel(prompt) {
   return ok;
 }
 
+// 这一轮 AI 写进自动记忆的笔记（hook 给的 [{ dir, file }]）→ 可以收编的 [{ dir, file, text }]。
+// 收编会删整份，所以模型必须看到整份：超过 NOTE_MAX 字的不给；用户本人（user）、外部资源（reference）两类本来就该留在记忆里，也不给
+const NOTE_MAX = 1500;
+function readNotes(list) {
+  const M = require('../src/memory');
+  const out = [];
+  for (const m of Array.isArray(list) ? list : []) {
+    if (!m || typeof m.dir !== 'string' || typeof m.file !== 'string' || !M.isMemFile(m.file)) continue;
+    let text;
+    try { text = fs.readFileSync(path.join(m.dir, m.file), 'utf8').trim(); } catch { continue; }
+    let type = '';
+    try { type = M.readNote(m.dir, m.file).type; } catch {}
+    if (type === 'user' || type === 'reference' || [...text].length > NOTE_MAX) continue;
+    out.push({ dir: m.dir, file: m.file, text });
+  }
+  return out.slice(0, 5);
+}
+
 // 这一轮做了什么，写成结构化的几段（{ k, a }），面板按当前语言拼（media/strings.js 的 rec.*）
 function describeParts(applied, queued, asked = 0) {
   const count = op => applied.filter(o => o.op === op).length;
   const parts = [];
   const rules = count('add_rule') + count('replace_rule') + count('remove_rule') + count('add_node') + count('add_files') + count('override_rule');
   if (rules) parts.push({ k: 'rec.rules', a: [rules] });
+  if (count('memory_remove')) parts.push({ k: 'rec.absorbed', a: [count('memory_remove')] });
   const done = applied.filter(o => o.op === 'set_status' && o.status === 'done').map(o => o.node);
   const doing = applied.filter(o => o.op === 'set_status' && o.status === 'doing').map(o => o.node);
   if (done.length) parts.push({ k: 'rec.done', a: [done] });
@@ -345,7 +369,7 @@ function describeParts(applied, queued, asked = 0) {
 // 同样几段的中文（state.json 里的 message、recorder.log、命令行和旧版本的面板用）。
 // 和 media/strings.js 的中文一致（测试对照）；hook 运行时只复制 src/ 和 hooks/，读不到 media/，所以这里留一份
 const ZH = {
-  'rec.rules': n => `记下 ${n} 条`, 'rec.done': ids => `${ids.join('、')} 标为完成`, 'rec.doing': ids => `${ids.join('、')} 标为正在做`,
+  'rec.rules': n => `记下 ${n} 条`, 'rec.absorbed': n => `把 ${n} 份记忆收进需求树`,'rec.done': ids => `${ids.join('、')} 标为完成`, 'rec.doing': ids => `${ids.join('、')} 标为正在做`,
   'rec.queued': n => `${n} 条改动等你保存需求树后写入`, 'rec.asked': n => `${n} 件事拿不准，问你了`, 'rec.none': '这一轮没有新要求',
   'rec.paused': '已暂停（只标正在做，不记新要求）', 'rec.sweep': n => `补漏记下 ${n} 条`, 'rec.sweepNone': n => `补漏查了 ${n} 句，没有漏的`,
   'rec.sweepFail': m => `补漏失败：${m}`, 'rec.skipped': (n, first) => `${n} 条没写进去：${first}`,
@@ -387,15 +411,27 @@ async function main(jobPath) {
     }
     const latest = turns.length ? turns[turns.length - 1].user : '';
     const config = store.readConfig(treePath);
-    let asked = false, questions = [];
+    let asked = false, questions = [], absorb = [];
     const skipped = [];
-    if (turns.length && config.recorder !== 'off' && !isTrivial(latest)) {
+    const notes = readNotes(job.memory);
+    // 用户只说了「好」，AI 也可能在这一轮写了记忆：有新笔记就照样调用模型
+    if (turns.length && config.recorder !== 'off' && (!isTrivial(latest) || notes.length)) {
       const lines = text.split(/\r?\n/).length;
       const tree = lines > BIG_TREE_LINES ? outline(text, touched) : text;
-      const out = await askJson(buildPrompt(tree, turns, touched, unmapped));
+      const out = await askJson(buildPrompt(tree, turns, touched, unmapped, notes));
       if (!Array.isArray(out.ops) && !Array.isArray(out.questions)) throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
+      // memory_absorb 只认这一轮写过的笔记；换成删整份记忆（先备份，可撤销）
+      const own = new Map(notes.map(n => [n.file, n]));
+      const rest = [];
+      for (const o of Array.isArray(out.ops) ? out.ops : []) {
+        if (o && o.op === 'memory_absorb') {
+          const n = own.get(o.file);
+          if (n && !absorb.some(a => a.file === n.file)) absorb.push({ op: 'memory_remove', dir: n.dir, file: n.file, whole: true });
+          else log(`丢掉对不上的 memory_absorb：${JSON.stringify(o)}`);
+        } else rest.push(o);
+      }
       const ctx = { root, unmapped, user: latest, dropped: skipped };
-      const picked = pickQuestions(out.questions, { text, before: ops, ops: cleanOps(out.ops || [], ctx), ctx: { root, unmapped, user: latest } });
+      const picked = pickQuestions(out.questions, { text, before: ops, ops: cleanOps(rest, ctx), ctx: { root, unmapped, user: latest } });
       ops.push(...picked.ops);
       questions = picked.questions;
       asked = true;
@@ -408,6 +444,16 @@ async function main(jobPath) {
       applied = applied.concat(r.applied); queued += r.queued;
       skipped.push(...r.skipped);
       log(`问用户 ${questions.length} 个问题：${JSON.stringify(questions)}`);
+    }
+    // 收编记忆：放在这一轮所有改动（包括问题的默认做法）之后。都写进去了（或者只是树里已经有）才删笔记；
+    // 有改动没写进去（找不到需求等），或者还在排队（用户正在编辑需求树，写没写进去还不知道），笔记都留着，免得规则两边都丢了。
+    // 这一轮问了问题也不删：规则可能在用户还没选的那个选项里
+    if (absorb.length) {
+      if (!queued && !questions.length && skipped.every(s => s.reason === 'duplicate' || s.reason === 'same')) {
+        const r = store.submitOps(treePath, absorb);
+        applied = applied.concat(r.applied); queued += r.queued;
+        log(`收编记忆：${JSON.stringify(absorb.map(a => a.file))}`);
+      } else log(`这一轮有改动没写进去、在排队或在问用户，不删记忆：${JSON.stringify(absorb.map(a => a.file))}`);
     }
     let parts = config.recorder === 'off' ? [{ k: 'rec.paused', a: [] }] : describeParts(applied, queued, questions.length);
 

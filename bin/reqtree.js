@@ -213,7 +213,7 @@ const USAGE = `用法：
   reqtree rules <文件> <ID>     打印某个节点实际生效的规则（含继承与覆盖）
   reqtree check <文件>          检查重复 ID、重复规则键、重复规则、很久没动的 🔨（只读）
   reqtree check <文件> --fix    体检：合并重复规则（留后写的），很久没动的 🔨 和可能冲突的规则变成问题
-                                （冲突要调用一次模型；加 --no-model 不调用）；也查 Claude Code 自动记忆里和树重复的（--no-memory 不查）
+                                （冲突要调用一次模型；加 --no-model 不调用）；也按分工整理 Claude Code 自动记忆：已在树里的删掉，该进树的问你（--no-memory 不查）
   reqtree questions <文件>      列出等你回答的问题
   reqtree answer <文件> <问题ID> <选项序号|dismiss>   回答问题（序号从 1 起；dismiss 保持现在的样子）
   reqtree compile <文件>        编译成 Claude Code 原生规则（.claude/rules/reqtree/）`;
@@ -231,10 +231,13 @@ async function checkFix(file, { model, memoryOn = true }) {
   const { runCheckup } = require('../src/checkup');
   const r = await runCheckup(file, { model, memory: memoryOn ? undefined : false });
   for (const o of r.merged) console.log(`合并重复规则：删掉 ${o.node} 的「${o.text}」（留后写的那条）`);
-  const asked = [...r.stale, ...r.memory, ...r.questions];
+  for (const o of r.removed) console.log(`删掉记忆 ${o.file}：内容已经在需求树或 CLAUDE.md 里（备份在 .reqtree/memory-backup/，可以撤销）`);
+  if (r.noFiles.length) console.log(`提醒：${r.noFiles.join('、')} 有规则，可它们和上级都没有对应的文件，这些规则不会自动加载给 AI`);
+  for (const m of r.missing) console.log(`提醒：${m.node} ${m.title} 标着正在做或完成，可对应的文件（${m.globs.join(', ')}）一个也找不到`);
+  const asked = [...r.stale, ...r.scope, ...r.memory, ...r.questions];
   for (const q of asked) printQuestion(q);
   if (r.error) console.error(`查冲突时调用模型出错：${r.error.message}`);
-  console.log(`合并 ${r.merged.length} 条重复规则，新提出 ${asked.length} 个问题${asked.length ? '（在 VS Code 里回答，或者 reqtree answer <文件> <问题ID> <选项序号>）' : ''}`);
+  console.log(`合并 ${r.merged.length} 条重复规则，${r.removed.length ? `删掉 ${r.removed.length} 份已在树里的记忆，` : ''}新提出 ${asked.length} 个问题${asked.length ? '（在 VS Code 里回答，或者 reqtree answer <文件> <问题ID> <选项序号>）' : ''}`);
   return r.error ? 1 : 0;
 }
 

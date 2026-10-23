@@ -306,6 +306,10 @@ function trimLog(treePath, name) {
   } catch {}
 }
 
+// AI 写了这个项目的自动记忆（PostToolUse 记，Stop 时交给记录员看是不是该收进树）：{ dir, file, time, session }
+const appendMemoryWrite = (treePath, entry) => appendLog(treePath, 'memory-writes.jsonl', entry);
+const readMemoryWrites = (treePath, sinceMs) => readLog(treePath, 'memory-writes.jsonl', sinceMs);
+const trimMemoryWrites = treePath => trimLog(treePath, 'memory-writes.jsonl');
 const appendActivity = (treePath, entry) => appendLog(treePath, 'activity.jsonl', entry);
 const readActivity = (treePath, sinceMs) => readLog(treePath, 'activity.jsonl', sinceMs);
 const trimActivity = treePath => trimLog(treePath, 'activity.jsonl');
@@ -401,19 +405,22 @@ function writeThen(treePath, update, write, after) {
 // 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你'（升级清理记为 '升级'）。
 // id：这条改动记录用的编号（问题要记下默认做法是哪条改动，之后好撤销）；不给就新起一个。
 // 返回生效的改动（数组），数组上另挂 skipped：没做成的改动和原因（见 parser.applyOps）
-// 改记忆文件的操作（memory_*，见 src/memory.js）不改树：先做掉，和树的改动记成同一条
+// 改记忆文件的操作（memory_*，见 src/memory.js）不改树，和树的改动记成同一条。
+// 记忆放在树写成功之后才改：同一批里树的改动没写进去（找不到需求、找不到规则……，「已经有了」不算），
+// 或者写树出错，记忆都不动，免得规则从记忆里删了、树里却没加上
 function applyChange(treePath, ops, { source, write, id } = {}) {
   const mem = require('./memory');
-  const memApplied = [], memSkipped = [];
-  for (const o of (ops || []).filter(mem.isMemoryOp)) {
-    let a = null;
-    try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : null; } catch {}
-    if (a) memApplied.push(a); else memSkipped.push({ op: o, reason: 'no-rule' });
-  }
+  const memOps = (ops || []).filter(mem.isMemoryOp);
   const treeOps = (ops || []).filter(o => !mem.isMemoryOp(o));
-  let applied = memApplied, skipped = memSkipped;
-  const update = text => { const r = applyOps(text, treeOps); applied = memApplied.concat(r.applied); skipped = memSkipped.concat(r.skipped); return r.text; };
+  let applied = [], skipped = [];
+  const update = text => { const r = applyOps(text, treeOps); applied = r.applied; skipped = r.skipped; return r.text; };
   const after = () => {
+    const blocked = skipped.some(s => s.reason !== 'duplicate' && s.reason !== 'same');
+    for (const o of memOps) {
+      let a = null;
+      if (!blocked) try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : null; } catch {}
+      if (a) applied.push(a); else skipped.push({ op: o, reason: blocked ? 'blocked' : 'no-rule' });
+    }
     if (applied.length) {
       logChange(treePath, { id: id || newChangeId(), time: Date.now(), source, summary: applied.map(describeOp), ops: applied });
     }
@@ -510,6 +517,6 @@ module.exports = {
   updateTree, updateTreeAsync, compileTree, readCompileStatus,
   isEditing, setEditing, submitOps, flushQueue, dropQueued, appendLog, newChangeId, describeOp,
   readState, updateState, writeRecorderStatus, readRecorderStatus, touch, readTouched,
-  appendActivity, readActivity, trimActivity, appendContext, readContext, trimContext, readConfig, writeConfig, ensureTracking,
+  appendActivity, readActivity, trimActivity, appendMemoryWrite, readMemoryWrites, trimMemoryWrites, appendContext, readContext, trimContext, readConfig, writeConfig, ensureTracking,
   applyChange, undoChange, readChanges,
 };
