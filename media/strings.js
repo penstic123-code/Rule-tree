@@ -103,7 +103,7 @@
     'x.nc.add_rule': '已经有一样或几乎一样的规则了', 'x.nc.replace_rule': '内容没变，或者找不到原来那条规则',
     'x.nc.remove_rule': '找不到这条规则，可能已经被改过', 'x.nc.add_node': '名字为空或编号冲突', 'x.nc.rename_node': '名字没变',
     'x.nc.set_status': '状态没变', 'x.nc.set_files': '文件对应没变', 'x.nc.add_files': '这些文件已经对应过了',
-    'x.nc.override_rule': '内容没变，或者找不到上级那条规则', 'x.nc.delete_node': '找不到这个需求，可能已经删了',
+    'x.nc.override_rule': '内容没变、找不到上级那条规则，或者那个需求不是它的上级', 'x.nc.delete_node': '找不到这个需求，可能已经删了',
     'x.recorderBadge': '记录员出错', 'x.error': msg => `需求树：${msg}`, 'x.mapTitle': '需求树导图', 'x.notEmpty': '不能为空',
     'x.you': '你', 'x.recorderName': '记录员',
     'x.askNew': parent => `在「${parent}」下面新建需求，名字是？`, 'x.top': '最上层',

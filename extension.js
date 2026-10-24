@@ -573,7 +573,7 @@ async function create(panel) {
   if (!reqtree.hasHooks(folder.uri.fsPath)) await enableIn(folder.uri.fsPath, panel);
   const uri = vscode.Uri.joinPath(folder.uri, '需求树.md');
   try { await vscode.workspace.fs.stat(uri); } catch {
-    await vscode.workspace.fs.writeFile(uri, Buffer.from(store.TEMPLATE, 'utf8'));
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(store.initialTree(folder.uri.fsPath), 'utf8'));
   }
   await vscode.window.showTextDocument(uri);
 }
@@ -581,8 +581,19 @@ async function create(panel) {
 function activate(context) {
   const panel = new Panel(context);
   let timer = null;
+  // 界面语言跟着需求树走（见 lang）：刚打开时还没有树，建了中文的树以后要换过来
+  let shownLang = lang();
+  const checkLang = () => { treeLangCache = null; const l = lang(); if (l !== shownLang) { shownLang = l; panel.relang(); } };
   // 连续多次文件变化合并成一次刷新
-  const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { try { panel.load(); } catch (e) { console.error(e); } }, 150); };
+  const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { try { checkLang(); panel.load(); } catch (e) { console.error(e); } }, 150); };
+  // 以前建的、一个字没改过的空模板：换成按项目文件夹生成的树
+  for (const t of findTrees()) {
+    try {
+      if (fs.readFileSync(t, 'utf8').replace(/\r\n/g, '\n') !== store.TEMPLATE) continue;
+      const fresh = store.initialTree(path.dirname(t));
+      if (fresh !== store.TEMPLATE) store.updateTree(t, () => fresh);
+    } catch (e) { console.error(e); }
+  }
   const isTree = doc => doc.uri.scheme === 'file' && panel.trees.some(t => samePath(t.path, doc.uri.fsPath));
 
   const watchers = (vscode.workspace.workspaceFolders || []).flatMap(f => [

@@ -268,7 +268,13 @@ ${claudeMd}
 ${docs}
 </文档>
 ` : ''}
-${conflicts ? `找出说法互相冲突、要用户拍板的规则：上级和下级（或同一个需求里）对同一件事说得不一样，又没有用同一个 [键] 写成覆盖。例：P「每章互动不超过4个」，C1「每章互动不超过5个」。下级只是更具体、并不冲突的不算；拿不准是不是冲突的不算。
+${conflicts ? `找出说法互相冲突、要用户拍板的规则：上级和下级（或同一个需求里）对同一件事说得不一样，又没有用同一个 [键] 写成覆盖。例：P「每章互动不超过4个」，C1「每章互动不超过5个」。
+这些都不算冲突，不要报：
+- 下级只是更具体、补充了细节；
+- 两条话题相近但管的不是一件事（「组件里不带公式」和「推导收进抽屉」：一个说组件，一个说正文）；
+- 不在同一条上下级链上的两个需求说法不同（比如按文件类型分的「写作」需求和某门课）：范围窄的本来就为准，是有意的例外；
+- 拿不准是不是冲突的。
+宁可少报，不要误报。override_rule 的 from 只能是 node 的上级（标题层级更高、而且是它的祖先）。
 每处冲突写成一个问题：text 是一句简短的问题，说清两条各是什么；options 是 2–3 种处理（label 几个字，ops 是这种处理完整的改动）。常用的：
 - 下级算例外：[{"op":"remove_rule","node":"下级ID","text":"下级原文"},{"op":"override_rule","node":"下级ID","from":"上级ID","text":"上级原文","new":"下级原文"}]
 - 统一用上级的：[{"op":"remove_rule","node":"下级ID","text":"下级原文"}]
@@ -573,7 +579,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
       const text = readText(treePath);
       const memSegs = batch.filter(s => s.kind === 'mem'), docSegs = batch.filter(s => s.kind === 'doc');
       const prompt = buildCheckPrompt(text, memSegs.map(s => s.block).join('\n\n'), memSegs.length ? claudeMd : '',
-        first ? Cat.promptTask(text, Cat.read(treePath)) : '', docSegs.map(s => s.block).join('\n\n'), first);
+        first ? Cat.promptTask(text, Cat.read(treePath), projectFiles(projectDir)) : '', docSegs.map(s => s.block).join('\n\n'), first);
       const out = await askModel(prompt);
       if (first) {
         rulesDone = true;

@@ -450,6 +450,9 @@ function applyOps(text, ops) {
       const from = findById(root, op.from);
       const base = findRule(from, op.text);
       if (!node || !from) { skip('no-node'); continue; }
+      // 覆盖只在同一条上下级链上有意义（下级的规则替换上级的）。横切的需求（按文件类型分的「写作」）和课程之间
+      // 说法不同时，范围窄的本来就为准，不用覆盖；硬写会给两边的规则平白加上「改写N」的键
+      if (from === node || !pathOf(node).includes(from)) { skip('not-ancestor'); continue; }
       if (!base) { skip('no-rule'); continue; }
       if (!op.new || !op.new.trim()) { skip('empty'); continue; }
       let key = base.key;
@@ -485,7 +488,7 @@ function applyOps(text, ops) {
 const SKIP_REASON = {
   'no-node': '找不到这个需求', 'no-rule': '找不到这条规则', empty: '内容是空的', same: '和现在一样',
   duplicate: '已经有意思一样的规则', 'bad-id': '编号不合法或已被占用', 'bad-status': '状态不认识', 'unknown-op': '不认识的操作',
-  'not-allowed': '记录员不许做这种改动', 'no-basis': '文件对应没有根据', blocked: '树里对应的改动没写进去，记忆先留着',
+  'not-allowed': '记录员不许做这种改动', 'not-ancestor': '只能覆盖上级需求的规则', 'no-basis': '文件对应没有根据', blocked: '树里对应的改动没写进去，记忆先留着',
 };
 
 // 面板「打开原文」按行号跳转，但点击前文件可能被记录员改过。expect 是当时那一行的内容：

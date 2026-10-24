@@ -29,7 +29,8 @@ const MAP_MARK = '<!-- reqtree:codemap -->';
 const clip = (s, n) => { const a = [...String(s)]; return a.length > n ? a.slice(0, n - 1).join('') + '…' : String(s); };
 
 // ---------- 列文件 ----------
-function listFiles(dir) {
+// any：不只要代码文件，所有文件都要（新项目按文件夹生成需求树时用）
+function listFiles(dir, { any = false } = {}) {
   let files = null;
   const r = spawnSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], { cwd: dir, encoding: 'utf8', windowsHide: true, maxBuffer: 256 << 20, timeout: 20000 });
   if (r.status === 0 && typeof r.stdout === 'string') files = r.stdout.split('\0').filter(Boolean);
@@ -48,7 +49,7 @@ function listFiles(dir) {
   }
   // Godot 的 addons/ 多半是第三方插件
   const godot = files.some(f => /(^|\/)project\.godot$/.test(f));
-  return files.filter(f => (CODE_RE.test(f) || /(^|\/)project\.godot$/.test(f)) && !/\.min\.js$/i.test(f)
+  return files.filter(f => (any || CODE_RE.test(f) || /(^|\/)project\.godot$/.test(f)) && !/\.min\.js$/i.test(f)
     && !f.split('/').slice(0, -1).some(p => SKIP_DIRS.has(p) || (godot && p === 'addons'))).slice(0, MAX_FILES);
 }
 

@@ -174,8 +174,8 @@ function init(dir, { tool = 'claude', log = console.log } = {}) {
   }
 
   if (!store.findTree(dir)) {
-    fs.writeFileSync(path.join(dir, '需求树.md'), store.TEMPLATE);
-    log('✓ 已创建模板 需求树.md');
+    fs.writeFileSync(path.join(dir, '需求树.md'), store.initialTree(dir));
+    log('✓ 已按项目的文件夹创建 需求树.md');
   }
   const tree = store.findTree(dir);
   store.ensureTracking(tree);

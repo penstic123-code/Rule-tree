@@ -226,3 +226,27 @@ test('体检分批：某一批出错（如超时）不停下，后面的批照�
   assert.strictEqual(seenProgress.length, calls);
   assert.ok(checkPlan(tree, { parts }).docs.some(d => d.name === 'c/_CHAPTERS.md'), '出错那份下次再看');
 });
+
+test('新项目的第一棵树按最上一层的文件夹生成（文件多的在前）；没有子文件夹时退回模板', () => {
+  const store = require('../src/store');
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'init-'));
+  for (const f of ['src/a.js', 'src/b.js', 'src/c.js', 'docs/x.md', 'node_modules/m/i.js', '.git/HEAD', 'README.md']) {
+    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    fs.writeFileSync(path.join(dir, f), '');
+  }
+  const t = store.initialTree(dir);
+  assert.match(t, /^# P init-/);
+  assert.match(t, /## R1 src\n> 文件：src\/\*\*\n\n## R2 docs\n> 文件：docs\/\*\*/);
+  assert.ok(!t.includes('node_modules'));
+  const flat = fs.mkdtempSync(path.join(SANDBOX, 'flat-'));
+  fs.writeFileSync(path.join(flat, 'a.js'), '');
+  assert.strictEqual(store.initialTree(flat), store.TEMPLATE);
+});
+
+test('覆盖只能来自上级：横切的需求之间、兄弟之间写覆盖都不做（不然会平白给规则加「改写N」的键）', () => {
+  const { applyOps } = require('../src/parser');
+  const t = '# P x\n\n## W 写作\n> 文件：*/ch*.html\n- 故事退到背景\n\n## C2 课\n> 文件：d/**\n- 爬塔主线\n';
+  const r = applyOps(t, [{ op: 'override_rule', node: 'C2', from: 'W', text: '故事退到背景', new: '爬塔主线' }]);
+  assert.strictEqual(r.text, t);
+  assert.strictEqual(r.skipped[0].reason, 'not-ancestor');
+});

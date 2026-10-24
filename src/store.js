@@ -45,6 +45,28 @@ const TEMPLATE = `# P 项目名
 - 子需求自己的规则
 `;
 
+// 新项目的第一棵树：按项目最上一层的文件夹生成需求，每个文件夹一个，带上它的文件范围，不是一份空模板。
+// 文件跟着 .gitignore（不是 git 仓库就遍历，跳过依赖、构建产物和隐藏文件夹）；文件夹太多只取文件最多的 INIT_MAX 个。
+// 所有文件都在根目录、没有子文件夹时，退回模板
+const INIT_MAX = 12;
+function initialTree(dir) {
+  let files = [];
+  try { files = require('./codemap').listFiles(dir, { any: true }); } catch {}
+  const count = new Map();
+  for (const f of files) {
+    const i = f.indexOf('/');
+    if (i < 0) continue;
+    const top = f.slice(0, i);
+    if (top.startsWith('.') || /^(node_modules|dist|build|out|target|coverage|vendor)$/i.test(top)) continue;
+    count.set(top, (count.get(top) || 0) + 1);
+  }
+  const tops = [...count].sort((a, b) => b[1] - a[1]).slice(0, INIT_MAX).map(([t]) => t);
+  if (!tops.length) return TEMPLATE;
+  const lines = [`# P ${path.basename(dir)}`, '这棵树按项目的文件夹自动生成，每个文件夹一个需求。改名、合并、删掉都行；你和 AI 聊天时提的长期要求，会自动记到对应的需求下面。', ''];
+  tops.forEach((t, i) => lines.push(`## R${i + 1} ${t}`, `> 文件：${t}/**`, ''));
+  return lines.join('\n');
+}
+
 const metaDir = treePath => path.join(path.dirname(treePath), '.reqtree');
 const metaFile = (treePath, name) => path.join(metaDir(treePath), name);
 
@@ -445,7 +467,7 @@ function flushQueue(treePath, { write } = {}) {
 }
 
 module.exports = {
-  findTree, samePath, pathKey, caseInsensitive, TEMPLATE, metaFile, readJson, writeJson, readTail,
+  findTree, samePath, pathKey, caseInsensitive, TEMPLATE, initialTree, metaFile, readJson, writeJson, readTail,
   updateTree, updateTreeAsync, compileTree, readCompileStatus,
   isEditing, setEditing, submitOps, flushQueue, dropQueued, appendLog, newChangeId, describeOp,
   readState, updateState, writeRecorderStatus, readRecorderStatus, touch, readTouched,
