@@ -40,7 +40,7 @@ The recorder relies on a small model and sometimes gets it wrong: say you meant 
 
 **Step 4: as rules pile up, it tidies them.** Over time some rules repeat, some contradict, some go stale. Click "Check-up" and it merges duplicates, resolves contradictions and clears out stale ones. Every change can be undone; it only asks you when it genuinely can't decide.
 
-![How ReqTree works: what comes in, background tidying, where it's stored, who it reaches](docs/images/architecture.en.svg)
+![How ReqTree works: what comes in, background tidying, where it's stored, who it reaches](docs/images/architecture.en.png)
 
 ## Rules, docs and memory: what goes where
 

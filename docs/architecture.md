@@ -2,7 +2,7 @@
 
 用途：给想看懂、想改这个项目的人。先用一张图讲清楚整体，再讲每一部分做什么、为什么这样设计。不需要先懂 Claude Code 的内部机制，用到的地方会解释。
 
-![需求树是怎么工作的](images/architecture.svg)
+![需求树是怎么工作的](images/architecture.png)
 
 ## 一句话
 
