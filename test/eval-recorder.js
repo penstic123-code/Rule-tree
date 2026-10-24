@@ -71,6 +71,27 @@ const CASES = [
     const where = [...walk(parse(t))].find(n => n.rules.some(x => /伦敦/.test(x.text)));
     return where ? `挂到了 ${where.id}` : '没记下来';
   }, ['C2.1']],
+  // 0.14 起记录员知道「这个会话正在做的需求」（第 6 项）：听起来像通用的话，默认挂在正在做的需求上；明说全项目才挂根节点
+  ['正在做第1章：听着通用的要求挂第1章', '例子都要配图', '好的', (ops, t) => {
+    if (rulesOf(t, 'C2.1').some(x => /配图/.test(x.text))) return null;
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /配图/.test(x.text)));
+    return where ? `挂到了 ${where.id}` : '没记下来';
+  }, [], ['C2.1']],
+  ['正在做第1章：明说所有课才挂根节点', '以后所有课的例子都要配图', '好的，所有课都照这个来', (ops, t) => {
+    if (rulesOf(t, 'P').some(x => /配图/.test(x.text))) return null;
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /配图/.test(x.text)));
+    return where ? `挂到了 ${where.id}` : '没记下来';
+  }, [], ['C2.1']],
+  ['正在做数据科学课：点名第1章就挂第1章', '第1章开头放一张伦敦地图', '好，第1章开头加地图', (ops, t) => {
+    if (rulesOf(t, 'C2.1').some(x => /地图/.test(x.text))) return null;
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /地图/.test(x.text)));
+    return where ? `挂到了 ${where.id}` : '没记下来';
+  }, [], ['C2']],
+  ['正在做第1章：沟通方式还是挂根节点', '回答先给结论，再讲细节', '好的', (ops, t) => {
+    if (rulesOf(t, 'P').some(x => /结论/.test(x.text))) return null;
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /结论/.test(x.text)));
+    return where ? `挂到了 ${where.id}` : '没记下来';
+  }, [], ['C2.1']],
 ];
 
 function ask(prompt) {
@@ -101,6 +122,8 @@ const SWEEP_CASES = [
 
 (async () => {
   const runs = Number(process.argv[2]) || 1;
+  // 第二个参数：只跑名字里带这几个字的用例（省额度）
+  const only = process.argv[3] || '';
   const one = (name, prompt, check, allowed) => Array.from({ length: runs }, async () => {
     let ops = await ask(prompt);
     if (!ops) return { name, ok: false, why: '模型没返回 JSON' };
@@ -110,8 +133,8 @@ const SWEEP_CASES = [
     return { name, ok: !why, why, ops };
   });
   const results = await Promise.all([
-    ...CASES.flatMap(([name, user, ai, check, touched = []]) => one(name, buildPrompt(TREE, [{ user, ai }], touched, []), check)),
-    ...SWEEP_CASES.flatMap(([name, msgs, check]) => one(name, buildSweepPrompt(TREE, msgs), check, SWEEP_OPS)),
+    ...CASES.filter(c => !only || c[0].includes(only)).flatMap(([name, user, ai, check, touched = [], focus = []]) => one(name, buildPrompt(TREE, [{ user, ai }], touched, [], [], false, focus), check)),
+    ...SWEEP_CASES.filter(c => !only || c[0].includes(only)).flatMap(([name, msgs, check]) => one(name, buildSweepPrompt(TREE, msgs), check, SWEEP_OPS)),
   ]);
   let pass = 0;
   for (const r of results) {

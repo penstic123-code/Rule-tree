@@ -32,13 +32,13 @@ Here's one example, start to finish. You're building a data science course and w
 
 The recorder relies on a small model and sometimes gets it wrong: say you meant pictures for this chapter only, and it recorded "every chapter needs pictures". Open "Recent changes" at the bottom of the sidebar, where every change is listed (when, which requirement, what it became), find the wrong one and click "Undo" next to it. The tree goes back to how it was before.
 
-**Step 2: next time the AI edits chapter 3, the rule shows up by itself.** Next week you start a new conversation and ask the AI to edit chapter 3. As soon as it opens chapter 3's file, "every example needs a picture" appears in front of it, without you saying it again. When it edits chapter 5, the rule doesn't appear, because it belongs to chapter 3 only. Rules reach the AI by file: for any task, the AI reads only the rules inherited from the levels above plus the task's own rules, and nothing from other tasks.
+**Step 2: next time the AI edits chapter 3, the rule shows up by itself.** Next week you start a new conversation and ask the AI to edit chapter 3. As soon as it opens chapter 3's file, "every example needs a picture" appears in front of it, without you saying it again. When it edits chapter 5, the rule doesn't appear, because it belongs to chapter 3 only. Rules reach the AI by file: for any task, the AI reads only the rules set at the levels above (say, the whole project's and this course's) plus the task's own rules, and nothing from other tasks.
 
 ![Only the rules on the path to the file being edited come along](docs/images/en/scope.png)
 
 **Step 3: you can see the whole picture at any time.** The sidebar shows a tree: each course and each chapter is a "requirement", with its rules and status (in progress, to do, done). Whichever chapter the AI is editing lights up.
 
-**Step 4: as rules pile up, it tidies them.** Over time some rules repeat, some contradict, some go stale. Click "Check-up" and it merges duplicates, resolves contradictions and clears out stale ones. Every change can be undone; it only asks you when it genuinely can't decide.
+**Step 4: as rules pile up, it tidies them.** Over time some rules repeat, some contradict, some go stale. There's a "Check-up" button at the top of the sidebar; click it and it merges duplicates, resolves contradictions and clears out stale ones. What it's sure about it fixes directly, and every fix can be undone; what it isn't sure about it leaves alone and asks you.
 
 ![How ReqTree works: what comes in, background tidying, where it's stored, who it reaches](docs/images/architecture.en.png)
 
@@ -161,7 +161,7 @@ When editing chapter 1, the AI reads "the opening may run to 6 lines"; for every
 **Check-up.** Rules used for long enough repeat, contradict and go stale. Click "Check-up" in the sidebar and it:
 
 - merges duplicate rules, and removes a sub-requirement's rule that repeats one from above
-- resolves contradictions: if one rule is clearly the later word, that one wins; it asks you only when it can't tell
+- resolves contradictions: when two rules in the same requirement disagree, the one recorded later wins, fixed directly; when it can't tell, it changes nothing and only asks you
 - tidies the AI's auto memory: notes already in the tree are deleted, project rules move into the tree
 - tidies docs and CLAUDE.md: lines that repeat the tree are deleted, rules that belong in the tree move there
 
@@ -206,6 +206,29 @@ Each experiment answers one question. Raw data and conditions are in [`测试数
 The recorder mostly meets a handful of situations: you restate an old rule in other words; you change your mind; you give a new rule; you ask for a one-off edit; you reject a rule. Run against the real model five times each, the recorder got every one right: no duplicates added, changed minds rewrote the original rule, one-offs weren't recorded.
 
 ![Recorder accuracy](docs/images/en/chart-recorder.png)
+
+### Does the recorder file what you say under the requirement you're working on?
+
+While editing chapter 1 you say "every example needs a picture". It sounds like a general rule, but you most likely mean chapter 1. The same sentence, three runs each against the real model:
+
+| Version | Filed under |
+|---|---|
+| Old (only knew "this turn edited chapter 1") | The whole project, all 3 times |
+| Now (knows this conversation is working on chapter 1) | Chapter 1, all 3 times |
+
+Three more situations, three runs each, all correct: say "from now on, every course" and it goes to the whole project; while working on the data science course, mention "chapter 1" and it goes to chapter 1; a communication preference unrelated to content, like "give the conclusion first", goes to the whole project.
+
+### Does the check-up change the tree wrongly?
+
+Three rounds against the real model on a copy of my course project (8 requirements with 6 or more rules each), fixing what each round found:
+
+| Round | Contradictions reported | False alarms | Changed without asking |
+|---|---|---|---|
+| 1 | 4 | 3 | 1, and the change was wrong |
+| 2 | 0 | 0 | 0 |
+| 3 | 2 | 1 | 0 |
+
+The real one in round 3: one rule said "pick one of four skins", while another in the same requirement said "only three of them are usable". The small model still raises the occasional false alarm, so there's now a floor: when it isn't sure, it changes nothing and only asks you. A false alarm costs one question, never a wrong change. A feature that split requirements with many rules into sub-requirements never once applied in three rounds, and has been removed.
 
 ### Compared with letting the AI maintain its own rule document?
 

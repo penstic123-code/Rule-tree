@@ -561,7 +561,11 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
         const open = new Set(Q.readQuestions(treePath).filter(q => q.status === 'open' || q.auto).map(q => q.text));
         for (const q of picked) {
           if (open.has(q.text)) continue;
-          const st = await settle(treePath, { source: '体检', text: q.text, options: q.options, default: q.default, sure: !!q.sure }, { write });
+          // 有把握：直接按默认做法改，不问。没把握：先什么都不改（默认选「都留着」），只问你。
+          // 实测（测试数据记录.md 第十一节）：Haiku 偶尔误报冲突，没把握时先改上去，误报就成了误改
+          const keep = q.options.findIndex(o => !o.ops.length);
+          const def = !q.sure && keep >= 0 ? keep : q.default;
+          const st = await settle(treePath, { source: '体检', text: q.text, options: q.options, default: def, sure: !!q.sure }, { write });
           if (st.question) result.questions.push(st.question); else result.auto.push(st.auto);
         }
       }
