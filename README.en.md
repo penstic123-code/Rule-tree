@@ -162,7 +162,6 @@ When editing chapter 1, the AI reads "the opening may run to 6 lines"; for every
 
 - merges duplicate rules, and removes a sub-requirement's rule that repeats one from above
 - resolves contradictions: if one rule is clearly the later word, that one wins; it asks you only when it can't tell
-- splits a requirement with too many rules into sub-requirements when the rules divide by file (e.g. half of them only concern chapter pages)
 - tidies the AI's auto memory: notes already in the tree are deleted, project rules move into the tree
 - tidies docs and CLAUDE.md: lines that repeat the tree are deleted, rules that belong in the tree move there
 

@@ -130,7 +130,7 @@ class Panel {
     this.trees = findTrees().map(p => {
       // 树一变就编译成原生规则（内容没变不会重写）。不等锁：锁被占着说明别人正在写树，它释放前会编译
       try { store.compileTree(p, { wait: false }); } catch (e) { console.error(e); }
-      // 记下开始跟踪的时间，顺便把旧版本拆开存的状态文件迁移进 state.json
+      // 记下开始跟踪的时间（判断「久未动」从这一刻算起）
       let state;
       try { state = store.ensureTracking(p); } catch (e) { console.error(e); state = store.readState(p); }
       return {
@@ -345,17 +345,16 @@ class Panel {
     if (r.docMissing && r.docMissing.length) notes.push(T('q.docMissing', r.docMissing));
     if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
-    const auto = r.auto || [], split = r.split || [];
-    const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length, split.length);
+    const auto = r.auto || [];
+    const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length);
     const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
     if (asked) report.push(T('q.reportQuestions', asked), '', ...newQs.map(q => `- ${qText(q)}`), '');
     // 要你动手的在前，做完了的、只给你知道的在后
     if (notes.length) report.push(T('q.reportNotes'), '', ...notes.map(n => `- ${n}`), '');
     // 直接处理了的：问题记录写「问的事 → 按哪个做的」，删文档重复的直接写做了什么
     if (auto.length) report.push(T('q.reportAuto', auto.length), '', ...auto.map(a => `- ${qText(a)}${a.options ? ` → ${optLabel(a.options[a.default])}` : ''}`), '');
-    if (split.length) report.push(T('q.reportSplit'), '', ...split.map(s => `- ${T('q.splitLine', s.title, s.id, s.node, s.globs.join(', '), s.rules)}`), '');
     if (r.merged.length) report.push(T('q.reportMerged'), '', ...r.merged.map(o => `- ${o.node}：${o.text}`), '');
-    if (!asked && !notes.length && !auto.length && !split.length && !r.merged.length) report.push(T('q.reportNone'), '');
+    if (!asked && !notes.length && !auto.length && !r.merged.length) report.push(T('q.reportNone'), '');
     const reportFile = store.metaFile(p, 'checkup-report.md');
     try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, report.join('\n')); } catch {}
     const buttons = [T('q.report'), ...(asked ? [T('q.answer')] : [])];

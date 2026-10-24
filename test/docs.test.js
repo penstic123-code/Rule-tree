@@ -129,29 +129,6 @@ test('体检：下级重复了上级已有的规则，删下级的；上级范�
   assert.match(fs.readFileSync(tree, 'utf8'), /## C2 别的\n> 文件：d\/\*\*\n- 每章配图/, '兄弟需求不算上级');
 });
 
-test('体检：分组时某组只管一部分文件，拆成子需求（可撤销）；范围不变窄、规则太少的不拆', async () => {
-  const { dir, tree } = project();
-  for (const n of ['ch01.html', 'ch02.html']) fs.writeFileSync(path.join(dir, 'c', n), '');
-  fs.mkdirSync(path.join(dir, 'c', 'js'));
-  fs.writeFileSync(path.join(dir, 'c', 'js', 'a.js'), '');
-  fs.writeFileSync(tree, '# P 项目\n\n## C1 课\n> 文件：c/**\n- 句子要短\n- 少用你\n- 不写元语言\n- 用 pointer 事件\n- 存储加 try\n- 不用 CDN\n');
-  const cats = [{ node: 'C1', groups: [
-    { name: '写作', files: ['c/ch*.html'], rules: ['句子要短', '少用你', '不写元语言'] },
-    { name: '技术', files: ['c/**'], rules: ['用 pointer 事件', '存储加 try', '不用 CDN'] },
-  ] }];
-  process.env.FAKE_OUT = JSON.stringify({ questions: [], categories: cats });
-  let r;
-  try { r = await runCheckup(tree, { memory: false, parts: { rules: true, memory: false, docs: false } }); } finally { delete process.env.FAKE_OUT; }
-  assert.deepStrictEqual(r.split.map(s => [s.id, s.title, s.globs.join()]), [['C1.1', '写作', 'c/ch*.html']]);
-  const t = fs.readFileSync(tree, 'utf8');
-  assert.match(t, /### C1\.1 写作\n> 文件：c\/ch\*\.html\n- 句子要短\n- 少用你\n- 不写元语言/);
-  assert.ok(!/## C1 课[\s\S]*- 句子要短[\s\S]*### C1\.1/.test(t), '从上级搬走了');
-  const ch = store.readChanges(tree)[0];
-  assert.ok(store.undoChange(tree, ch.id));
-  assert.strictEqual(fs.readFileSync(tree, 'utf8').includes('C1.1'), false, '撤销后合回去');
-  assert.match(fs.readFileSync(tree, 'utf8'), /- 句子要短/);
-});
-
 test('长文档附目录（每节标题和行号），只挂一节写那一节的行号；短文档不附；节名找不到时体检提醒', () => {
   const { dir, tree } = project();
   const long = '# 写作规范\n用途：怎么写正文\n\n## 一、内容原则\n' + '内容。\n'.repeat(400) + '\n## 一C、写作风格\n' + '风格。\n'.repeat(400) + '\n## 二、互动\n```\n## 代码块里的不算\n```\n' + '互动。\n'.repeat(300);

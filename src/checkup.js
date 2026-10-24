@@ -5,7 +5,7 @@
 //    留写在后面的那条（以最新为准），前面的删掉；下级重复了上级已有的规则，删下级那条
 // 2. 标着 🔨 很久没动的需求，变成问题（不调用模型）
 // 3. 要判断的交给模型（只在用户主动体检时调用）：规则冲突、几个需求都有的同一条该不该提到上级、规则多的需求怎么分组
-//    （某组只管一部分文件时拆成子需求）。模型给出默认做法和有没有把握（sure）：有把握的直接做，没把握的问
+//    。模型给出默认做法和有没有把握（sure）：有把握的直接做，没把握的问
 // 4. 设置 reqtree.memoryMode 为 dedupe（默认，「分工」）时，Claude Code 自动记忆逐份按分工判断（同一次模型调用）：
 //    分工：需求树和 CLAUDE.md 管这个项目应该是什么样、该怎么做；自动记忆只记和项目内容无关的事（用户本人、工具和环境、私人信息、外部资源）。
 //    已经写在树里的删掉、是项目规则的搬进树、过时的删掉（删前备份，可撤销）；和树冲突又判断不了哪边新的才问
@@ -17,7 +17,7 @@ const path = require('path');
 const store = require('./store');
 const Q = require('./questions');
 const Docs = require('./docs');
-const { parse, walk, sameMeaning, findById, norm, globToRegExp, nextChildId } = require('./parser');
+const { parse, walk, sameMeaning, findById, norm, globToRegExp } = require('./parser');
 
 // 体检的问题里，选项只能做这几种改动
 const CHECK_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'override_rule']);
@@ -279,7 +279,7 @@ ${conflicts ? `找出说法互相冲突、要用户拍板的规则：上级和�
 - 下级算例外：[{"op":"remove_rule","node":"下级ID","text":"下级原文"},{"op":"override_rule","node":"下级ID","from":"上级ID","text":"上级原文","new":"下级原文"}]
 - 统一用上级的：[{"op":"remove_rule","node":"下级ID","text":"下级原文"}]
 - 两条都留着：[]
-同一个需求里的两条冲突：留后面那条（remove_rule 前面的）、留前面那条（remove_rule 后面的）、两条都留着。
+同一个需求里的两条冲突：留后面那条（remove_rule 前面的）、留前面那条（remove_rule 后面的）、两条都留着。写在后面的那条是后来记的（记录员总是往后加），所以默认留后面那条，sure 写 true。
 另外找几个兄弟需求里都有的同一条规则（措辞不同也算），写成同样格式的问题：提到它们共同的上级（每处 remove_rule，再在上级 add_rule），或者不动。上级是最顶上的需求时，只有这条对整个项目都成立才提。
 以「决定：」开头的规则是用户拍板定下的：不要提议删掉或改掉它，除非另一条更新的「决定：」推翻了它。
 default 是最可能的那个选项的序号（从 0 起）。sure：有把握时写 true（一条明显是后来的说法、下级明显是有意的例外、提到上级明显成立），拿不准、只有用户能定的写 false；有把握的会直接按 default 处理，不问用户。最多 ${MAX_CHECK_QUESTIONS} 个问题。
@@ -472,36 +472,6 @@ async function settle(treePath, q, { write }) {
   return { question: rec, auto: null, applied };
 }
 
-// 拆需求：分组时模型说某组规则只管这个需求的一部分文件（files）→ 拆成子需求，这组规则搬过去。
-// 只在真能少加载时拆：files 匹配得到文件、都落在这个需求的范围里、又比这个需求的文件少；至少 SPLIT_MIN 条规则；
-// 带键的规则（覆盖关系）不搬；全局的需求（没有文件对应）不拆。返回 [{ node, title, globs, ops }]，每个拆分单独记一条改动
-const SPLIT_MIN = 3;
-function splitPlan(text, categories, projectDir) {
-  const { scopeOf } = require('./compile');
-  const root = parse(text);
-  let files = null;
-  const out = [];
-  for (const item of Array.isArray(categories) ? categories : []) {
-    const node = item && typeof item.node === 'string' && findById(root, item.node.trim());
-    const scope = node && scopeOf(node);
-    if (!scope || !Array.isArray(item.groups)) continue;
-    const scopeRes = scope.map(globToRegExp);
-    for (const g of item.groups) {
-      const globs = (g && Array.isArray(g.files) ? g.files : []).filter(s => typeof s === 'string' && s.trim() && !s.includes('..')).map(s => s.trim().replace(/^\.?\//, ''));
-      if (!globs.length || typeof g.name !== 'string' || !g.name.trim()) continue;
-      const rules = [...new Set((Array.isArray(g.rules) ? g.rules : []).map(r => typeof r === 'string' && node.rules.find(x => norm(x.text) === norm(r))).filter(Boolean))];
-      if (rules.length < SPLIT_MIN || rules.length >= node.rules.length || rules.some(r => r.key)) continue;
-      files = files || projectFiles(projectDir);
-      const inScope = files.filter(f => scopeRes.some(re => re.test(f)));
-      const res = globs.map(globToRegExp);
-      const matched = files.filter(f => res.some(re => re.test(f)));
-      if (!matched.length || matched.some(f => !scopeRes.some(re => re.test(f))) || matched.length >= inScope.length) continue;
-      out.push({ node: node.id, title: g.name.replace(/[\r\n]+/g, ' ').trim().slice(0, 20), globs, rules: rules.map(r => r.text) });
-    }
-  }
-  return out;
-}
-
 // 做一次体检。read：读树的当前内容（插件传编辑器里的内容）；write：插件的 writeTree；
 // model：false 时不调用模型；ask：调用模型的函数（测试可以换）；
 // memory：自动记忆文件夹，不传就按项目找（src/memory.js），false 不查记忆（设置 reqtree.memoryMode 为 treeOnly 时）。
@@ -513,14 +483,14 @@ function splitPlan(text, categories, projectDir) {
 //        categorized 规则分了组的需求 ID（只改面板显示）, questions 新加的冲突问题,
 //        docs 新加的文档问题, docDup 文档里和树重复、可以删的 [{ doc, text, node }], docMissing 挂了却不存在的文档, docUnlinked 没挂的文档,
 //        docConflicts 文档和树说法不同的 [{ doc, text, node, rule }]（以树为准，不问，只在报告里列）, toDoc 该挪进文档的记忆 [{ file, node, docs }], auto 有把握、直接处理了的（问题记录或 { text, t }，都可以在「最近改动」里撤销）,
-//        split 拆出来的子需求 [{ node, id, title, globs, rules }], checked { notes, docs, calls, failed } 这次看了几份、调用几次模型、几次出错, error 最后一次调用模型出错的说明 }
+//        checked { notes, docs, calls, failed } 这次看了几份、调用几次模型、几次出错, error 最后一次调用模型出错的说明 }
 async function runCheckup(treePath, { read, write, model = true, ask, memory, parts = {}, full = false, progress } = {}) {
   const rec = require('../hooks/recorder');
   const mem = require('./memory');
   const readText = read || (p => fs.readFileSync(p, 'utf8'));
   const want = { rules: parts.rules !== false, memory: parts.memory !== false && memory !== false, docs: parts.docs !== false };
   const result = { merged: [], stale: [], memory: [], removed: [], scope: [], noFiles: [], missing: [], categorized: [], questions: [],
-    docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], toDoc: [], auto: [], split: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
+    docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], toDoc: [], auto: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
   const projectDir = path.dirname(treePath);
   const asked = new Set(Q.readQuestions(treePath).map(q => q.memKey).filter(Boolean));
 
@@ -579,25 +549,12 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
       const text = readText(treePath);
       const memSegs = batch.filter(s => s.kind === 'mem'), docSegs = batch.filter(s => s.kind === 'doc');
       const prompt = buildCheckPrompt(text, memSegs.map(s => s.block).join('\n\n'), memSegs.length ? claudeMd : '',
-        first ? Cat.promptTask(text, Cat.read(treePath), projectFiles(projectDir)) : '', docSegs.map(s => s.block).join('\n\n'), first);
+        first ? Cat.promptTask(text, Cat.read(treePath)) : '', docSegs.map(s => s.block).join('\n\n'), first);
       const out = await askModel(prompt);
       if (first) {
         rulesDone = true;
         // 规则分类：只改面板的显示方式
         if (out && Array.isArray(out.categories)) try { result.categorized = Cat.save(treePath, text, out.categories); } catch (e) { rec.log('规则分类没存上：' + e.message); }
-        // 只管一部分文件的组拆成子需求
-        if (out && Array.isArray(out.categories)) for (const sp of splitPlan(text, out.categories, projectDir)) {
-          try {
-            const now = parse(readText(treePath));
-            const parent = findById(now, sp.node);
-            if (!parent || !sp.rules.every(t => parent.rules.some(r => r.text === t))) continue;
-            const id = nextChildId(now, parent);
-            const ops = [{ op: 'add_node', parent: sp.node, id, title: sp.title }, { op: 'add_files', node: id, globs: sp.globs },
-              ...sp.rules.flatMap(t => [{ op: 'remove_rule', node: sp.node, text: t }, { op: 'add_rule', node: id, text: t, force: true }])];
-            const done = await store.applyChange(treePath, ops, { source: '体检', write });
-            if (done.length) result.split.push({ node: sp.node, id, title: sp.title, globs: sp.globs, rules: sp.rules.length });
-          } catch (e) { rec.log('拆需求出错：' + e.stack); }
-        }
         const ctx = { root: parse(text), unmapped: [], user: '' };
         const picked = rec.pickQuestions(out && out.questions, { text, ops: [], ctx, allowed: CHECK_OPS, max: MAX_CHECK_QUESTIONS }).questions;
         // 同样的问题还开着、或者以前直接处理过（用户可能撤销了），就不再提
@@ -659,8 +616,8 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   }
   // 一批都没调用成功：记忆至少按字面查一遍重复
   if (memDir && plan.calls && result.checked.failed === plan.calls) literalMemory();
-  rec.log(`体检：看了 ${plan.notes.length} 份记忆、${plan.docs.length} 份文档，调用模型 ${plan.calls} 次（出错 ${result.checked.failed} 次）；直接处理 ${result.auto.length} 项、拆出 ${result.split.length} 个子需求；问用户 ${result.questions.length} 个冲突、${result.memory.length} 个记忆问题、${result.docs.length} 个文档问题；删掉 ${result.removed.length} 份已在树里的记忆`);
+  rec.log(`体检：看了 ${plan.notes.length} 份记忆、${plan.docs.length} 份文档，调用模型 ${plan.calls} 次（出错 ${result.checked.failed} 次）；直接处理 ${result.auto.length} 项；问用户 ${result.questions.length} 个冲突、${result.memory.length} 个记忆问题、${result.docs.length} 个文档问题；删掉 ${result.removed.length} 份已在树里的记忆`);
   return result;
 }
 
-module.exports = { duplicateOps, buildCheckPrompt, runCheckup, checkPlan, memoryPlan, docPlan, docProblems, scopeProblems, splitPlan, settle, CHECK_OPS };
+module.exports = { duplicateOps, buildCheckPrompt, runCheckup, checkPlan, memoryPlan, docPlan, docProblems, scopeProblems, settle, CHECK_OPS };

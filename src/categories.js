@@ -6,7 +6,7 @@
 // 分类不影响规则怎么加载、怎么记，只是给人看的
 const fs = require('fs');
 const store = require('./store');
-const { parse, walk, findById, norm, globToRegExp } = require('./parser');
+const { parse, walk, findById, norm } = require('./parser');
 
 const FILE = 'categories.json';
 const MIN_RULES = 6; // 规则少于这么多条的需求不分组，一眼就能看完
@@ -61,46 +61,13 @@ function save(treePath, text, list) {
   return done;
 }
 
-// 一个需求范围里的文件长什么样：按「文件夹/名字前缀*扩展名」归类计数（ch01-cholera.html → ch*.html），最多 PATTERNS 类。
-// 模型看到这个，才知道某组规则能不能只挂一部分文件（第一轮真实测试：不给文件分布，模型一次也没给出 files）
-const PATTERNS = 10;
-function filePatterns(files) {
-  const count = new Map();
-  for (const f of files) {
-    const i = f.lastIndexOf('/');
-    const dir = i < 0 ? '' : f.slice(0, i + 1), name = f.slice(i + 1);
-    const m = name.match(/^([^\d]*?)\d[^.]*(\.[a-z0-9]+)$/i);
-    const key = dir + (m ? `${m[1]}*${m[2]}` : name);
-    count.set(key, (count.get(key) || 0) + 1);
-  }
-  const list = [...count].sort((a, b) => b[1] - a[1]);
-  const shown = list.slice(0, PATTERNS).map(([k, n]) => (n > 1 ? `${k}（${n} 个）` : k));
-  // 先列文件夹（各有多少个文件），再列最多的几类文件名
-  const dirs = new Map();
-  for (const f of files) { const i = f.lastIndexOf('/'); const d = i < 0 ? '（根目录）' : f.slice(0, i + 1); dirs.set(d, (dirs.get(d) || 0) + 1); }
-  const dl = [...dirs].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([d, n]) => `${d} ${n} 个`);
-  return `文件夹：${dl.join('、')}${dirs.size > 8 ? ` 等 ${dirs.size} 个文件夹` : ''}；常见文件：${shown.join('、')}`;
-}
-
-// 体检提示词里的这一段：哪些需求要分组、已有的分类名；files（项目里的文件，相对路径）给了就附上每个需求范围里的文件分布
-function promptTask(text, cats, files = []) {
-  const nodes = [...walk(parse(text))].filter(n => n.id && n.rules.length >= MIN_RULES);
-  if (!nodes.length) return '';
-  const big = nodes.map(n => n.id);
+// 体检提示词里的这一段：哪些需求要分组、已有的分类名
+function promptTask(text, cats) {
+  const big = [...walk(parse(text))].filter(n => n.id && n.rules.length >= MIN_RULES).map(n => n.id);
+  if (!big.length) return '';
   const used = names(cats);
-  const { scopeOf } = require('./compile');
-  const layout = files.length ? nodes.map(n => {
-    const scope = scopeOf(n);
-    if (!scope) return '';
-    const res = scope.map(globToRegExp);
-    const mine = files.filter(f => res.some(re => re.test(f)));
-    return mine.length ? `- ${n.id}（${scope.join('、')}）：${filePatterns(mine)}` : '';
-  }).filter(Boolean) : [];
   return `
-另外给规则多的需求（${big.join('、')}）的规则分组，在面板上分类显示。每个需求分 2–${MAX_GROUPS} 组，组名 2–4 个字，说清这组管什么（例：画风、写作、互动、练习、工作流、技术），用需求树的语言；同一个意思在全项目用同一个组名${used.length ? `，已有的组名尽量沿用：${used.join('、')}` : ''}。每条规则都放进一组，rules 里写树里的原文（不含 [键]）。写进 categories。
-某一组规则只管这个需求里的一部分文件时，在这组加 files：glob 列表（相对项目根，要落在这个需求的文件范围里）。这样的组会拆成子需求，AI 改别的文件时就不用加载这组规则。例：一门课的规则里，「页内样式类名加章节前缀」「存储走 common.js 的封装」只管脚本和样式，可以写 files ["DataScience/js/**", "DataScience/css/**"]；「每章配三张图」只管正文页，写 ["DataScience/ch*.html"]。管这个需求全部文件的组、拿不准的组不写 files。${layout.length ? `
-各需求范围里的文件分布（写 files 时照这个写）：
-${layout.join('\n')}` : ''}
+另外给规则多的需求（${big.join('、')}）的规则分组，在面板上分类显示，不改规则本身。每个需求分 2–${MAX_GROUPS} 组，组名 2–4 个字，说清这组管什么（例：画风、写作、互动、练习、工作流、技术），用需求树的语言；同一个意思在全项目用同一个组名${used.length ? `，已有的组名尽量沿用：${used.join('、')}` : ''}。每条规则都放进一组，rules 里写树里的原文（不含 [键]）。写进 categories。
 `;
 }
 

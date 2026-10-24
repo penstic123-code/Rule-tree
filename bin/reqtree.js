@@ -213,7 +213,7 @@ const USAGE = `用法：
   reqtree tree  <文件>          打印整棵树
   reqtree rules <文件> <ID>     打印某个节点实际生效的规则（含继承与覆盖）
   reqtree check <文件>          检查重复 ID、重复规则键、重复规则、很久没动的 🔨（只读）
-  reqtree check <文件> --fix    体检：合并重复规则，冲突、该提到上级的、能按文件拆开的需求有把握就直接改，拿不准的问你（都能撤销）
+  reqtree check <文件> --fix    体检：合并重复规则，冲突、该提到上级的有把握就直接改，拿不准的问你（都能撤销）
                                 （要调用模型；加 --no-model 不调用）；也按分工整理 Claude Code 自动记忆（--no-memory 不查）；还查挂的文档和 CLAUDE.md、AGENTS.md：
                                 和树重复的从文档里删掉、该进树的搬进树（只查上次之后改过的，--full 全部重查）
   reqtree map   <文件>          重建代码地图（每个需求这块已有的代码、依赖的公共模块）
@@ -243,7 +243,6 @@ async function checkFix(file, { model, memoryOn = true, full = false }) {
   for (const d of r.docMissing) console.log(`提醒：${d.node} 挂的文档 ${d.doc} 找不到`);
   for (const d of r.docUnlinked) console.log(`提醒：${d.doc} 在 ${d.node} 的文件夹里，却没挂上（在需求下写「> 文档：${d.doc}」）`);
   for (const a of r.auto || []) console.log(`直接处理：${a.text}${a.options ? ` → ${a.options[a.default].label}` : ''}（可以撤销）`);
-  for (const sp of r.split || []) console.log(`拆需求：${sp.node} 里只管 ${sp.globs.join(', ')} 的 ${sp.rules} 条规则，拆成 ${sp.id} ${sp.title}`);
   for (const d of r.docDup) console.log(`文档里和需求树重复、没法自动删的（表格里、带子项或找不准）：${d.doc}「${d.text}」（树里在 ${d.node}）`);
   for (const d of r.toDoc) console.log(`记忆 ${d.file} 像是 ${d.node} 的经验或进度，建议挪进${d.docs.length ? ` ${d.docs[0]}` : '它的文档'}`);
   const asked = [...r.stale, ...r.scope, ...r.memory, ...r.questions, ...r.docs];
