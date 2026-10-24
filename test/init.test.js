@@ -135,8 +135,10 @@ test('记忆和树冲突、树里那条是用户的话定下的：按时间判�
   assert.strictEqual(memNewer.sure, true);
   assert.strictEqual(memNewer.default, 0);
   assert.deepStrictEqual(memNewer.options[0].ops.map(o => o.op), ['replace_rule']);
-  // 树里那条是体检、初始化搬进来的（没有时间）：照模型说的，拿不准就问
-  assert.strictEqual(plan(it, { mtime: 9000 }).sure, false);
+  // 树里那条没有时间、模型也拿不准：按需求树，不问；要改掉「决定：」才问
+  const unsure = plan(it, { mtime: 9000 });
+  assert.strictEqual(unsure.sure, true);
+  assert.strictEqual(unsure.default, 1);
 });
 
 // ---------- 体检：文档跟着需求树改 ----------

@@ -154,21 +154,18 @@ test('体检（假模型）：记忆按分工逐份判断——有把握的直�
   assert.strictEqual(c.source, '体检');
   assert.ok(store.undoChange(tree, c.id));
   assert.ok(fs.existsSync(path.join(mem, 'talk.md')), '撤销后放回');
-  // 有把握的直接处理：搬进树、按更新的记忆改树、删过时的
-  assert.strictEqual(r.auto.length, 3, r.auto.map(q => q.text).join('\n'));
+  // 有把握的直接处理：搬进树、按更新的记忆改树、删过时的；拿不准哪边新的按需求树（删掉记忆），也不问
+  assert.strictEqual(r.auto.length, 4, r.auto.map(q => q.text).join('\n'));
   assert.match(read(tree), /## C1 课[\s\S]*- 最多开 5 个 agent 并行/);
   assert.ok(!fs.existsSync(path.join(mem, 'agents.md')), '搬进树后删掉记忆');
   assert.match(read(tree), /- 每章配 3 幅插图/);
   assert.ok(!read(tree).includes('每章配三张图'));
   assert.ok(!fs.existsSync(path.join(mem, 'old.md')));
-  // 拿不准哪边新的：默认做法（按需求树，删掉记忆）先写进去，同时问你
-  assert.strictEqual(r.memory.length, 1);
-  const q = r.memory[0];
-  assert.match(q.text, /para\.md/);
-  assert.strictEqual(q.defaultApplied, true);
+  assert.strictEqual(r.memory.length, 0);
+  assert.ok(r.auto.some(x => /para\.md/.test(x.text)));
   assert.ok(!fs.existsSync(path.join(mem, 'para.md')));
-  await Q.answerQuestion(tree, q.id, 0);
-  assert.match(read(tree), /段落不超过 6 行/, '改选「按记忆」：先撤销默认做法，再按记忆改');
+  assert.ok(store.undoChange(tree, changeOf('para.md').id));
+  assert.ok(fs.existsSync(path.join(mem, 'para.md')), '不满意可以在「最近改动」里撤销');
   // 撤销一项直接处理的：放回去，下次体检不会再删它
   assert.ok(store.undoChange(tree, changeOf('old.md').id));
   assert.ok(fs.existsSync(path.join(mem, 'old.md')));

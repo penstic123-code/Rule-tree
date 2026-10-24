@@ -294,7 +294,7 @@ ${conflicts ? `找出说法互相冲突、要用户拍板的规则：上级和�
 同一个需求里的两条冲突：留后面那条（remove_rule 前面的）、留前面那条（remove_rule 后面的）、两条都留着。写在后面的那条是后来记的（记录员总是往后加），所以默认留后面那条，sure 写 true。
 另外找几个兄弟需求里都有的同一条规则（措辞不同也算），写成同样格式的问题：提到它们共同的上级（每处 remove_rule，再在上级 add_rule），或者不动。上级是最顶上的需求时，只有这条对整个项目都成立才提。
 以「决定：」开头的规则是用户拍板定下的：不要提议删掉或改掉它，除非另一条更新的「决定：」推翻了它。
-default 是最可能的那个选项的序号（从 0 起）。sure：有把握时写 true（一条明显是后来的说法、下级明显是有意的例外、提到上级明显成立），拿不准、只有用户能定的写 false；有把握的会直接按 default 处理，不问用户。最多 ${MAX_CHECK_QUESTIONS} 个问题。
+default 是最可能的那个选项的序号（从 0 起）。sure 默认写 true，会直接按 default 处理（用户可以撤销），不问用户：同一需求里后写的为准，上下级之间下级算例外，提到上级要明显成立才提。只有要改掉一条「决定：」时写 false。最多 ${MAX_CHECK_QUESTIONS} 个问题。
 ` : `这次不用找规则冲突，questions 输出空数组。
 `}${memory ? MEMORY_TASK : ''}${docs ? DOC_TASK : ''}${categoryTask}
 只输出 JSON，不要任何别的文字；没有冲突就输出 {"questions":[]}：
@@ -401,8 +401,9 @@ function memoryPlan(items, { text, dir, projectDir, notes, asked, shown, clipped
         : { op: 'replace_rule', node: node.id, old: rule.text, text: said };
       // 哪边新：树里这条是用户的话定下的、有时间，就和记忆的修改时间比，不用模型猜，也不问
       const decided = ruleTime(node.id, rule.text);
-      const newer = decided ? (note.mtime > decided ? 'memory' : 'tree') : it.newer;
-      const sure = decided ? true : it.sure !== false;
+      // 模型也拿不准的按需求树；只有要改掉一条「决定：」时才问
+      const newer = decided ? (note.mtime > decided ? 'memory' : 'tree') : it.sure === false ? 'tree' : it.newer;
+      const sure = !(newer === 'memory' && rule.decision);
       q = {
         text: `记忆 ${it.file} 说「${said}」，需求树（${node.id}）说「${rule.text}」，以哪个为准？`,
         t: { k: 'q.memConflict', a: [it.file, said, node.id, rule.text] },
