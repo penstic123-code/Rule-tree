@@ -33,7 +33,7 @@ function godot() {
     'game/gameplay/stall.gd': 'extends Node\n## 路边摊\n\nvar shop: Shop\n\nfunc sell() -> void:\n\tEconomy.add_money(3)\n',
     'game/gameplay/stall.tscn': '[gd_scene format=3]\n\n[ext_resource type="Script" path="res://gameplay/stall.gd" id="1"]\n\n[node name="Stall" type="Node3D"]\n',
     'game/addons/plugin/x.gd': 'func third_party() -> void:\n\tpass\n',
-    '需求树.md': '# P 游戏\n\n## G1 玩法\n> 文件：game/gameplay/**\n- 店的价格从 Tuning 读\n\n## S1 系统\n> 文件：game/systems/**\n- 系统之间用 EventBus 通知\n',
+    '需求树.md': '# P 游戏\n\n## G1 玩法\n> 文件：game/gameplay/**\n- 店的价格从 Tuning 读\n\n## S1 系统\n> 文件：game/systems/**\n- 系统之间用 EventBus 通知\n\n## X1 脚本通用\n> 文件：*/*/*.gd\n- 加静态类型\n',
   });
   return { dir, tree: path.join(dir, '需求树.md') };
 }
@@ -88,7 +88,7 @@ test('重建地图：每个需求一份（同样的 paths），写了外部依�
   const { dir, tree } = godot();
   compile(tree, { targets: { claude: true } });
   const r = C.refresh(tree, { targets: { claude: true } });
-  assert.deepStrictEqual(r.nodes.sort(), ['G1', 'S1']);
+  assert.deepStrictEqual(r.nodes.sort(), ['G1', 'S1'], '按文件类型横切的 X1 不出地图');
   const rules = path.join(dir, '.claude', 'rules', 'reqtree');
   const g1 = fs.readFileSync(path.join(rules, 'map-G1.md'), 'utf8');
   assert.match(g1, /^---\npaths:\n  - "game\/gameplay\/\*\*"\n---/);

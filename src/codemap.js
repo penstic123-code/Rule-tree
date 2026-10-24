@@ -361,15 +361,16 @@ function renderNode(g, node, scope, shown = new Set()) {
   return { text: lines.join('\n'), files: mods.slice(0, 14).concat(deps.slice(0, 8)) };
 }
 
-// 全局地图：没有被任何需求覆盖的文件里最常被引用的，加上 Godot 的自动加载单例（全局可用，最该先复用）
-function renderGlobal(g, covered) {
+// 全局地图：Godot 的自动加载单例（全局可用，最该先复用）；hubs 时再加上没被任何需求覆盖的文件里最常被引用的。
+// 需求树已经按内容分好、各块有自己的地图时不列 hubs：剩下没覆盖的多半是旧版、备份，每次都加载反而是噪音
+function renderGlobal(g, covered, { hubs = true } = {}) {
   const score = f => (g.refs.get(f) || new Set()).size;
   const lines = [];
   if (g.autoloads.size) {
     const names = [...g.autoloads].filter(([f]) => g.files.has(f)).sort((a, b) => score(b[0]) - score(a[0])).map(([, n]) => n);
     lines.push(clip(`自动加载的单例（全局可用，按使用多少排）：${names.join('、')}`, 700));
   }
-  const top = [...g.files.keys()].filter(f => !covered(f) && score(f) >= 3 && !g.autoloads.has(f)).sort((a, b) => score(b) - score(a)).slice(0, 12);
+  const top = hubs ? [...g.files.keys()].filter(f => !covered(f) && score(f) >= 3 && !g.autoloads.has(f)).sort((a, b) => score(b) - score(a)).slice(0, 12) : [];
   if (top.length) lines.push('', '最常被引用的模块：', ...top.map(f => fileLine(g, f)));
   return fits(lines, GLOBAL_CHARS).join('\n');
 }
@@ -409,6 +410,9 @@ function refresh(treePath, { targets } = {}) {
   for (const n of walk(root)) {
     if (!n.id || !n.files.length || !autoLoads(n)) continue;
     const scope = scopeOf(n);
+    // 按文件类型横切的需求（*/js/**、*/ch*.html 这种，每个 glob 都以 * 开头）不出地图：它横跨各块内容，
+    // 列出来是别的课、别的模块的东西，混在一起反而误导；这些文件在各自内容需求的地图里
+    if (scope.every(s => s.startsWith('*'))) continue;
     allScopes.push(scope.map(globToRegExp));
     // 上级地图列过的文件不再列
     const shown = new Set();
@@ -420,7 +424,7 @@ function refresh(treePath, { targets } = {}) {
     maps.set(n.id, { scope, body: `## 代码地图：${where}\n动手前先看这块已经有什么，能复用就复用，别重写一份；改被很多文件用的模块要小心牵动面。${whoHint()}\n\n${r.text}` });
   }
   const covered = f => allScopes.some(res => res.some(re => re.test(f)));
-  const globalText = renderGlobal(g, covered);
+  const globalText = renderGlobal(g, covered, { hubs: maps.size === 0 });
   const foot = `\n\n（代码地图由 ${treeName} 的需求树插件按代码自动生成，代码改了会自动更新，不要手改。）\n`;
   const written = [], removed = [];
   const keepClaude = new Set(), keepCodex = new Set();
