@@ -49,6 +49,8 @@ const TEMPLATE = `# P 项目名
 // 文件跟着 .gitignore（不是 git 仓库就遍历，跳过依赖、构建产物和隐藏文件夹）；文件夹太多只取文件最多的 INIT_MAX 个。
 // 所有文件都在根目录、没有子文件夹时，退回模板
 const INIT_MAX = 12;
+// 按文件夹生成的树开头的说明。AI 初始化（src/init.js）认这句：还在，说明这棵树还没真正初始化过
+const FOLDER_INTRO = '这棵树按项目的文件夹自动生成，每个文件夹一个需求。改名、合并、删掉都行；你和 AI 聊天时提的长期要求，会自动记到对应的需求下面。';
 function initialTree(dir) {
   let files = [];
   try { files = require('./codemap').listFiles(dir, { any: true }); } catch {}
@@ -62,7 +64,7 @@ function initialTree(dir) {
   }
   const tops = [...count].sort((a, b) => b[1] - a[1]).slice(0, INIT_MAX).map(([t]) => t);
   if (!tops.length) return TEMPLATE;
-  const lines = [`# P ${path.basename(dir)}`, '这棵树按项目的文件夹自动生成，每个文件夹一个需求。改名、合并、删掉都行；你和 AI 聊天时提的长期要求，会自动记到对应的需求下面。', ''];
+  const lines = [`# P ${path.basename(dir)}`, FOLDER_INTRO, ''];
   tops.forEach((t, i) => lines.push(`## R${i + 1} ${t}`, `> 文件：${t}/**`, ''));
   return lines.join('\n');
 }
@@ -324,6 +326,8 @@ function describeOp(o) {
     case 'override_rule': return `在 ${o.node} 里把上级的${q(o.text)}改成${q(o.new)}`;
     case 'memory_remove': return o.wholeFile ? `删掉记忆文件 ${o.file}（${q(o.text)}）` : `删掉记忆 ${o.file} 里的${q(o.text)}`;
     case 'doc_remove': return `从 ${o.file} 里删掉${q(o.text)}`;
+    case 'doc_write': return `写入 ${o.file}`;
+    case 'doc_replace': return `把 ${o.file} 里的${q(o.text)}改成${q(o.new)}`;
     default: return o.op;
   }
 }
@@ -336,7 +340,7 @@ function logChange(treePath, entry) {
 }
 
 // 反操作里会出现的操作（applyOps 认的）
-const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore', 'doc_restore']);
+const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore', 'doc_restore', 'doc_put_back', 'doc_replace']);
 // 改文件、不改树的操作：记忆（src/memory.js）和文档（src/docs.js）
 const isFileOp = o => require('./memory').isMemoryOp(o) || require('./docs').isDocOp(o);
 const undoable = e => e.ops.every(o => (o.undo || []).every(u => UNDO_OPS.has(u.op)));
@@ -373,7 +377,7 @@ function applyChange(treePath, ops, { source, write, id } = {}) {
     const blocked = skipped.some(s => s.reason !== 'duplicate' && s.reason !== 'same');
     for (const o of fileOps) {
       let a = null;
-      if (!blocked) try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : o.op === 'doc_remove' ? Docs.removeDocText(treePath, o) : null; } catch {}
+      if (!blocked) try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : Docs.isDocOp(o) ? Docs.doDoc(treePath, o) : null; } catch {}
       if (a) applied.push(a); else skipped.push({ op: o, reason: blocked ? 'blocked' : 'no-rule' });
     }
     if (applied.length) {
@@ -394,8 +398,16 @@ function undoChange(treePath, id, { write } = {}) {
   // 记忆文件、文档的反操作（memory_restore、doc_restore）不改树，直接做
   const mem = require('./memory'), Docs = require('./docs');
   let count = 0;
-  for (const u of all.filter(isFileOp)) { try { if (u.op === 'doc_restore' ? Docs.restoreDoc(treePath, u) : mem.restoreMemory(u)) count++; } catch {} }
+  for (const u of all.filter(isFileOp)) { try { if (Docs.isDocOp(u) ? Docs.undoDoc(treePath, u) : mem.restoreMemory(u)) count++; } catch {} }
   const undo = all.filter(u => !isFileOp(u));
+  // 只有文件的反操作（初始化：需求树本身也是整份放回的）：不再写树，放回的树重新编译
+  if (!undo.length) {
+    if (count) {
+      logChange(treePath, { undone: id, time: Date.now() });
+      if (all.some(u => u.op === 'doc_put_back') && fs.existsSync(treePath)) compileTree(treePath, { force: true });
+    }
+    return write ? Promise.resolve(count > 0) : count > 0;
+  }
   const update = text => { const r = applyOps(text, undo); count += r.applied.length; return r.text; };
   return writeThen(treePath, update, write, () => {
     if (count) logChange(treePath, { undone: id, time: Date.now() });
@@ -467,7 +479,7 @@ function flushQueue(treePath, { write } = {}) {
 }
 
 module.exports = {
-  findTree, samePath, pathKey, caseInsensitive, TEMPLATE, initialTree, metaFile, readJson, writeJson, readTail,
+  findTree, samePath, pathKey, caseInsensitive, TEMPLATE, FOLDER_INTRO, initialTree, metaFile, readJson, writeJson, readTail,
   updateTree, updateTreeAsync, compileTree, readCompileStatus,
   isEditing, setEditing, submitOps, flushQueue, dropQueued, appendLog, newChangeId, describeOp,
   readState, updateState, writeRecorderStatus, readRecorderStatus, touch, readTouched,

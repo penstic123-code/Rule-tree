@@ -120,6 +120,13 @@
           const t = String(o.text || '');
           return T('op.doc_remove', String(o.file || ''), t.length > 60 ? t.slice(0, 59) + '…' : t);
         }
+        // 初始化整份写的文件（需求树、拆出来的文档、拆过的 CLAUDE.md）
+        case 'doc_write': return T('op.doc_write', String(o.file || ''));
+        // 体检按需求树改了文档里的一段话
+        case 'doc_replace': {
+          const cut = s => { s = String(s || ''); return s.length > 40 ? s.slice(0, 39) + '…' : s; };
+          return T('op.doc_replace', String(o.file || ''), cut(o.text), cut(o.new));
+        }
         default: return null;
       }
     };
@@ -267,7 +274,7 @@
     return foldSec('s-recent', 'recent', data, T('d.recent'), list.length, `<ul class="chgs">${list.map(c => {
       const fixed = !c.undone && c.undoable === false;
       return `<li class="chg${c.undone ? ' undone' : ''}">
-      <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source === '升级' ? T('x.upgradeName') : c.source === '体检' ? T('x.checkupName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
+      <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source === '升级' ? T('x.upgradeName') : c.source === '体检' ? T('x.checkupName') : c.source === '初始化' ? T('x.initName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
       ${changeLines(c, file, showIds).map(s => `<div class="cs">${esc(s)}</div>`).join('')}</li>`;
     }).join('')}</ul>`);
   }

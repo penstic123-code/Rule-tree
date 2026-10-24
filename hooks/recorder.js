@@ -282,10 +282,10 @@ function killTree(child) {
 }
 
 // 调用 claude。Windows 要经过 shell（claude 是 .cmd）；posix 直接按参数启动，免得路径里的 $、引号被 shell 解释
-function runModel(prompt, timeoutMs = TIMEOUT_MS) {
+function runModel(prompt, timeoutMs = TIMEOUT_MS, cmd = CLAUDE) {
   return new Promise(resolve => {
     const win = process.platform === 'win32';
-    const [file, ...args] = win ? [CLAUDE] : splitCommand(CLAUDE);
+    const [file, ...args] = win ? [cmd] : splitCommand(cmd);
     let child;
     try {
       child = spawn(file, args, {
@@ -315,9 +315,9 @@ function runModel(prompt, timeoutMs = TIMEOUT_MS) {
 const fail = (message, k, ...a) => Object.assign(new Error(message), { t: { k, a } });
 
 // 调用模型，返回它输出的 JSON 对象
-// timeoutMs：等多久（体检一批内容多，等得久些）
-async function askJson(prompt, { timeoutMs = TIMEOUT_MS } = {}) {
-  const res = await runModel(prompt, timeoutMs);
+// timeoutMs：等多久（体检一批内容多，等得久些）；cmd：换一个模型（初始化用 Sonnet）
+async function askJson(prompt, { timeoutMs = TIMEOUT_MS, cmd } = {}) {
+  const res = await runModel(prompt, timeoutMs, cmd);
   if (res.timedOut) throw fail(`调用模型超时（${Math.round(timeoutMs / 1000)} 秒没有返回）`, 'rec.err.timeout', Math.round(timeoutMs / 1000));
   if (res.error) throw fail(`调用模型失败：${res.error.message}`, 'rec.err.spawn', res.error.message);
   if (res.status !== 0) {

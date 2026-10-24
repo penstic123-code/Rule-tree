@@ -186,6 +186,71 @@ function restoreDoc(treePath, u) {
   return true;
 }
 
+// ---------- 整份写一个文件（初始化用：写需求树、从 CLAUDE.md 拆出去的新文档、拆过的 CLAUDE.md） ----------
+// 写之前整份备份（原来没有这个文件就记 null）；撤销（doc_put_back）时整份放回，原来没有的就删掉。
+// 放回之前把当时的内容也备份一份：初始化之后用户或记录员又改过，撤销也不会把那些改动弄丢
+function backupFile(projectDir, file, rel) {
+  const dir = path.join(projectDir, '.reqtree', 'doc-backup');
+  fs.mkdirSync(dir, { recursive: true });
+  const name = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${rel.replace(/[\\/:]/g, '_')}`;
+  fs.copyFileSync(file, path.join(dir, name));
+  return name;
+}
+function writeDoc(treePath, op) {
+  const projectDir = path.dirname(treePath);
+  const file = typeof op.file === 'string' && resolve(projectDir, op.file);
+  if (!file || typeof op.text !== 'string') return null;
+  let backup = null;
+  if (fs.existsSync(file)) {
+    if (fs.readFileSync(file, 'utf8') === op.text) return null;
+    backup = backupFile(projectDir, file, op.file);
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, op.text);
+  return { op: 'doc_write', file: op.file, undo: [{ op: 'doc_put_back', file: op.file, backup }] };
+}
+function putBack(treePath, u) {
+  const projectDir = path.dirname(treePath);
+  const file = typeof u.file === 'string' && resolve(projectDir, u.file);
+  if (!file) return false;
+  const src = u.backup && path.join(projectDir, '.reqtree', 'doc-backup', path.basename(u.backup));
+  if (src && !fs.existsSync(src)) return false;
+  if (fs.existsSync(file)) backupFile(projectDir, file, u.file);
+  if (src) fs.copyFileSync(src, file);
+  else try { fs.unlinkSync(file); } catch { return false; }
+  return true;
+}
+
+// ---------- 改文档里的一段话（体检用：文档挂在某个需求下，说法和这个需求的规则冲突，按需求树改文档） ----------
+// text 在全文里只出现一次才改（表格行里的也行，只换那几个字，不动结构）；找不到或不止一处就不改，交给报告提醒。
+// 撤销是反过来再换一次（doc_replace，new 换回 text）
+function replaceDocText(treePath, op) {
+  const projectDir = path.dirname(treePath);
+  const file = typeof op.file === 'string' && resolve(projectDir, op.file);
+  if (!file || !op.text || typeof op.new !== 'string' || op.text === op.new) return null;
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  const at = text.indexOf(op.text);
+  if (at < 0 || text.indexOf(op.text, at + 1) >= 0) return null;
+  try { backupFile(projectDir, file, op.file); } catch {}
+  fs.writeFileSync(file, text.slice(0, at) + op.new + text.slice(at + op.text.length));
+  return { op: 'doc_replace', file: op.file, text: op.text, new: op.new, undo: [{ op: 'doc_replace', file: op.file, text: op.new, new: op.text }] };
+}
+
+// 做文档改动：删一行（doc_remove）、改一段（doc_replace）、整份写（doc_write）；
+// 撤销：插回一行（doc_restore）、改回来（doc_replace）、整份放回（doc_put_back）
+function doDoc(treePath, o) {
+  if (o.op === 'doc_write') return writeDoc(treePath, o);
+  if (o.op === 'doc_remove') return removeDocText(treePath, o);
+  if (o.op === 'doc_replace') return replaceDocText(treePath, o);
+  return null;
+}
+function undoDoc(treePath, u) {
+  if (u.op === 'doc_put_back') return putBack(treePath, u);
+  if (u.op === 'doc_replace') return !!replaceDocText(treePath, u);
+  return restoreDoc(treePath, u);
+}
+
 const isDocOp = o => !!o && typeof o.op === 'string' && o.op.startsWith('doc_');
 
-module.exports = { resolve, exists, purpose, readLine, removeDocText, restoreDoc, isDocOp, splitRef, sections, findSection, toc, describe, docsMtime, LONG_CHARS };
+module.exports = { resolve, exists, purpose, readLine, removeDocText, restoreDoc, writeDoc, putBack, replaceDocText, doDoc, undoDoc, isDocOp, splitRef, sections, findSection, toc, describe, docsMtime, LONG_CHARS };

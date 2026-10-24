@@ -94,7 +94,8 @@ Install the extension by hand: installing an extension from the command line ins
 
 1. Download `reqtree-<version>.vsix` from [Releases](https://github.com/penstic123-code/Vibe-Friend/releases), then in VS Code's Extensions panel → `…` → "Install from VSIX".
 2. Open your project. The extension asks "Enable ReqTree in this project?"; click "Enable".
-3. Start a new Claude Code conversation and work as usual.
+3. The extension has the AI read the project once (folders, README, CLAUDE.md, recent commits) and build the first tree, which takes about half a minute. Requirements are split by what the project does ("login", "chapter 1", "lighting"), not by folder ("src", "utils"), and each one lists the files it covers and the docs to read first. Long reference sections in CLAUDE.md (workflow, technical constraints) are moved word for word into their own docs, leaving a one-line pointer, because CLAUDE.md is read in full in every conversation. A check-up then moves the rules written in those docs into the tree. All of this is applied straight away; one click under "Recent changes" undoes it, and the original files are backed up.
+4. Start a new Claude Code conversation and work as usual.
 
 To stop using it, choose "Disable ReqTree in this project" in the sidebar's gear menu. The tree file stays, so you can turn it back on later.
 
@@ -229,6 +230,18 @@ Three rounds against the real model on a copy of my course project (8 requiremen
 | 3 | 2 | 1 | 0 |
 
 The real one in round 3: one rule said "pick one of four skins", while another in the same requirement said "only three of them are usable". The small model still raises the occasional false alarm, so there's now a floor: when it isn't sure, it changes nothing and only asks you. A false alarm costs one question, never a wrong change. A feature that split requirements with many rules into sub-requirements never once applied in three rounds, and has been removed.
+
+### Is the first tree any good?
+
+Tried once on each of three real projects: a Godot game, a web course project and ReqTree itself. The game's tree had been stuck on the empty template, with every rule piled on the top node. The generated tree has 11 requirements (city and streets, lighting and look, story, cooking…). Of the 57 existing rules, the 12 about lighting and colour went to "lighting and look", the frame-time ones to "engine systems", and the 31 that apply to the whole project (how to work together, code conventions) stayed at the top.
+
+Then the course project as it was three days earlier, with an 11,000-character CLAUDE.md, run from scratch:
+
+| Step | Result |
+|---|---|
+| Build the tree | 8 requirements; 9 sections of CLAUDE.md moved into 7 docs; CLAUDE.md, read in every conversation, went from 11,230 to 3,271 characters |
+| Check-up | moved 123 rules written in docs into the tree and removed duplicates without asking a single question; takes over ten minutes on a big project and runs in the background |
+| Click "Undo" | CLAUDE.md came back byte for byte and the new docs were deleted |
 
 ### Compared with letting the AI maintain its own rule document?
 

@@ -296,15 +296,19 @@ class Panel {
   }
 
   // 命令「需求树：体检」：合并重复规则，久未动和可能冲突的规则变成问题（冲突要调用一次模型）
-  async checkupCommand() {
+  // preset（初始化之后自动体检用）：{ tree, parts }，不问查什么、不确认
+  async checkupCommand(preset) {
     const trees = findTrees();
     if (!trees.length) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
+    if (preset && preset.tree) return this.runCheck(preset.tree, preset.parts, false, memoryMode() === 'treeOnly' ? false : undefined);
     let p = trees[0];
     if (trees.length > 1) {
       const pick = await vscode.window.showQuickPick(trees.map(t => ({ label: vscode.workspace.asRelativePath(t), p: t })), { placeHolder: T('q.whichTree') });
       if (!pick) return;
       p = pick.p;
     }
+    // 树还是模板样子（没真正初始化过）：体检只整理规则、不建需求结构，先初始化（初始化完会接着体检文档和记忆）
+    if (needsInit(p)) return aiInit(path.dirname(p), this);
     // 查什么：规则、记忆、文档（含 CLAUDE.md / AGENTS.md），默认全选，记住上次的选择；「全部重查」不管上次查过没有
     const memOff = memoryMode() === 'treeOnly';
     const st = this.context.workspaceState;
@@ -329,6 +333,11 @@ class Panel {
       const go = await vscode.window.showInformationMessage(T('q.checkPlan', plan.notes.length, plan.docs.length, plan.calls), { modal: true }, T('q.checkGo'));
       if (go !== T('q.checkGo')) return;
     }
+    return this.runCheck(p, parts, full, memory);
+  }
+
+  // 跑体检、写报告、弹结果
+  async runCheck(p, parts, full, memory) {
     const run = bar => runCheckup(p, { read: currentText, write: writeTree, memory, parts, full,
       progress: (i, n) => { if (bar && n > 1) bar.report({ message: `${i}/${n}` }); } });
     const r = vscode.window.withProgress && vscode.ProgressLocation
@@ -345,6 +354,7 @@ class Panel {
     if (r.docMissing && r.docMissing.length) notes.push(T('q.docMissing', r.docMissing));
     if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
+    if (r.docConflicts && r.docConflicts.length) notes.push(T('q.docConflicts', r.docConflicts));
     const auto = r.auto || [];
     const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length);
     const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
@@ -565,16 +575,36 @@ function applyConfigEffects(treePath, patch) {
   if ('codeMap' in patch) setTimeout(() => { try { require('./src/codemap').refresh(treePath); } catch (e) { console.error(e); } }, 0);
 }
 
-// 「新建需求树」= 在这个项目启用：装 hook、建模板、编译（只建一个模板文件的话，记录员和按需加载都不会工作）
+// 用 AI 初始化（src/init.js）：读项目生成需求、分好已经记下的规则、拆 CLAUDE.md 里大段的参考资料，直接写进去（一条改动，可撤销）；
+// 接着体检文档和记忆，把写在 CLAUDE.md、挂上的文档里的规则搬进树。模型调用失败时树保持按文件夹生成的样子
+const initRunning = new Set();
+async function aiInit(dir, panel) {
+  if (initRunning.has(dir)) return null;
+  initRunning.add(dir);
+  try {
+    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('x.initRunning') },
+      () => require('./src/init').initProject(dir));
+    panel.load();
+    if (r.skipped) return r;
+    if (!r.ai) { vscode.window.showWarningMessage(T('x.initFail', errText(r.error))); return r; }
+    const count = r.nodes.reduce((k, n) => k + 1 + n.children.length, 0);
+    vscode.window.showInformationMessage(T('x.initDone', count, r.moves.length));
+    await panel.checkupCommand({ tree: r.treePath, parts: { rules: false, docs: true, memory: memoryMode() !== 'treeOnly' } });
+    return r;
+  } catch (e) { console.error(e); return null; } finally { initRunning.delete(dir); }
+}
+const needsInit = treePath => { try { const t = fs.readFileSync(treePath, 'utf8').replace(/\r\n/g, '\n'); return t === store.TEMPLATE || require('./src/init').templateShaped(t); } catch { return false; } };
+
+// 「新建需求树」= 在这个项目启用：装 hook、用 AI 生成需求树、编译（只建一个模板文件的话，记录员和按需加载都不会工作）
 async function create(panel) {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
-  if (!reqtree.hasHooks(folder.uri.fsPath)) await enableIn(folder.uri.fsPath, panel);
-  const uri = vscode.Uri.joinPath(folder.uri, '需求树.md');
-  try { await vscode.workspace.fs.stat(uri); } catch {
-    await vscode.workspace.fs.writeFile(uri, Buffer.from(store.initialTree(folder.uri.fsPath), 'utf8'));
-  }
-  await vscode.window.showTextDocument(uri);
+  const dir = folder.uri.fsPath;
+  if (!reqtree.hasHooks(dir)) await enableIn(dir, panel);
+  const existing = store.findTree(dir);
+  if (!existing || needsInit(existing)) await aiInit(dir, panel);
+  const tree = store.findTree(dir);
+  if (tree) await vscode.window.showTextDocument(vscode.Uri.file(tree));
 }
 
 function activate(context) {
@@ -585,13 +615,14 @@ function activate(context) {
   const checkLang = () => { treeLangCache = null; const l = lang(); if (l !== shownLang) { shownLang = l; panel.relang(); } };
   // 连续多次文件变化合并成一次刷新
   const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { try { checkLang(); panel.load(); } catch (e) { console.error(e); } }, 150); };
-  // 以前建的、一个字没改过的空模板：换成按项目文件夹生成的树
+  // 还没真正初始化过的树（模板、按文件夹生成的，哪怕记录员已经往里记了规则）：后台用 AI 初始化。
+  // 一天只试一次：没装 Claude、模型调用失败时，别每次打开都跑
   for (const t of findTrees()) {
-    try {
-      if (fs.readFileSync(t, 'utf8').replace(/\r\n/g, '\n') !== store.TEMPLATE) continue;
-      const fresh = store.initialTree(path.dirname(t));
-      if (fresh !== store.TEMPLATE) store.updateTree(t, () => fresh);
-    } catch (e) { console.error(e); }
+    if (!needsInit(t)) continue;
+    const key = `reqtree.initTried:${t}`;
+    if (Date.now() - (context.workspaceState.get(key) || 0) < 24 * 3600e3) continue;
+    context.workspaceState.update(key, Date.now());
+    setTimeout(() => aiInit(path.dirname(t), panel), 3000);
   }
   const isTree = doc => doc.uri.scheme === 'file' && panel.trees.some(t => samePath(t.path, doc.uri.fsPath));
 
