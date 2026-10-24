@@ -18,7 +18,7 @@
   let follow = saved.follow !== false;
   // 上级规则超过 3 条时是否展开（整个会话共用一个开关）
   // 详情里展开了哪几节（{ inh, kids, recent, unmapped }），默认都收起；旧版本只记了继承的规则展开没有
-  let folds = saved.folds || (saved.inheritOpen ? { inh: true } : {});
+  let folds = saved.folds || {};
   // 编号（R3.2 这种）默认不显示，设置菜单里能打开
   let showIds = !!saved.showIds;
   // 选中一行后，不在它这一支（上级路径 + 子树）的行稍微变淡；点树的空白处或 Esc 取消（选中不变）
@@ -322,12 +322,11 @@
   // 设置菜单：只放真正需要用户取舍的开关。记下的要求一律直接生效，记错了在「最近改动」里撤销
   function openSettings(anchor, uri) {
     const cfg = data.files.find(f => f.uri === uri)?.config || {};
-    // 记录频率：每轮 / 每 3 轮 / 每 5 轮（攒起来一起记）/ 暂停。更多选项在 VS Code 设置里（reqtree.recordEvery、sweepEvery）
+    // 记录频率：每轮 / 每 3 轮（攒起来一起记）/ 暂停。设置只在这里改（写进项目的 .reqtree/config.json，hook 读那里）
     const every = Number(cfg.recordEvery) || 1, off = cfg.recorder === 'off';
     D.showMenu(anchor, [
       [1, T('v.recTurn'), !off && every === 1],
       [3, T('v.recEvery', 3), !off && every === 3],
-      [5, T('v.recEvery', 5), !off && every === 5],
       [0, T('v.recOff'), off],
     ].map(([n, label, on]) => ({ label, checked: on, radio: true, data: { v: String(n) }, run: () => post({ type: 'setConfig', uri, patch: n ? { recorder: 'turn', recordEvery: n } : { recorder: 'off' } }) }))
       // 跟随 AI 默认开着，开关放在设置里（以前在顶栏占一个大按钮，用户觉得没必要）

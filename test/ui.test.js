@@ -324,10 +324,10 @@ for (const theme of ['dark', 'light']) {
           document.querySelector('.gear[data-act="settings"]').click();
           const items = [...document.querySelectorAll('.menu button[data-v]')].map(x => x.getAttribute('aria-checked'));
           const labels = [...document.querySelectorAll('.menu button')].map(x => x.textContent);
-          document.querySelectorAll('.menu button[data-v]')[3].click();
+          document.querySelectorAll('.menu button[data-v]')[2].click();
           const cfg = window.__posted.filter(m => m.type === 'setConfig').pop();
           return { posted: window.__posted.map(m => m.type), all: window.__posted, sel, rowsAfter, aiCollapsed: !!document.querySelector('.row[data-key$="#C2"] .chip.ai svg.ico-ai'), items, labels, cfg };`);
-        assert.deepStrictEqual(posted.items, ['true', 'false', 'false', 'false'], '默认：每轮记录（另有每 3 轮、每 5 轮、暂停）');
+        assert.deepStrictEqual(posted.items, ['true', 'false', 'false'], '默认：每轮记录（另有每 3 轮、暂停）');
         assert.ok(posted.labels.every(l => !/确认/.test(l)), `设置菜单里还有确认模式：${posted.labels}`);
         assert.deepStrictEqual(posted.cfg.patch, { recorder: 'off' });
         const edits = posted.all.filter(m => m.type === 'edit');

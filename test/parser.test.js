@@ -52,27 +52,6 @@ test('parse：🆕 🗑 只是普通文字，不再特殊对待（以 🗑 开�
   assert.strictEqual(P.applyOps(a.text, a.applied[0].undo).text, t);
 });
 
-test('stripLegacyMarks（一次性清理用）：🆕 去掉标记，🗑 整行删；保留键和 CRLF；只管 🆕 标题', () => {
-  const clean = P.stripLegacyMarks(LEGACY);
-  assert.strictEqual(clean, TREE.replace('- 开场用勇士', '- [开场] 开场用霍乱')
-    .replace('## C3 别的课', '## C3 别的课\n> 文件：Other/**\n\n## 手写的新需求'));
-  const crlf = LEGACY.replace(/\n/g, '\r\n');
-  assert.strictEqual(P.stripLegacyMarks(crlf), clean.replace(/\n/g, '\r\n'));
-  assert.strictEqual(P.stripLegacyMarks(TREE), TREE, '没有标记时原样返回');
-  const trash = '# P 项目\n## A3 🗑 回收站 🔨\n> 文件：x/**\n- 规则\n';
-  assert.strictEqual(P.stripLegacyMarks(trash), trash, '标题不处理 🗑');
-});
-
-test('stripLegacyMarks：幂等；``` ~~~ 和缩进代码块里的不动', () => {
-  const t = '# P 项目\n## A1 x\n> 文件：a/**\n- 🆕 🆕 双标记\n- 普通\n';
-  const once = P.stripLegacyMarks(t);
-  assert.match(once, /^- 双标记$/m);
-  assert.strictEqual(P.stripLegacyMarks(once), once, '再跑一次不该再变');
-  const code = '# P 项目\n## A1 x\n- 规则\n\n```\n- 🗑 反引号代码块\n```\n\n~~~\n- 🗑 示例：旧格式长这样\n## 也不是节点\n~~~\n\n    - 🗑 缩进代码块\n';
-  assert.strictEqual(P.stripLegacyMarks(code), code);
-  assert.deepStrictEqual(ids(code), ['P', 'A1'], '~~~ 代码块里的标题不当节点');
-});
-
 test('文件匹配：取最深的节点；**/ 不会误配', () => {
   const root = P.parse(TREE);
   assert.strictEqual(P.nodeForFile(root, 'DataScience/ch01-a.html').id, 'C2.1');

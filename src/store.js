@@ -5,8 +5,7 @@
 // .reqtree/ 里的文件
 //   长期保存
 //     config.json     用户开关（面板 ⚙）：{ recorder: 'turn' 每轮记录 | 'off' 暂停, sweepEvery 补漏间隔（轮） }
-//     state.json      程序状态：{ recorder 记录员上次结果, compile 上次编译结果, since 开始跟踪的时间, touched {需求ID: 最后被 AI 改的时间},
-//                     legacyCleaned 升级时清掉旧版本 🆕 🗑 标记的时间（有了就再也不清） }
+//     state.json      程序状态：{ recorder 记录员上次结果, compile 上次编译结果, since 开始跟踪的时间, touched {需求ID: 最后被 AI 改的时间} }
 //     activity.jsonl  AI 改了哪些文件（只追加）
 //     context.jsonl   每个会话加载了哪些规则文件、各多少字（只追加，给上下文用量表）
 //     changes.jsonl   改动记录，每条带反操作，可以撤销（只追加）
@@ -17,7 +16,7 @@
 //     editing     用户有未保存改动的标记       *.tmp  原子写的中间文件
 const fs = require('fs');
 const path = require('path');
-const { applyOps, legacyCleanupOps, parse, findById, STATUS_LABEL } = require('./parser');
+const { applyOps, STATUS_LABEL } = require('./parser');
 const { compile, ensureCompiled } = require('./compile');
 
 // 只认项目根目录：优先 需求树.md，其次第一个 *.tree.md
@@ -114,8 +113,7 @@ const treeLock = treePath => metaFile(treePath, 'tree.lock');
 const stateLock = treePath => metaFile(treePath, 'state.lock');
 
 // ---------- 用户开关：config.json ----------
-// 开关 recorder，补漏间隔 sweepEvery（每 N 轮把最近 N 句用户原话再交给记录员查一遍漏记，0 关掉）。只认 DEFAULT_CONFIG 里有的键：旧版本的 confirm（「先让我确认」，已去掉）、
-// since（已搬到 state.json）读的时候忽略，迁移时删掉；面板传来别的键也不写。
+// 开关 recorder，补漏间隔 sweepEvery（每 N 轮把最近 N 句用户原话再交给记录员查一遍漏记，0 关掉）。只认 DEFAULT_CONFIG 里有的键，面板传来别的键也不写。
 // aiFindings：AI 在回复里说出的、以后还用得上的做法和坑也记成规则（开头标「（AI 发现）」），默认开
 // principles：总目录里写「动手原则」（遇到 bug 先找根因、写新东西前先看项目里有没有），默认开
 // recordEvery：每几轮交给记录员一次（1 = 每轮；N 轮攒起来一起记，省调用）；codeMap：生成代码地图
@@ -125,7 +123,6 @@ const rawConfig = treePath => readJson(metaFile(treePath, 'config.json'), null);
 const readConfig = treePath => pickConfig(rawConfig(treePath) || {});
 function writeConfig(treePath, patch) {
   return withLock(stateLock(treePath), () => {
-    migrateUnlocked(treePath); // 先把旧 config 里的 since 搬走，再按新格式重写
     const next = pickConfig({ ...readConfig(treePath), ...patch });
     writeJson(metaFile(treePath, 'config.json'), next);
     return next;
@@ -136,28 +133,11 @@ function writeConfig(treePath, patch) {
 // 多个 hook 进程（后台的记录员、PostToolUse、插件）会同时写，读改写都在 state.lock 里做
 const STATE_FILE = 'state.json';
 const DEFAULT_STATE = { recorder: null, compile: null, since: null, touched: {} };
-// 旧版本拆开存的文件 → state 里的字段
-const LEGACY_FILES = { recorder: 'recorder.json', compile: 'compile.json', touched: 'touched.json' };
 
-function hasLegacy(treePath) {
-  if (Object.values(LEGACY_FILES).some(f => fs.existsSync(metaFile(treePath, f)))) return true;
-  const raw = rawConfig(treePath);
-  return !!raw && Object.keys(raw).some(k => !(k in DEFAULT_CONFIG));
-}
-
-// 只读：state.json 加上旧文件里还没迁移的内容（迁移要写文件，留给第一次写 state 时做，
-// 这样 check 这类只读命令没有副作用）。state.json 里有的以它为准，touched 两边合并
 function readState(treePath) {
-  const old = {};
-  for (const [k, f] of Object.entries(LEGACY_FILES)) {
-    const v = readJson(metaFile(treePath, f), null);
-    if (v != null) old[k] = v;
-  }
-  const raw = rawConfig(treePath);
-  if (raw && raw.since) old.since = raw.since;
   const cur = readJson(metaFile(treePath, STATE_FILE), null) || {};
   const set = Object.fromEntries(Object.entries(cur).filter(([, v]) => v != null));
-  return { ...DEFAULT_STATE, ...old, ...set, touched: { ...(old.touched || {}), ...(cur.touched || {}) } };
+  return { ...DEFAULT_STATE, ...set, touched: { ...(cur.touched || {}) } };
 }
 
 // 内容没变不写：插件监视 .reqtree/*.json，每写一次就刷新一次
@@ -169,19 +149,9 @@ function writeStateUnlocked(treePath, state) {
   if (old !== text) atomicWrite(file, text);
 }
 
-// 旧文件读一次并进 state.json，再删掉；config.json 只留用户开关
-function migrateUnlocked(treePath) {
-  if (!hasLegacy(treePath)) return;
-  writeStateUnlocked(treePath, readState(treePath));
-  for (const f of Object.values(LEGACY_FILES)) try { fs.unlinkSync(metaFile(treePath, f)); } catch {}
-  const raw = rawConfig(treePath);
-  if (raw) writeJson(metaFile(treePath, 'config.json'), pickConfig(raw));
-}
-
 // 加锁读-改-写 state。fn(state) 返回新的 state
 function updateState(treePath, fn) {
   return withLock(stateLock(treePath), () => {
-    migrateUnlocked(treePath);
     const next = fn(readState(treePath));
     writeStateUnlocked(treePath, next);
     return next;
@@ -189,10 +159,10 @@ function updateState(treePath, fn) {
 }
 
 // 读状态，没记过开始跟踪的时间就记下现在：判断 🔨 久未动时，没被跟踪过的需求从这一刻算起，免得刚装好就满屏误报。
-// 顺便完成旧文件的迁移。只给 init 和插件用；check 这类只读命令用 readState，不能有副作用
+// 只给 init 和插件用；check 这类只读命令用 readState，不能有副作用
 function ensureTracking(treePath) {
   const s = readState(treePath);
-  if (s.since && !hasLegacy(treePath)) return s;
+  if (s.since) return s;
   return updateState(treePath, st => (st.since ? st : { ...st, since: Date.now() }));
 }
 
@@ -234,39 +204,20 @@ function compileUnlocked(treePath, force) {
   }
 }
 
-// ---------- 升级：一次性清掉旧版本「先让我确认」模式留下的 🆕 🗑 标记 ----------
-// 只在 state.json 还没有 legacyCleaned 时做一次，之后 🆕 🗑 就是普通文字（用户可以写「🗑 删除按钮用红色」这样的规则）。
-// 在写树的锁里、编译之前做，这样编译出的规则已经是清理后的。清理记成一条改动，面板上可以撤销。
-// 用户正在编辑需求树时先不做：磁盘上清了，用户一保存又被编辑器里的旧内容盖回去。返回树有没有被改
-function cleanupLegacyUnlocked(treePath) {
-  if (readState(treePath).legacyCleaned || isEditing(treePath)) return false;
-  const before = fs.readFileSync(treePath, 'utf8');
-  const { text, applied } = applyOps(before, legacyCleanupOps(before));
-  if (text !== before) atomicWrite(treePath, text);
-  if (applied.length) logChange(treePath, { id: newChangeId(), time: Date.now(), source: '升级', summary: [`清掉旧版本留下的待确认标记（${applied.length} 处）`], event: { k: 'chg.legacy', a: [applied.length] }, ops: applied });
-  // 标记记不下来也没关系：下次再跑一遍，清理过的树里已经没有可清的东西
-  try { updateState(treePath, s => ({ ...s, legacyCleaned: Date.now() })); } catch {}
-  return text !== before;
-}
-
 // 加锁编译。wait=false 时拿不到锁就跳过：拿着锁的一方正在写树，它释放前会编译
 function compileTree(treePath, { force = false, wait = true } = {}) {
   try {
-    return withLock(treeLock(treePath), () => {
-      const cleaned = cleanupLegacyUnlocked(treePath);
-      return compileUnlocked(treePath, force || cleaned);
-    }, wait ? LOCK_WAIT_MS : 0);
+    return withLock(treeLock(treePath), () => compileUnlocked(treePath, force), wait ? LOCK_WAIT_MS : 0);
   } catch (e) { if (e.code === 'REQTREE_BUSY' && !wait) return null; throw e; }
 }
 
 // 加锁读-改-写。fn(text) 返回新文本；返回值相同就不写。谁写了树，谁就在锁里顺手重新编译成原生规则
 function updateTree(treePath, fn, { waitMs = LOCK_WAIT_MS } = {}) {
   return withLock(treeLock(treePath), () => {
-    const cleaned = cleanupLegacyUnlocked(treePath);
     const before = fs.readFileSync(treePath, 'utf8');
     const after = fn(before);
     if (after !== before) atomicWrite(treePath, after);
-    compileUnlocked(treePath, cleaned || after !== before);
+    compileUnlocked(treePath, after !== before);
     return after;
   }, waitMs);
 }
@@ -366,39 +317,15 @@ function logChange(treePath, entry) {
 const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore', 'doc_restore']);
 // 改文件、不改树的操作：记忆（src/memory.js）和文档（src/docs.js）
 const isFileOp = o => require('./memory').isMemoryOp(o) || require('./docs').isDocOp(o);
-// 旧版本「先让我确认」模式记下的反操作 reject_pending（applyOps 已经不认），能翻译的条件见 translateLegacyUndo
-const canTranslate = o => o.op === 'reject_pending' && !!o.node && (Array.isArray(o.globs) ? o.globs.length > 0 : !!o.text && (o.pending === 'add' || o.pending === 'remove'));
-const undoable = e => e.ops.every(o => (o.undo || []).every(u => UNDO_OPS.has(u.op) || canTranslate(u)));
+const undoable = e => e.ops.every(o => (o.undo || []).every(u => UNDO_OPS.has(u.op)));
 
-// 最近的改动（新的在前），标出已撤销的；撤销不了的（旧版本留下、翻译不了的反操作）标 undoable: false，面板不给撤销按钮
+// 最近的改动（新的在前），标出已撤销的；撤销不了的（反操作不认识）标 undoable: false，面板不给撤销按钮
 function readChanges(treePath, limit = 20) {
   let lines = [];
   try { lines = fs.readFileSync(metaFile(treePath, 'changes.jsonl'), 'utf8').trim().split('\n').slice(-500); } catch {}
   const entries = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   const undone = new Set(entries.filter(e => e.undone).map(e => e.undone));
   return entries.filter(e => e.id && Array.isArray(e.ops)).map(e => ({ ...e, undone: undone.has(e.id), undoable: undoable(e) })).reverse().slice(0, limit);
-}
-
-// 把旧的 reject_pending 翻译成现在的操作。升级清理之后，树里的样子等于用户当时点了 ✓：
-//   pending:'add'（撤回新增）    → remove_rule
-//   pending:'remove'（撤回删除） → 在原位置 add_rule；规则还在（用户当时点了 ✕）就不用加，免得重复
-//   globs（撤回文件对应）         → set_files 去掉这些路径
-// 要看树现在的样子才能决定，所以在写入函数里、拿到当前文本时翻译
-function translateLegacyUndo(text, ops) {
-  if (!ops.some(o => o.op === 'reject_pending')) return ops;
-  const root = parse(text);
-  return ops.flatMap(o => {
-    if (o.op !== 'reject_pending') return [o];
-    const node = canTranslate(o) && findById(root, o.node);
-    if (!node) return [];
-    if (Array.isArray(o.globs)) {
-      const rest = node.files.filter(g => !o.globs.includes(g));
-      return rest.length === node.files.length ? [] : [{ op: 'set_files', node: o.node, globs: rest }];
-    }
-    if (o.pending === 'add') return [{ op: 'remove_rule', node: o.node, text: o.text }];
-    if (node.rules.some(r => r.text === o.text)) return [];
-    return [{ op: 'add_rule', node: o.node, key: o.key || null, text: o.text, index: o.index, force: true }];
-  });
 }
 
 // 写入 + 写完之后的收尾。没给 write 就加锁同步写；给了（插件的 writeTree，异步）就交给它，返回 Promise。
@@ -447,7 +374,7 @@ function undoChange(treePath, id, { write } = {}) {
   let count = 0;
   for (const u of all.filter(isFileOp)) { try { if (u.op === 'doc_restore' ? Docs.restoreDoc(treePath, u) : mem.restoreMemory(u)) count++; } catch {} }
   const undo = all.filter(u => !isFileOp(u));
-  const update = text => { const r = applyOps(text, translateLegacyUndo(text, undo)); count += r.applied.length; return r.text; };
+  const update = text => { const r = applyOps(text, undo); count += r.applied.length; return r.text; };
   return writeThen(treePath, update, write, () => {
     if (count) logChange(treePath, { undone: id, time: Date.now() });
     return count > 0;
@@ -496,10 +423,9 @@ function flushQueue(treePath, { write } = {}) {
     return list;
   }, write ? 300 : LOCK_WAIT_MS);
   if (!ops.length) return write ? Promise.resolve([]) : [];
-  // 旧版本排队时给每条带了 direct，现在没用了，别带进改动记录。
   // 带 qid 的是某个问题的默认做法：每个问题单独记一条改动，把编号补进 questions.jsonl，用户改选别的时才撤得掉
   const groups = new Map();
-  for (const { direct, qid, ...o } of ops) {
+  for (const { qid, ...o } of ops) {
     const k = qid || '';
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(o);

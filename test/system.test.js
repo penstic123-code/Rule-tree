@@ -144,37 +144,6 @@ test('编译出错记进 state.json，修好后恢复', () => {
 
 // ---------- .reqtree/ 状态文件 ----------
 
-test('state.json：旧的 recorder.json / compile.json / touched.json / config.since 读的时候就合并，第一次写时迁移并删掉', () => {
-  const dir = project();
-  const tree = path.join(dir, '需求树.md');
-  const meta = n => store.metaFile(tree, n);
-  fs.mkdirSync(path.dirname(meta('x')), { recursive: true });
-  fs.writeFileSync(meta('recorder.json'), JSON.stringify({ ok: true, message: '记下 1 条', time: 5 }));
-  fs.writeFileSync(meta('compile.json'), JSON.stringify({ ok: false, message: '旧错误', time: 6 }));
-  fs.writeFileSync(meta('touched.json'), JSON.stringify({ C2: 7 }));
-  fs.writeFileSync(meta('config.json'), JSON.stringify({ recorder: 'off', confirm: true, since: 8 }));
-  // 只读：能读到旧内容，但不动文件
-  assert.strictEqual(store.readRecorderStatus(tree).message, '记下 1 条');
-  assert.strictEqual(store.readCompileStatus(tree).message, '旧错误');
-  assert.deepStrictEqual(store.readTouched(tree), { C2: 7 });
-  assert.strictEqual(store.readState(tree).since, 8);
-  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true }, 'confirm、since 不再是配置');
-  assert.ok(fs.existsSync(meta('recorder.json')) && !fs.existsSync(meta('state.json')));
-  // 第一次写：全部搬进 state.json，旧文件删掉，config 只留开关
-  store.touch(tree, ['C2.1']);
-  for (const f of ['recorder.json', 'compile.json', 'touched.json']) assert.ok(!fs.existsSync(meta(f)), f);
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(meta('config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
-  const s = JSON.parse(fs.readFileSync(meta('state.json'), 'utf8'));
-  assert.strictEqual(s.since, 8);
-  assert.strictEqual(s.recorder.message, '记下 1 条');
-  assert.strictEqual(s.compile.message, '旧错误');
-  assert.deepStrictEqual(Object.keys(s.touched).sort(), ['C2', 'C2.1']);
-  // ensureTracking 也会迁移；已有 since 不改
-  fs.writeFileSync(meta('recorder.json'), JSON.stringify({ ok: true, message: '又一个旧的', time: 9 }));
-  assert.strictEqual(store.ensureTracking(tree).since, 8);
-  assert.ok(!fs.existsSync(meta('recorder.json')));
-});
-
 test('state.json：多个进程同时读改写，一条都不丢', async () => {
   const dir = project();
   const tree = path.join(dir, '需求树.md');
@@ -192,63 +161,6 @@ test('config.json：只认 recorder 一个开关，面板传来别的键（如�
   assert.deepStrictEqual(store.readConfig(tree), { recorder: 'turn', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
   store.writeConfig(tree, { recorder: 'off', confirm: true, junk: 1 });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
-});
-
-test('升级时只清一次旧标记：记成一条可撤销的改动；之后 🆕 🗑 开头的规则是普通文字，写多少次都不动', () => {
-  const dir = project();
-  const tree = path.join(dir, '需求树.md');
-  const read = () => fs.readFileSync(tree, 'utf8');
-  const legacy = TREE.replace('- 开场用霍乱', '- 🗑 开场用霍乱\n- 🆕 开场用伦敦地图').replace('## C2 数据科学课 🔨', '## C2 🆕 数据科学课 🔨');
-  const clean = TREE.replace('- 开场用霍乱', '- 开场用伦敦地图');
-  fs.writeFileSync(tree, legacy);
-  // 用户正在编辑需求树：先不清（清了会被用户一保存盖掉）
-  store.setEditing(tree, true);
-  store.compileTree(tree);
-  assert.strictEqual(read(), legacy);
-  store.setEditing(tree, false);
-  store.compileTree(tree);
-  assert.strictEqual(read(), clean);
-  assert.ok(!ruleFile(dir, 'C2.1').includes('霍乱'), '编译的是清理后的树');
-  assert.ok(store.readState(tree).legacyCleaned);
-  const [cleanup] = store.readChanges(tree);
-  assert.match(cleanup.summary.join(''), /旧版本/);
-  // 之后加以 🗑 / 🆕 开头的正常规则：再写树、再编译都保留
-  store.applyChange(tree, [{ op: 'add_rule', node: 'C2', text: '🗑 删除按钮一律用红色' }, { op: 'add_rule', node: 'C2', text: '🆕 徽章只给新章节用' }], { source: '你' });
-  store.updateTree(tree, t => t);
-  store.applyChange(tree, [{ op: 'set_status', node: 'C2.1', status: 'done' }], { source: '你' });
-  store.compileTree(tree, { force: true });
-  assert.match(read(), /^- 🗑 删除按钮一律用红色\n- 🆕 徽章只给新章节用$/m);
-  assert.match(ruleFile(dir, 'C2'), /^- 🗑 删除按钮一律用红色$/m);
-  // 撤销后来的两次改动，再撤销那次清理：一字不差回到升级前
-  for (const c of store.readChanges(tree).filter(c => c.id !== cleanup.id)) assert.ok(store.undoChange(tree, c.id));
-  assert.ok(store.undoChange(tree, cleanup.id));
-  assert.strictEqual(read(), legacy);
-});
-
-test('改动记录：旧「先让我确认」模式的改动（反操作是 reject_pending）翻译成现在的操作，照样能撤销；翻译不了的标为不能撤销', () => {
-  const dir = project();
-  const tree = path.join(dir, '需求树.md');
-  fs.writeFileSync(tree, TREE.replace('- 开场用霍乱', '- 🗑 开场用霍乱\n- 🆕 开场用伦敦地图').replace('> 文件：DataScience/**', '> 文件：DataScience/**\n> 文件：🆕 Extra/**'));
-  const old = { id: 'old1', time: 1, source: '记录员', direct: false, summary: ['旧的改写'], ops: [
-    { op: 'replace_rule', node: 'C2.1', old: '开场用霍乱', text: '开场用伦敦地图', undo: [
-      { op: 'reject_pending', node: 'C2.1', text: '开场用伦敦地图', pending: 'add' },
-      { op: 'reject_pending', node: 'C2.1', text: '开场用霍乱', key: null, index: 0, pending: 'remove' }] },
-    { op: 'add_files', node: 'C2', globs: ['Extra/**'], undo: [{ op: 'reject_pending', node: 'C2', globs: ['Extra/**'] }] }] };
-  const broken = { id: 'old2', time: 2, source: '记录员', direct: false, summary: ['看不懂的旧改动'], ops: [{ op: 'x', undo: [{ op: 'reject_pending', node: 'C2' }] }] };
-  fs.mkdirSync(path.join(dir, '.reqtree'));
-  fs.writeFileSync(store.metaFile(tree, 'changes.jsonl'), [old, broken].map(e => JSON.stringify(e)).join('\n') + '\n');
-  const list = store.readChanges(tree);
-  assert.strictEqual(list.find(c => c.id === 'old2').undoable, false);
-  assert.notStrictEqual(list.find(c => c.id === 'old1').undoable, false);
-  assert.strictEqual(store.undoChange(tree, 'old1'), true);
-  assert.strictEqual(fs.readFileSync(tree, 'utf8'), TREE);
-  // 用户当时点了 ✕（规则本来就还在）：撤销不能再加一条重复的
-  const dir2 = project();
-  const tree2 = path.join(dir2, '需求树.md');
-  fs.mkdirSync(path.join(dir2, '.reqtree'));
-  fs.writeFileSync(store.metaFile(tree2, 'changes.jsonl'), JSON.stringify({ ...old, ops: [old.ops[0]] }) + '\n');
-  store.undoChange(tree2, 'old1');
-  assert.strictEqual(fs.readFileSync(tree2, 'utf8'), TREE);
 });
 
 test('state.lock 被崩溃的进程留下：很快判定失效，写状态不报错', () => {
@@ -332,22 +244,6 @@ test('编译：每个节点一份原生规则，继承交给 glob 嵌套，覆�
   assert.match(ruleFile(dir, 'C2.1'), /开场段落可以到 6 行（在本范围内以此为准，取代上级 P 的「段落不超过 4 行」）/);
   assert.match(ruleFile(dir, 'C2.2'), /"DataScience\/\*\*"/, '没写文件对应就沿用上级范围');
   assert.match(ruleFile(dir, '_index'), /进行中：C2 数据科学课/);
-});
-
-test('编译：旧版本残留的标记先清掉再编译（🆕 当普通规则、🗑 不编译）；删掉的节点清理掉；不碰用户自己的规则文件', () => {
-  const dir = project();
-  const tree = path.join(dir, '需求树.md');
-  fs.writeFileSync(tree, TREE.replace('- 开场用霍乱', '- 🗑 开场用霍乱\n- 🆕 开场用伦敦地图'));
-  store.compileTree(tree);
-  assert.match(ruleFile(dir, 'C2.1'), /^- 开场用伦敦地图$/m);
-  assert.ok(!ruleFile(dir, 'C2.1').includes('霍乱'));
-  assert.ok(!/确认/.test(ruleFile(dir, 'C2.1') + ruleFile(dir, '_index')), '规则和全局说明里不再提确认');
-
-  fs.writeFileSync(path.join(rulesDir(dir), 'mine.md'), '用户自己写的规则');
-  fs.writeFileSync(tree, TREE.replace(/### C2\.1[\s\S]*$/, ''));
-  const r = compile(tree);
-  assert.deepStrictEqual(r.removed, ['C2.1.md']);
-  assert.ok(fs.existsSync(path.join(rulesDir(dir), 'mine.md')));
 });
 
 test('编译：旧版本生成的 _index.md（说明文字过时）升级后会重新生成，哪怕它比树新', () => {
@@ -562,21 +458,6 @@ test('记录员：暂停时不调用模型，只标进行中', () => {
   assert.strictEqual(r.calls.length, 0);
   assert.match(r.tree, /C2.1 第1章 🔨/);
   assert.match(r.status.message, /已暂停/);
-});
-
-test('记录员：旧配置里的 confirm: true 不再起作用，照样直接生效；升级清理过的树不再带旧标记给模型', () => {
-  const dir = project();
-  const tree = path.join(dir, '需求树.md');
-  fs.mkdirSync(path.join(dir, '.reqtree'));
-  fs.writeFileSync(store.metaFile(tree, 'config.json'), JSON.stringify({ recorder: 'turn', confirm: true }));
-  fs.writeFileSync(tree, TREE.replace('- 不引原话', '- 不引原话\n- 🗑 早就删掉的规则'));
-  store.compileTree(tree); // 用户发消息时 hook 先编译，升级清理就在这时做
-  const r = runRecorder(dir, { turns: [{ user: '开场别用霍乱，改成伦敦地图', ai: '好' }] },
-    { FAKE_OUT: '{"ops":[{"op":"replace_rule","node":"C2.1","old":"开场用霍乱","text":"开场用伦敦地图"}]}' });
-  assert.strictEqual(r.tree, TREE.replace('- 开场用霍乱', '- 开场用伦敦地图'), '直接生效');
-  assert.match(r.status.message, /^记下 1 条$/);
-  assert.ok(!/🗑|早就删掉/.test(r.calls[0].input), '模型看到了旧标记');
-  assert.ok(!/待确认|🆕/.test(r.calls[0].input), '提示词里不再提待确认');
 });
 
 test('改动记录：记录员和面板的改动都记下来，可以撤销，撤销后规则也重新编译', () => {
@@ -823,7 +704,7 @@ test('插件：需求树在编辑器里有没保存的改动时，面板的编�
 test('插件：确认模式的消息（accept/reject/moveUp/acceptAll/rejectAll）一律忽略；⚙ 只写 recorder；打开原文按原文找回行号；面板数据带 since', async () => {
   const dir = project();
   const tree = path.join(dir, '需求树.md');
-  fs.writeFileSync(tree, TREE.replace('- 开场用霍乱', '- 🆕 开场用霍乱'));
+  fs.writeFileSync(tree, TREE);
   const fake = fakeVscode(dir);
   const opened = [];
   fake.vscode.window.showTextDocument = async (uri, opts) => { opened.push(opts.selection.a[0]); };
@@ -831,7 +712,7 @@ test('插件：确认模式的消息（accept/reject/moveUp/acceptAll/rejectAll�
   try {
     const uri = panel.trees[0].uri;
     assert.ok(panel.trees[0].since, '插件加载时记下开始跟踪的时间');
-    assert.strictEqual(fs.readFileSync(tree, 'utf8'), TREE, '插件加载时做了升级清理');
+    assert.strictEqual(fs.readFileSync(tree, 'utf8'), TREE, '插件加载时不改树');
     const line = TREE.split('\n').findIndex(l => l.includes('霍乱'));
     for (const type of ['accept', 'reject', 'moveUp', 'acceptAll', 'rejectAll']) await panel.handle({ type, uri, line, expect: TREE.split('\n')[line] });
     assert.strictEqual(fs.readFileSync(tree, 'utf8'), TREE, '这些消息不该再改树');

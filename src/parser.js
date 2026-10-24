@@ -36,8 +36,6 @@ function splitStatus(text) {
   return { rest, status: null };
 }
 
-// 🆕 🗑 在这里都是普通文字。旧版本「先让我确认」模式留下的这两种标记，由 store 在升级时一次性清掉
-// （见 legacyCleanupOps），之后用户写以 🗑 开头的规则也不会被误删。
 function parse(text) {
   const lines = text.split(/\r?\n/);
   const root = { id: '', title: '', level: 0, line: -1, status: null, rules: [], notes: [], files: [], docs: [], children: [], parent: null };
@@ -490,39 +488,6 @@ const SKIP_REASON = {
   'not-allowed': '记录员不许做这种改动', 'no-basis': '文件对应没有根据', blocked: '树里对应的改动没写进去，记忆先留着',
 };
 
-// 旧版本「先让我确认」模式留下的标记：🆕 待确认新增，🗑 待确认删除。升级时 store 只清一次（state.json 记下
-// legacyCleaned），清理本身也是一条可撤销的改动，所以这里只生成普通的编辑操作：
-//   🗑 开头的规则 → remove_rule（那正是用户当时最新的意思）
-//   🆕 开头的规则 → remove_rule + 在原位置 add_rule 去掉标记的内容（标记在键前面：「🆕 [键] 内容」）
-//   🆕 开头的标题 → rename_node；标题不处理 🗑（旧版本从没给标题标过 🗑，「🗑 回收站」是正常名字）
-//   文件对应里的 🆕 → set_files 去掉它
-// 开头连着好几个标记也一次去干净，结果不再含标记，所以再算一次得到空列表（幂等）。
-// 代码块（``` ~~~，parse 本来就跳过）和缩进 4 格以上的行（缩进代码块）不动。
-const LEGACY_LEAD = /^(?:(?:🆕|🗑)️?\s*)+/u;
-function legacyCleanupOps(text) {
-  const lines = text.split(/\r?\n/);
-  const ops = [];
-  for (const n of walk(parse(text))) {
-    const h = n.title.match(/^(?:🆕\s*)+/u);
-    if (h && n.title.slice(h[0].length).trim()) ops.push({ op: 'rename_node', node: n.id, title: n.title.slice(h[0].length).trim() });
-    if (n.files.includes('🆕')) ops.push({ op: 'set_files', node: n.id, globs: n.files.filter(g => g !== '🆕') });
-    let kept = 0; // 处理到这条时，前面留下来的规则数：去掉标记的规则按这个序号放回原位
-    for (const r of n.rules) {
-      const m = !/^( {4}|\t)/.test(lines[r.line]) && !r.key && r.text.match(LEGACY_LEAD);
-      const rest = m ? r.text.slice(m[0].length).trim() : '';
-      if (!m || !rest) { kept++; continue; }
-      ops.push({ op: 'remove_rule', node: n.id, text: r.text });
-      if (m[0].includes('🗑')) continue;
-      const k = rest.match(KEY_RE);
-      ops.push({ op: 'add_rule', node: n.id, key: k ? k[1].trim() : null, text: (k ? k[2] : rest).trim(), index: kept, force: true });
-      kept++;
-    }
-  }
-  return ops;
-}
-// 测试和预览用：清理后的文本
-const stripLegacyMarks = text => applyOps(text, legacyCleanupOps(text)).text;
-
 // 面板「打开原文」按行号跳转，但点击前文件可能被记录员改过。expect 是当时那一行的内容：
 // 对得上就用原行号，对不上就按内容找最近的一处；找不到返回 -1（调用方退回原行号）。
 function relocate(text, line, expect) {
@@ -624,7 +589,7 @@ function nodeForFile(root, relPath) {
 
 module.exports = {
   STATUS_EMOJI, STATUS_LABEL, parse, walk, findById, pathOf, effectiveRules, check,
-  DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, applyOps, legacyCleanupOps, stripLegacyMarks, outline, relocate, splitGlobs, globToRegExp,
+  DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, applyOps, outline, relocate, splitGlobs, globToRegExp,
   oneLine, norm, sameMeaning, numbersOf, SKIP_REASON,
   similarity, DUPLICATE, // 测试校准去重门槛用
 };

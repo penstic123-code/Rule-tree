@@ -22,13 +22,5 @@
   "config.memoryMode": "需求树和 Claude Code 自动记忆怎么分工。",
   "config.memoryMode.dedupe": "分工（默认）：项目的规则记在需求树；自动记忆只记和项目内容无关的事（你本人、工具和电脑环境、服务器账号等私人信息）。AI 把规则写进记忆时，记录员把它收进树；体检时删掉已在树里的记忆，其余的问你",
   "config.memoryMode.treeOnly": "关掉这个项目的自动记忆（在 .claude/settings.local.json 写 \"autoMemoryEnabled\": false），只用需求树。工具、电脑环境和私人信息这类笔记就没地方记了",
-  "cmd.disable": "需求树：在本项目停用",
-  "config.recorder": "记录员：每轮对话结束后，把你提出的长期要求写进需求树。改这里会写进项目的 .reqtree/config.json（和侧栏齿轮菜单是同一个开关）。",
-  "config.recorder.turn": "开",
-  "config.recorder.off": "暂停（不记新要求）",
-  "config.recordEvery": "每几轮对话交给记录员一次。1 = 每轮都记；设成 3，就每 3 轮把这 3 轮一起交给它，模型调用少，记得晚一点。",
-  "config.sweepEvery": "补漏间隔：每隔几轮，把你最近说过的话再查一遍有没有漏记（0 = 不补漏；上下文压缩前总会补一次）。",
-  "config.aiFindings": "也记下 AI 干活时发现的做法和坑（规则开头标「（AI 发现）」）。",
-  "config.principles": "在总目录里写「动手原则」：遇到 bug 先找根因；写新东西前先看项目里有没有现成的。",
-  "config.codeMap": "生成代码地图：改到某块代码时，告诉 AI 这块已有哪些文件、函数和依赖。"
+  "cmd.disable": "需求树：在本项目停用"
 }

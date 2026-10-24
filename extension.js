@@ -560,8 +560,6 @@ function openQuestionsOf(p) {
   try { return Q.openQuestions(p); } catch (e) { console.error(e); return []; }
 }
 
-// VS Code 设置里和项目 .reqtree/config.json 同步的键（侧栏齿轮菜单改的也是 config.json，后改的为准）
-const SYNCED = ['recorder', 'recordEvery', 'sweepEvery', 'aiFindings', 'principles', 'codeMap'];
 // 改了这些要马上生效的：动手原则 → 重编总目录；代码地图 → 重建或删掉
 function applyConfigEffects(treePath, patch) {
   if ('principles' in patch) try { store.compileTree(treePath, { force: true }); } catch (e) { console.error(e); }
@@ -623,13 +621,6 @@ function activate(context) {
       if (e.affectsConfiguration('reqtree.language')) { panel.relang(); panel.load(); }
       else if (e.affectsConfiguration('reqtree.askQuestions')) panel.load();
       else if (e.affectsConfiguration('reqtree.memoryMode')) applyMemoryMode(true);
-      // 设置里改了记录员、频率、代码地图这些：写进每个项目的 .reqtree/config.json（hook 读那里）
-      const patch = {};
-      for (const k of SYNCED) if (e.affectsConfiguration('reqtree.' + k)) patch[k] = vscode.workspace.getConfiguration('reqtree').get(k);
-      if (Object.keys(patch).length) {
-        for (const t of findTrees()) { try { store.writeConfig(t, patch); applyConfigEffects(t, patch); } catch (err) { vscode.window.showWarningMessage(T('x.saveFail', errText(err))); } }
-        panel.load();
-      }
     }));
   }
   panel.load();

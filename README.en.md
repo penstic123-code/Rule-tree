@@ -172,7 +172,7 @@ Every change is logged in "Recent changes" and can be undone; anything you undo 
 
 **Working principles.** Every time it starts work, the AI reads three principles: when there's a bug, find the root cause first, and fix contradicting rules or unsound architecture before patching symptoms; before writing something new, check whether the project, the standard library or an installed dependency already has it (borrowed from [ponytail](https://github.com/DietrichGebert/ponytail)); and don't just do what you're told: when your request clashes with how the project actually is or how maintainable it will be, point out the problem and suggest a better way, then wait for your call.
 
-**Settings.** The gear menu in the sidebar sets how often to record (every turn, every 3 or 5 turns together, or paused) and turns the code map and working principles on or off. Search for `reqtree` in VS Code settings for all options.
+**Settings.** Everything is in the sidebar's gear menu: how often to record (every turn, every 3 turns together, or paused), the code map, working principles and recording what the AI finds out, sort order, and disabling.
 
 ## Common questions
 

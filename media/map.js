@@ -23,7 +23,7 @@
   let follow = saved.follow !== false;
   let hideDone = !!saved.hideDone; // 隐藏已完成的需求（和它下面的）
   // 详情里展开了哪几节（{ inh, kids, recent, unmapped }），默认都收起；旧版本只记了继承的规则展开没有
-  let folds = saved.folds || (saved.inheritOpen ? { inh: true } : {});
+  let folds = saved.folds || {};
   // 编号（R3.2 这种）默认不显示，⋯ 菜单里能打开
   let showIds = !!saved.showIds;
   const persist = () => vscode.setState({ selected, dim, collapsed: [...collapsed], view, defaultOpen, cardOpen: Object.fromEntries(cardOpen), focus, follow, hideDone, folds, showIds });
