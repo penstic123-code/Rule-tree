@@ -158,12 +158,12 @@ test('state.json：旧的 recorder.json / compile.json / touched.json / config.s
   assert.strictEqual(store.readCompileStatus(tree).message, '旧错误');
   assert.deepStrictEqual(store.readTouched(tree), { C2: 7 });
   assert.strictEqual(store.readState(tree).since, 8);
-  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true }, 'confirm、since 不再是配置');
+  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true }, 'confirm、since 不再是配置');
   assert.ok(fs.existsSync(meta('recorder.json')) && !fs.existsSync(meta('state.json')));
   // 第一次写：全部搬进 state.json，旧文件删掉，config 只留开关
   store.touch(tree, ['C2.1']);
   for (const f of ['recorder.json', 'compile.json', 'touched.json']) assert.ok(!fs.existsSync(meta(f)), f);
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(meta('config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(meta('config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
   const s = JSON.parse(fs.readFileSync(meta('state.json'), 'utf8'));
   assert.strictEqual(s.since, 8);
   assert.strictEqual(s.recorder.message, '记下 1 条');
@@ -189,9 +189,9 @@ test('state.json：多个进程同时读改写，一条都不丢', async () => {
 test('config.json：只认 recorder 一个开关，面板传来别的键（如旧的 confirm）不写', () => {
   const dir = project();
   const tree = path.join(dir, '需求树.md');
-  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'turn', sweepEvery: 8, aiFindings: true, principles: true });
+  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'turn', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
   store.writeConfig(tree, { recorder: 'off', confirm: true, junk: 1 });
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
 });
 
 test('升级时只清一次旧标记：记成一条可撤销的改动；之后 🆕 🗑 开头的规则是普通文字，写多少次都不动', () => {
@@ -836,7 +836,7 @@ test('插件：确认模式的消息（accept/reject/moveUp/acceptAll/rejectAll�
     for (const type of ['accept', 'reject', 'moveUp', 'acceptAll', 'rejectAll']) await panel.handle({ type, uri, line, expect: TREE.split('\n')[line] });
     assert.strictEqual(fs.readFileSync(tree, 'utf8'), TREE, '这些消息不该再改树');
     await panel.handle({ type: 'setConfig', uri, patch: { confirm: true, recorder: 'off' } });
-    assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true });
+    assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
     assert.ok(!('confirm' in JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8'))));
     // 面板拿到行号后，树的上方被插了一行：按原文找回来
     const raw = TREE.split('\n')[1];
@@ -1270,10 +1270,12 @@ test('插件：面板里直接改名带着 title，不弹输入框；空名字�
   } finally { dispose(); }
 });
 
-test('插件：界面语言——设置 reqtree.language 优先，auto 跟 VS Code 的显示语言；网页拿到 data-lang', async () => {
+test('插件：界面语言——设置 reqtree.language 优先；auto 时 VS Code 中文就中文，英文界面看需求树写的什么语言；网页拿到 data-lang', async () => {
   const dir = project();
-  for (const [setting, display, want] of [['auto', 'en', 'en'], ['auto', 'zh-cn', 'zh'], ['zh', 'en', 'zh'], ['en', 'zh-cn', 'en']]) {
-    const fake = fakeVscode(dir);
+  const enDir = project();
+  fs.writeFileSync(path.join(enDir, '需求树.md'), '# P Project\n- Keep paragraphs short\n\n## C2 Data course\n> 文件：ds/**\n\n### C2.1 Chapter one ⏳\n');
+  for (const [setting, display, want, d] of [['auto', 'en', 'zh', dir], ['auto', 'en', 'en', enDir], ['auto', 'zh-cn', 'zh', dir], ['zh', 'en', 'zh', enDir], ['en', 'zh-cn', 'en', dir]]) {
+    const fake = fakeVscode(d);
     fake.vscode.env = { language: display };
     fake.vscode.workspace.getConfiguration = () => ({ get: (k, d) => (k === 'language' ? setting : d) });
     const { panel, dispose } = activateWith(fake);
@@ -1281,7 +1283,7 @@ test('插件：界面语言——设置 reqtree.language 优先，auto 跟 VS Co
       const uri = panel.trees[0].uri;
       await panel.handle({ type: 'edit', uri, action: 'setStatus', node: 'C2.1', status: 'todo' }); // 本来就是待做：没有改动
       const msg = fake.shown.pop();
-      assert.match(msg, want === 'en' ? /^ReqTree: nothing changed \(the status didn't change\)$/ : /^需求树：没有改动（状态没变）$/, `${setting}/${display}`);
+      assert.match(msg, want === 'en' ? /^ReqTree: nothing changed \(the status didn't change\)$/ : /^需求树：没有改动（状态没变）$/, `${setting}/${display}/${d === dir ? '中文树' : '英文树'}`);
       const webview = { options: {}, html: '', cspSource: 'vscode-resource:', asWebviewUri: u => u, onDidReceiveMessage() {}, postMessage() {} };
       panel.resolveWebviewView({ webview, onDidChangeVisibility() {}, visible: true });
       assert.match(webview.html, new RegExp(`<body data-lang="${want}">`));

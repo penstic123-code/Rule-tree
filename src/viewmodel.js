@@ -100,7 +100,10 @@ function fileData(tree, now = Date.now()) {
   const conv = (n, index, parentBranch) => {
     const depth = pathOf(n).length;
     const branch = depth === 1 ? '--fg' : depth === 2 ? BRANCH[index % BRANCH.length] : parentBranch;
+    const children = n.children.map((c, i) => conv(c, i, branch));
     return {
+      // AI 最后一次改它（或它下面的需求）的文件是什么时候：面板「按最近改动」排序用
+      recent: Math.max(touched[n.id] || 0, ...children.map(c => c.recent)),
       key: tree.uri + '#' + n.id,
       id: n.id, title: n.title, status: n.status,
       depth, index, line: n.line, raw: lines[n.line], branch,
@@ -114,7 +117,7 @@ function fileData(tree, now = Date.now()) {
       ruleCount: n.rules.length,
       crumbs: pathOf(n).slice(0, -1).map(p => `${p.id} ${p.title}`),
       groups: ruleGroups(n, lines, tree.categories || {}),
-      children: n.children.map((c, i) => conv(c, i, branch)),
+      children,
     };
   };
   return {

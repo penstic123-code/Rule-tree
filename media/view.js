@@ -24,8 +24,13 @@
   // 选中一行后，不在它这一支（上级路径 + 子树）的行稍微变淡；点树的空白处或 Esc 取消（选中不变）
   let dim = !!saved.dim;
   let branch = null;
+  // 同一层的需求怎么排：status 按状态（进行中 → 待做 → 待定 → 没标 → 完成），recent 按 AI 最近改动，tree 按树里的原顺序
+  let order = saved.order || 'status';
+  // 完成的需求默认收成一行「已完成 N 个」，点开才显示（openDone 记着点开了哪几层）
+  let hideDone = saved.hideDone !== false;
+  const openDone = new Set(saved.openDone || []);
 
-  const persist = () => vscode.setState({ selected, dim, collapsed: [...collapsed], treeHeight, focus, follow, folds, showIds });
+  const persist = () => vscode.setState({ selected, dim, collapsed: [...collapsed], treeHeight, focus, follow, folds, showIds, order, hideDone, openDone: [...openDone] });
   const post = msg => vscode.postMessage(msg);
   const ago = t => D.ago(t, data.now || Date.now());
 
@@ -97,7 +102,7 @@
     } else {
       for (const f of data.files) {
         if (data.files.length > 1) html += `<div class="gh" style="margin:10px 12px 2px">${esc(f.name)}<span class="line"></span></div>`;
-        html += `<ul>${f.nodes.map(n => nodeHtml(n, f)).join('')}</ul>`;
+        html += `<ul>${listHtml(f.nodes, f, 'top:' + f.uri)}</ul>`;
       }
     }
     html += `</div><div class="splitter" title="${T('v.splitter')}"></div>`;
@@ -125,7 +130,7 @@
     const onPath = path ? path.indexOf(n) : -1;
     const isAnc = path && onPath >= 0 && onPath < path.length - 1;
     const open = isAnc || !collapsed.has(n.key);
-    const shown = isAnc ? [path[onPath + 1]] : n.children;
+    const shown = isAnc ? [path[onPath + 1]] : null;
     const kids = n.children.length;
     const cls = [`d${Math.min(n.depth, 4)}`, n.status || ''].join(' ');
     const U = `data-uri="${esc(f.uri)}"`;
@@ -143,8 +148,31 @@
         <span class="title" title="${esc(n.title)}${n.status ? ' · ' + STATUS_LABEL[n.status] : ''}">${esc(n.title)}</span>
         <span class="meta">${meta.join('')}${acts}</span>
       </div>
-      ${kids && open ? `<ul>${shown.map(c => nodeHtml(c, f, path)).join('')}</ul>` : ''}
+      ${kids && open ? `<ul>${shown ? shown.map(c => nodeHtml(c, f, path)).join('') : listHtml(n.children, f, n.key, path)}</ul>` : ''}
     </li>`;
+  }
+
+  // ---------- 排序和收起已完成 ----------
+  const RANK = { doing: 0, todo: 1, question: 2 };
+  const rank = n => (n.status === 'done' ? 4 : n.status in RANK ? RANK[n.status] : 3);
+  const holds = (n, key) => n.key === key || n.children.some(c => holds(c, key));
+  function arrange(list, parentKey) {
+    const items = list.slice();
+    if (order === 'status') items.sort((a, b) => rank(a) - rank(b) || a.index - b.index);
+    else if (order === 'recent') items.sort((a, b) => (a.status === 'done') - (b.status === 'done') || b.recent - a.recent || a.index - b.index);
+    if (!hideDone) return { items, done: 0, open: false };
+    const open = openDone.has(parentKey);
+    // 选中的、AI 正在改的完成需求不收起来
+    const keep = n => n.status !== 'done' || open || (selected && holds(n, selected)) || n.active || D.hasActive(n);
+    const shown = items.filter(keep);
+    return { items: shown, done: items.filter(n => n.status === 'done').length, open };
+  }
+  // 一层需求：排好序，完成的收成一行（点开 / 收起）
+  function listHtml(list, f, parentKey, path) {
+    const ar = arrange(list, parentKey);
+    let out = ar.items.map(c => nodeHtml(c, f, path)).join('');
+    if (ar.done) out += `<li class="donerow"><button class="donebtn" data-act="${ar.open ? 'hideDone' : 'showDone'}" data-key="${esc(parentKey)}">${ar.open ? T('v.hideDoneRow') : T('v.doneRow', ar.done)}</button></li>`;
+    return out;
   }
 
   // 详情用公共组件 detail.js，和导图右侧一模一样
@@ -224,6 +252,7 @@
       if (act === 'focus' || act === 'crumb') { setFocus(actEl.dataset.key); return; }
       if (act === 'unfocus') { setFocus(null); return; }
       if (act === 'pick') { reveal(actEl.dataset.key); select(actEl.dataset.key); return; }
+      if (act === 'showDone' || act === 'hideDone') { if (act === 'showDone') openDone.add(actEl.dataset.key); else openDone.delete(actEl.dataset.key); persist(); render(); return; }
       const loc = D.local(actEl, post);
       if (loc) { if (loc.fold) { folds = { ...folds, [loc.fold[0]]: loc.fold[1] }; persist(); } return; }
       const m = D.message(actEl, uri);
@@ -293,16 +322,25 @@
   // 设置菜单：只放真正需要用户取舍的开关。记下的要求一律直接生效，记错了在「最近改动」里撤销
   function openSettings(anchor, uri) {
     const cfg = data.files.find(f => f.uri === uri)?.config || {};
+    // 记录频率：每轮 / 每 3 轮 / 每 5 轮（攒起来一起记）/ 暂停。更多选项在 VS Code 设置里（reqtree.recordEvery、sweepEvery）
+    const every = Number(cfg.recordEvery) || 1, off = cfg.recorder === 'off';
     D.showMenu(anchor, [
-      ['turn', T('v.recTurn'), cfg.recorder !== 'off'],
-      ['off', T('v.recOff'), cfg.recorder === 'off'],
-    ].map(([v, label, on]) => ({ label, checked: on, radio: true, data: { v }, run: () => post({ type: 'setConfig', uri, patch: { recorder: v } }) }))
+      [1, T('v.recTurn'), !off && every === 1],
+      [3, T('v.recEvery', 3), !off && every === 3],
+      [5, T('v.recEvery', 5), !off && every === 5],
+      [0, T('v.recOff'), off],
+    ].map(([n, label, on]) => ({ label, checked: on, radio: true, data: { v: String(n) }, run: () => post({ type: 'setConfig', uri, patch: n ? { recorder: 'turn', recordEvery: n } : { recorder: 'off' } }) }))
       // 跟随 AI 默认开着，开关放在设置里（以前在顶栏占一个大按钮，用户觉得没必要）
       .concat([{ label: T('v.aiFindings'), checked: cfg.aiFindings !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { aiFindings: cfg.aiFindings === false } }) },
+        { label: T('v.codeMap'), checked: cfg.codeMap !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { codeMap: cfg.codeMap === false } }) },
+        { label: T('v.principles'), checked: cfg.principles !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { principles: cfg.principles === false } }) },
         { label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },
         { label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); render(); } },
+        { label: T('v.hideDone'), checked: hideDone, toggle: true, run: () => { hideDone = !hideDone; persist(); render(); } },
+        ...[['status', T('v.orderStatus')], ['recent', T('v.orderRecent')], ['tree', T('v.orderTree')]].map(([v, label]) => ({ label, checked: order === v, radio: true, run: () => { order = v; persist(); render(); } })),
         { label: T('ctx.menu'), run: () => openContext(uri) },
-        { label: T('v.checkupReport'), run: () => post({ type: 'checkupReport' }) }]));
+        { label: T('v.checkupReport'), run: () => post({ type: 'checkupReport' }) },
+        { label: T('v.disable'), run: () => post({ type: 'disable' }) }]));
   }
 
   // 拖动分隔条调整树的高度（详情占剩下的）

@@ -209,6 +209,7 @@ function parseInitArgs(args) {
 
 const USAGE = `用法：
   reqtree init  [目录] [--tool claude|codex] 在项目里装好 hook 和忽略规则（默认当前目录）
+  reqtree disable [目录]        在项目里停用：去掉 hook 和编译出的规则（需求树.md 留着）
   reqtree tree  <文件>          打印整棵树
   reqtree rules <文件> <ID>     打印某个节点实际生效的规则（含继承与覆盖）
   reqtree check <文件>          检查重复 ID、重复规则键、重复规则、很久没动的 🔨（只读）
@@ -254,6 +255,11 @@ async function checkFix(file, { model, memoryOn = true, full = false }) {
 
 if (require.main === module) {
   const [cmd, file, id] = process.argv.slice(2);
+  if (cmd === 'disable') {
+    const done = disable(file || process.cwd());
+    console.log(done.length ? `已停用：改了 ${done.join('、')}；需求树.md 留着，重新启用运行 init` : '这个项目没有启用需求树');
+    process.exit(0);
+  }
   if (cmd === 'init') {
     const { dir, tool } = parseInitArgs(process.argv.slice(3));
     try { init(dir, { tool }); } catch (e) { console.error(e.message); process.exit(1); }
@@ -337,7 +343,41 @@ if (require.main === module) {
   }
 }
 
+// 在项目里停用：去掉需求树的 hook（Claude 和 Codex）、删掉编译出的规则和代码地图。需求树.md 和 .reqtree/（改动记录、备份）留着，
+// 以后再启用一切照旧。返回动了哪些地方
+function disable(dir) {
+  dir = path.resolve(dir);
+  const done = [];
+  for (const f of ['settings.local.json', 'settings.json']) {
+    const p = path.join(dir, '.claude', f);
+    const s = readSettings(p, null);
+    if (!s || !s.hooks || typeof s.hooks !== 'object') continue;
+    let changed = false;
+    for (const ev of Object.keys(s.hooks)) {
+      if (!Array.isArray(s.hooks[ev])) continue;
+      const next = s.hooks[ev].map(g => ({ ...g, hooks: (g.hooks || []).filter(h => !isOurs(h)) })).filter(g => g.hooks.length);
+      if (JSON.stringify(next) !== JSON.stringify(s.hooks[ev])) changed = true;
+      if (next.length) s.hooks[ev] = next; else delete s.hooks[ev];
+    }
+    if (!changed) continue;
+    if (!Object.keys(s.hooks).length) delete s.hooks;
+    fs.writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
+    done.push(`.claude/${f}`);
+  }
+  try { require('../src/targets/codex-install').uninstallCodex(dir); } catch {}
+  const rules = path.join(dir, '.claude', 'rules', 'reqtree');
+  try {
+    for (const n of fs.readdirSync(rules)) {
+      const p = path.join(rules, n);
+      if (/reqtree:(generated|codemap)/.test(fs.readFileSync(p, 'utf8'))) fs.unlinkSync(p);
+    }
+    if (!fs.readdirSync(rules).length) fs.rmdirSync(rules);
+    done.push('.claude/rules/reqtree/');
+  } catch {}
+  return done;
+}
+
 module.exports = {
-  init, TOOLS, VERSION, hookCommand, isOurs, hasHooks, readSettings, RUNTIME_PARTS,
+  init, disable, TOOLS, VERSION, hookCommand, isOurs, hasHooks, readSettings, RUNTIME_PARTS,
   installRuntime, runtimeDir, runtimeVersion, refreshRuntimeIfOlder, isOlder, parseInitArgs,
 };

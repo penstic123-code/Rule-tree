@@ -312,23 +312,23 @@ test('命令行：check --fix 也查记忆（--no-memory 不查）', () => {
 
 // ---------- 审查发现的问题（2026-10-23）----------
 
-test('体检：没看全的记忆（长到要切成几段）、字面对不上的记忆，模型说已有也不自动删，改成问；用户选过留着的，下次不会被自动删', async () => {
+test('体检：模型说已有、只是措辞不同的记忆直接删（可撤销）；没看全的（长到切成几段）不删，问你，默认留着；选过留着的下次不再动', async () => {
   const { tree, mem } = project();
   fs.writeFileSync(path.join(mem, 'long.md'), '---\nname: long\n---\n\n交流用中文，回答先给结论。\n' + '这是一段很长的进度记录。'.repeat(1200) + '\n');
   fs.writeFileSync(path.join(mem, 'para.md'), '---\nname: para\n---\n\n对话里一律讲汉语，先说结论再展开。\n');
   const r = await checkWith(tree, { questions: [], memory: [{ file: 'long.md', kind: 'covered', where: 'P' }, { file: 'para.md', kind: 'covered', where: 'P' }] });
-  assert.strictEqual(r.removed.length, 0);
-  assert.ok(fs.existsSync(path.join(mem, 'long.md')) && fs.existsSync(path.join(mem, 'para.md')));
-  assert.strictEqual(r.memory.length, 2);
-  const q = r.memory.find(x => x.text.includes('para.md'));
-  assert.match(q.text, /已经有了，删掉这份记忆吗/);
-  assert.strictEqual(q.default, 1, "拿不准：默认留着");
+  assert.ok(!fs.existsSync(path.join(mem, 'para.md')), '措辞不同也删');
+  assert.ok(r.auto.some(a => a.text.includes('para.md')));
+  assert.ok(fs.existsSync(path.join(mem, 'long.md')), '没看全的不删');
+  assert.strictEqual(r.memory.length, 1);
+  const q = r.memory[0];
+  assert.match(q.text, /long\.md.*已经有了，删掉这份记忆吗/);
+  assert.strictEqual(q.default, 1, '拿不准：默认留着');
   await Q.answerQuestion(tree, q.id, 1); // 留在记忆
-  // 下次模型说 covered（而且字面对得上）也不删：这份记忆问过、没改过
-  fs.writeFileSync(path.join(mem, 'talk2.md'), 'x');
-  const again = await checkWith(tree, { questions: [], memory: [{ file: 'para.md', kind: 'covered', where: 'P' }] });
-  assert.strictEqual(again.removed.length, 0);
-  assert.ok(fs.existsSync(path.join(mem, 'para.md')));
+  // 下次模型还说 covered 也不动：这份记忆问过、没改过
+  const again = await checkWith(tree, { questions: [], memory: [{ file: 'long.md', kind: 'covered', where: 'P' }] }, { full: true });
+  assert.strictEqual(again.removed.length + again.auto.length + again.memory.length, 0);
+  assert.ok(fs.existsSync(path.join(mem, 'long.md')));
 });
 
 test('体检：type 写成 "User"、带引号也算用户本人，不自动删', async () => {

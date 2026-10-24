@@ -564,6 +564,8 @@ test('插件：久未动的问题按界面语言显示（英文）', async () =>
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   const fake = fakeVscode(dir, { answer: (m, items) => items[0] });
   fake.vscode.env = { language: 'en' };
+  // 需求树是中文写的，auto 会跟着树用中文；这里要看英文，明确设成 en
+  fake.vscode.workspace.getConfiguration = () => ({ get: (k, d) => (k === 'language' ? 'en' : d) });
   const { panel, api, dispose } = activateWith(fake);
   try {
     await api.prompted; await panel.asking;

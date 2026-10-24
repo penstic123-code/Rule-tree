@@ -14,10 +14,29 @@ const CHECK_PICK_KEY = 'reqtree.checkupParts';
 const memory = require('./src/memory');
 const STRINGS = require('./media/strings');
 
-// 界面语言：设置 reqtree.language（auto / zh / en），auto 跟 VS Code 的显示语言走。插件的提示和网页用同一张文字表
+// 界面语言：设置 reqtree.language（auto / zh / en）。auto：VS Code 是中文界面就用中文；英文界面时看需求树写的是什么语言
+// （不少中文用户的 VS Code 是英文界面，需求树却是中文写的，通知和面板该跟着树走）。插件的提示和网页用同一张文字表
+let treeLangCache = null;
+function treeLang() {
+  if (treeLangCache && Date.now() - treeLangCache.at < 60000) return treeLangCache.lang;
+  let l = null;
+  try {
+    const t = findTrees()[0];
+    if (t) {
+      const s = fs.readFileSync(t, 'utf8').slice(0, 20000);
+      const cjk = (s.match(/[一-鿿]/g) || []).length, latin = (s.match(/[A-Za-z]+/g) || []).length;
+      l = cjk > latin ? 'zh' : 'en';
+    }
+  } catch {}
+  treeLangCache = { at: Date.now(), lang: l };
+  return l;
+}
 function lang() {
   const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('reqtree') : null;
-  return STRINGS.pick(cfg ? cfg.get('language', 'auto') : 'auto', vscode.env && vscode.env.language);
+  const setting = cfg ? cfg.get('language', 'auto') : 'auto';
+  const display = vscode.env && vscode.env.language;
+  if (setting === 'auto' && !/^zh/i.test(display || '') && treeLang() === 'zh') return 'zh';
+  return STRINGS.pick(setting, display);
 }
 const T = (k, ...a) => STRINGS.make(lang())(k, ...a);
 // 出错文字：带结构化 t（{ k, a }）的按当前语言写，没有就用 message（Node 自己的错误本来就是英文）
@@ -322,17 +341,22 @@ class Panel {
     if (r.missing && r.missing.length) notes.push(T('q.missing', r.missing));
     if (r.docMissing && r.docMissing.length) notes.push(T('q.docMissing', r.docMissing));
     if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
-    if (r.docDup && r.docDup.length) notes.push(T('q.docDup', r.docDup) + '\n' + r.docDup.map(d => `  - ${d.doc}：${d.text}（${d.node}）`).join('\n'));
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
+    // 不用处理的：文档里还留着的重复、和树说法不同的（AI 以树为准）。放在最后，只给你知道
+    const fyi = [];
+    if (r.docDup && r.docDup.length) fyi.push(T('q.docDup', r.docDup), ...r.docDup.map(d => `  - ${d.doc}：${d.text}（${d.node}）`));
+    if (r.docConflicts && r.docConflicts.length) fyi.push(T('q.docConflicts', r.docConflicts.length), ...r.docConflicts.map(d => `  - ${d.doc}「${d.text}」↔ ${d.node}「${d.rule}」`));
     const auto = r.auto || [], split = r.split || [];
     const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length, split.length);
     const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
     if (asked) report.push(T('q.reportQuestions', asked), '', ...newQs.map(q => `- ${qText(q)}`), '');
+    // 要你动手的在前，做完了的、只给你知道的在后
+    if (notes.length) report.push(T('q.reportNotes'), '', ...notes.map(n => `- ${n}`), '');
     // 直接处理了的：问题记录写「问的事 → 按哪个做的」，删文档重复的直接写做了什么
     if (auto.length) report.push(T('q.reportAuto', auto.length), '', ...auto.map(a => `- ${qText(a)}${a.options ? ` → ${optLabel(a.options[a.default])}` : ''}`), '');
     if (split.length) report.push(T('q.reportSplit'), '', ...split.map(s => `- ${T('q.splitLine', s.title, s.id, s.node, s.globs.join(', '), s.rules)}`), '');
     if (r.merged.length) report.push(T('q.reportMerged'), '', ...r.merged.map(o => `- ${o.node}：${o.text}`), '');
-    if (notes.length) report.push(T('q.reportNotes'), '', ...notes.map(n => `- ${n}`), '');
+    if (fyi.length) report.push(T('q.reportFyi'), '', ...fyi.map(l => (l.startsWith('  ') ? l : `- ${l}`)), '');
     if (!asked && !notes.length && !auto.length && !split.length && !r.merged.length) report.push(T('q.reportNone'), '');
     const reportFile = store.metaFile(p, 'checkup-report.md');
     try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, report.join('\n')); } catch {}
@@ -489,7 +513,8 @@ class Panel {
       case 'openMap': return this.openMap();
       case 'checkup': return this.checkupCommand();
       case 'checkupReport': return this.reportCommand();
-      case 'create': return create();
+      case 'create': return create(this);
+      case 'disable': return vscode.commands.executeCommand('reqtree.disable');
       case 'openDoc': {
         // 打开需求挂的文档；只开项目里的文件
         const f = p && require('./src/docs').resolve(path.dirname(p), String(msg.doc || ''));
@@ -509,7 +534,7 @@ class Panel {
         // 「每轮记录 / 暂停记录员」和「记下 AI 发现的做法」（writeConfig 只认 DEFAULT_CONFIG 里的键）。只影响记录员下一次怎么做，不用重编
         // 写不进去（state.lock 一直被占）时要告诉用户，不然点了没反应、菜单还停在旧选项
         if (!p) return;
-        try { store.writeConfig(p, msg.patch || {}); }
+        try { store.writeConfig(p, msg.patch || {}); applyConfigEffects(p, msg.patch || {}); }
         catch (e) { vscode.window.showWarningMessage(T('x.saveFail', errText(e))); }
         this.load();
         return;
@@ -532,9 +557,19 @@ function openQuestionsOf(p) {
   try { return Q.openQuestions(p); } catch (e) { console.error(e); return []; }
 }
 
-async function create() {
+// VS Code 设置里和项目 .reqtree/config.json 同步的键（侧栏齿轮菜单改的也是 config.json，后改的为准）
+const SYNCED = ['recorder', 'recordEvery', 'sweepEvery', 'aiFindings', 'principles', 'codeMap'];
+// 改了这些要马上生效的：动手原则 → 重编总目录；代码地图 → 重建或删掉
+function applyConfigEffects(treePath, patch) {
+  if ('principles' in patch) try { store.compileTree(treePath, { force: true }); } catch (e) { console.error(e); }
+  if ('codeMap' in patch) setTimeout(() => { try { require('./src/codemap').refresh(treePath); } catch (e) { console.error(e); } }, 0);
+}
+
+// 「新建需求树」= 在这个项目启用：装 hook、建模板、编译（只建一个模板文件的话，记录员和按需加载都不会工作）
+async function create(panel) {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
+  if (!reqtree.hasHooks(folder.uri.fsPath)) await enableIn(folder.uri.fsPath, panel);
   const uri = vscode.Uri.joinPath(folder.uri, '需求树.md');
   try { await vscode.workspace.fs.stat(uri); } catch {
     await vscode.workspace.fs.writeFile(uri, Buffer.from(store.TEMPLATE, 'utf8'));
@@ -572,7 +607,8 @@ function activate(context) {
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
     vscode.commands.registerCommand('reqtree.refresh', refresh),
     vscode.commands.registerCommand('reqtree.openMap', () => panel.openMap()),
-    vscode.commands.registerCommand('reqtree.create', create),
+    vscode.commands.registerCommand('reqtree.create', () => create(panel)),
+    vscode.commands.registerCommand('reqtree.disable', () => disableCommand(context, panel)),
     vscode.commands.registerCommand('reqtree.enable', () => enableCommand(panel)),
     vscode.commands.registerCommand('reqtree.questions', () => panel.questionsCommand()),
     vscode.commands.registerCommand('reqtree.checkup', () => panel.checkupCommand()),
@@ -584,6 +620,13 @@ function activate(context) {
       if (e.affectsConfiguration('reqtree.language')) { panel.relang(); panel.load(); }
       else if (e.affectsConfiguration('reqtree.askQuestions')) panel.load();
       else if (e.affectsConfiguration('reqtree.memoryMode')) applyMemoryMode();
+      // 设置里改了记录员、频率、代码地图这些：写进每个项目的 .reqtree/config.json（hook 读那里）
+      const patch = {};
+      for (const k of SYNCED) if (e.affectsConfiguration('reqtree.' + k)) patch[k] = vscode.workspace.getConfiguration('reqtree').get(k);
+      if (Object.keys(patch).length) {
+        for (const t of findTrees()) { try { store.writeConfig(t, patch); applyConfigEffects(t, patch); } catch (err) { vscode.window.showWarningMessage(T('x.saveFail', errText(err))); } }
+        panel.load();
+      }
     }));
   }
   panel.load();
@@ -620,6 +663,19 @@ async function offerEnable(context, panel) {
     else if (pick === T('x.never') && state) await state.update(neverKey(dir), true);
     return; // 一次只问一个
   }
+}
+
+// 命令「需求树：在本项目停用」：去掉 hook 和编译出的规则，需求树.md 留着；以后不再弹「启用？」（想用时运行「在本项目启用」）
+async function disableCommand(context, panel) {
+  const folders = fileFolders().filter(f => reqtree.hasHooks(f.uri.fsPath));
+  if (!folders.length) { vscode.window.showInformationMessage(T('x.notEnabled')); return; }
+  const dir = folders[0].uri.fsPath;
+  const ok = await vscode.window.showWarningMessage(T('x.askDisable', path.basename(dir)), { modal: true }, T('x.disable'));
+  if (ok !== T('x.disable')) return;
+  try { reqtree.disable(dir); } catch (e) { vscode.window.showErrorMessage(T('x.error', errText(e))); return; }
+  if (context.workspaceState) await context.workspaceState.update(neverKey(dir), true);
+  try { panel.load(); } catch {}
+  vscode.window.showInformationMessage(T('x.disabled'));
 }
 
 // 命令「需求树：在本项目启用」：多个工作区文件夹时先选一个

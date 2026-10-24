@@ -92,7 +92,7 @@ function looksCovered(note, targets) {
 const MEMORY_TASK = `另外逐份看自动记忆，每份在 memory 里写一项。分工：需求树和 CLAUDE.md 管这个项目应该是什么样、该怎么做（包括某门课、某块内容的规则和做法、开几个 agent）；自动记忆只该记和项目内容无关的事：用户本人的情况、工具和电脑环境、私人信息（服务器、账号）、外部资源在哪。kind 选一种：
 - covered：整份说的事，需求树或 CLAUDE.md 里都已经有了（措辞不同也算）。where 写需求 ID，或 "CLAUDE.md"。
 - move：里面有这个项目的规则，需求树和 CLAUDE.md 里都还没有。node 写该挂的需求 ID（管辖范围最小的那个），rules 是要加的规则（1–5 条，每条一句简短具体的中文，照记忆的意思，不扩写）；整份都是这类规则时 whole 为 true，还混着别的内容时为 false。
-- conflict：和需求树里某条规则说的是同一件事，说法却不一样。node 是需求 ID，rule 是树里原文，text 是照记忆的说法写成的一条规则，newer 写 "memory" 或 "tree"（看记忆的更新日期和内容判断哪边是后来的决定；判断不了写 "tree"，并加 sure：false），whole 同上。
+- conflict：和需求树里某条规则说的是同一件事，说法却不一样。node 是需求 ID，rule 是树里原文，text 是照记忆的说法写成的一条规则，newer 写 "memory" 或 "tree"（看记忆的更新日期和内容判断哪边是后来的决定；判断不了写 "tree"，按需求树处理；只有真拿不准、非问用户不可时加 sure：false），whole 同上。
 - stale：过时的进度，或已经做完、放弃的计划（比如树里那个需求已经 ✅ 或已经删了）。why 用一句话说为什么。
 - doc：不是规则，是这个项目某门课、某块内容的经验、进度或背景（踩过的坑、做到哪了、为什么这么定）。这类该写进那个需求挂的背景文档（需求下的「> 文档：」），不该在记忆里。node 写需求 ID。
 - keep：属于自动记忆该记的事，或者拿不准。
@@ -159,7 +159,7 @@ const MAX_DOC_QUESTIONS = 15;
 const oneLine = s => (typeof s === 'string' ? s.replace(/[\r\n]+/g, ' ').trim() : '');
 function docPlan(items, { text, shown, asked, count = 0 }) {
   const root = parse(text);
-  const dup = [], questions = [];
+  const dup = [], questions = [], conflicts = [];
   for (const it of Array.isArray(items) ? items : []) {
     if (!it || typeof it !== 'object') continue;
     const doc = oneLine(it.doc).replace(/（第\s*\d+\s*\/\s*\d+\s*段）$/, '').trim(), said = oneLine(it.text);
@@ -172,19 +172,12 @@ function docPlan(items, { text, shown, asked, count = 0 }) {
     if (asked.has(key)) continue;
     const rule = oneLine(it.rule);
     let q = null;
+    // 和树说法不同：不问。AI 本来就被告知「文档和需求树说法不同时以需求树为准」，记录员也一直按最新的话改树；
+    // 而且规范文档管全项目、某门课另有规定（只做英文）是例外，删文档那句反而错。只在报告末尾列出来
     if (it.kind === 'conflict' && rule) {
       const hit = node.rules.find(r => r.text === rule) || node.rules.find(r => norm(r.text) === norm(rule));
-      if (!hit) { log(`体检：模型说的文档冲突规则在树里找不到，丢掉：${JSON.stringify(it)}`); continue; }
-      q = {
-        text: `${doc} 写着「${said}」，需求树（${node.id}）说「${hit.text}」，以哪个为准？`,
-        t: { k: 'q.docConflict', a: [doc, said, node.id, hit.text] },
-        options: [
-          { label: '按需求树，删掉文档那句', t: { k: 'q.optUseTreeDoc', a: [] }, ops: [del] },
-          { label: '按文档改需求树', t: { k: 'q.optUseDoc', a: [] }, ops: [{ op: 'replace_rule', node: node.id, old: hit.text, text: said.length <= 200 ? said : rule }, del] },
-          { label: '都不动', t: { k: 'q.optLeave', a: [] }, ops: [] },
-        ],
-        default: 0, sure: false,
-      };
+      if (hit) conflicts.push({ doc, text: said, node: node.id, rule: hit.text });
+      continue;
     } else if (it.kind === 'move' && rule && rule.length <= 200) {
       q = {
         text: `${doc} 里有一条需求树还没有的规则：「${rule}」。搬进需求树（${node.id}），再从文档里删掉吗？`,
@@ -198,7 +191,7 @@ function docPlan(items, { text, shown, asked, count = 0 }) {
     }
     if (q) { asked.add(key); questions.push({ source: '体检', kind: 'doc', memKey: key, doc, docText: said, node: node.id, ...q }); }
   }
-  return { dup, questions };
+  return { dup, questions, conflicts };
 }
 
 // ---------- 分批 ----------
@@ -351,8 +344,9 @@ function memoryPlan(items, { text, dir, projectDir, notes, asked, shown, clipped
           { label: '删掉这份记忆', t: { k: 'q.optDelNote', a: [] }, ops: [del(it.file)] },
           { label: '留在记忆', t: { k: 'q.optKeepNote', a: [] }, ops: [] },
         ],
-        // 拿不准（没看全、字面对不上）：默认留着，用户选了才删
-        default: 1,
+        // 模型看全了、说已经有了（只是措辞不同，字面对不上）：直接删，有备份、可撤销。
+        // 记忆太长被切成几段、模型没看全的：默认留着，问用户
+        default: clipped.has(it.file) ? 1 : 0, sure: !clipped.has(it.file),
       };
     } else if (count + questions.length >= MAX_MEMORY_QUESTIONS) {
       continue;
@@ -389,7 +383,8 @@ function memoryPlan(items, { text, dir, projectDir, notes, asked, shown, clipped
           { label: '按记忆改需求树', t: { k: 'q.optUseMemory', a: [] }, ops: [fix] },
           { label: '按需求树', t: { k: 'q.optUseTree', a: [] }, ops: [] },
         ],
-        default: it.newer === 'memory' ? 0 : 1, sure: it.sure !== false && (it.newer === 'memory' || it.newer === 'tree'),
+        // 判断不了哪边新的，也按需求树（树是准绳，记录员一直按最新的话改它）；只有模型明说拿不准才问
+        default: it.newer === 'memory' ? 0 : 1, sure: it.sure !== false,
       };
     } else if (it.kind === 'stale') {
       const why = typeof it.why === 'string' ? it.why.replace(/[\r\n]+/g, ' ').trim().slice(0, 120) : '';
@@ -523,7 +518,7 @@ function splitPlan(text, categories, projectDir) {
 //        scope 新加的「文件找不到」问题, noFiles 规则不会加载的需求 ID, missing 标着 🔨 却找不到文件的需求 [{ node, title, globs }],
 //        categorized 规则分了组的需求 ID（只改面板显示）, questions 新加的冲突问题,
 //        docs 新加的文档问题, docDup 文档里和树重复、可以删的 [{ doc, text, node }], docMissing 挂了却不存在的文档, docUnlinked 没挂的文档,
-//        toDoc 该挪进文档的记忆 [{ file, node, docs }], auto 有把握、直接处理了的（问题记录或 { text, t }，都可以在「最近改动」里撤销）,
+//        docConflicts 文档和树说法不同的 [{ doc, text, node, rule }]（以树为准，不问，只在报告里列）, toDoc 该挪进文档的记忆 [{ file, node, docs }], auto 有把握、直接处理了的（问题记录或 { text, t }，都可以在「最近改动」里撤销）,
 //        split 拆出来的子需求 [{ node, id, title, globs, rules }], checked { notes, docs, calls, failed } 这次看了几份、调用几次模型、几次出错, error 最后一次调用模型出错的说明 }
 async function runCheckup(treePath, { read, write, model = true, ask, memory, parts = {}, full = false, progress } = {}) {
   const rec = require('../hooks/recorder');
@@ -531,7 +526,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   const readText = read || (p => fs.readFileSync(p, 'utf8'));
   const want = { rules: parts.rules !== false, memory: parts.memory !== false && memory !== false, docs: parts.docs !== false };
   const result = { merged: [], stale: [], memory: [], removed: [], scope: [], noFiles: [], missing: [], categorized: [], questions: [],
-    docs: [], docDup: [], docMissing: [], docUnlinked: [], toDoc: [], auto: [], split: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
+    docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], toDoc: [], auto: [], split: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
   const projectDir = path.dirname(treePath);
   const asked = new Set(Q.readQuestions(treePath).map(q => q.memKey).filter(Boolean));
 
@@ -633,6 +628,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
       }
       if (docSegs.length && out && Array.isArray(out.docs)) {
         const dp = docPlan(out.docs, { text, shown: new Set(docSegs.map(s => s.name)), asked, count: result.docs.length });
+        result.docConflicts.push(...dp.conflicts);
         // 和树重复的：从文档里删掉那一行；找不准、删不了的留在报告里提醒
         for (const d of dp.dup) {
           const done = await store.applyChange(treePath, d.ops, { source: '体检', write });

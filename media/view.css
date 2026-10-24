@@ -243,3 +243,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .row.dim { opacity: .55; }
 .row.dim:hover { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .row { transition: none; } }
+
+/* 收起的已完成需求：一行淡色小字，点开 / 收起 */
+.donebtn { display: block; margin: 2px 0 4px 26px; padding: 2px 6px; border: 0; background: none; color: var(--c-muted); font: inherit; font-size: 12px; cursor: pointer; border-radius: var(--r-ctl); text-align: left; }
+.donebtn:hover, .donebtn:focus-visible { background: var(--c-hover); color: var(--c-text); outline: none; }

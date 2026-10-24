@@ -89,7 +89,7 @@ function indexOpts(projectDir) {
   let cfg = {};
   try { cfg = JSON.parse(fs.readFileSync(path.join(projectDir, '.reqtree', 'config.json'), 'utf8')) || {}; } catch {}
   const mapped = fs.existsSync(path.join(projectDir, '.reqtree', 'codemap.json'));
-  return { principles: cfg.principles !== false, who: mapped ? require('./codemap').whoHint() : '' };
+  return { principles: cfg.principles !== false, who: mapped && cfg.codeMap !== false ? require('./codemap').whoHint() : '' };
 }
 
 // 编译给哪些 AI 工具：装过 Codex（.reqtree/codex.json 或 AGENTS.md 里有托管块）就编 Codex；

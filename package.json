@@ -2,7 +2,7 @@
   "name": "reqtree",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "publisher": "shidipeng",
   "license": "MIT",
   "repository": {
@@ -35,6 +35,7 @@
     "package.nls.zh-cn.json"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "workspaceContains:需求树.md",
     "workspaceContains:*.tree.md"
   ],
@@ -65,6 +66,10 @@
       {
         "command": "reqtree.enable",
         "title": "%cmd.enable%"
+      },
+      {
+        "command": "reqtree.disable",
+        "title": "%cmd.disable%"
       },
       {
         "command": "reqtree.refresh",
@@ -154,6 +159,54 @@
             "%config.memoryMode.treeOnly%"
           ],
           "description": "%config.memoryMode%"
+        },
+        "reqtree.recorder": {
+          "type": "string",
+          "enum": [
+            "turn",
+            "off"
+          ],
+          "default": "turn",
+          "enumDescriptions": [
+            "%config.recorder.turn%",
+            "%config.recorder.off%"
+          ],
+          "description": "%config.recorder%",
+          "scope": "resource"
+        },
+        "reqtree.recordEvery": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "%config.recordEvery%",
+          "scope": "resource"
+        },
+        "reqtree.sweepEvery": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 0,
+          "maximum": 50,
+          "description": "%config.sweepEvery%",
+          "scope": "resource"
+        },
+        "reqtree.aiFindings": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.aiFindings%",
+          "scope": "resource"
+        },
+        "reqtree.principles": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.principles%",
+          "scope": "resource"
+        },
+        "reqtree.codeMap": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.codeMap%",
+          "scope": "resource"
         }
       }
     }

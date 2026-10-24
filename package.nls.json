@@ -21,5 +21,14 @@
   "config.askQuestions.off": "Don't ask; keep the recorder's choice",
   "config.memoryMode": "How ReqTree and Claude Code's auto memory divide the work.",
   "config.memoryMode.dedupe": "Divide the work (default): the tree holds the project's rules; auto memory keeps only things unrelated to the project's content (you, your tools and machine, private details such as servers and accounts). The recorder moves rules the AI writes into memory into the tree, and the check-up deletes notes already in the tree and asks about the rest",
-  "config.memoryMode.treeOnly": "Turn off auto memory for this project (writes \"autoMemoryEnabled\": false to .claude/settings.local.json); the tree is the only record. Notes about your tools, machine and private details then have nowhere to go"
+  "config.memoryMode.treeOnly": "Turn off auto memory for this project (writes \"autoMemoryEnabled\": false to .claude/settings.local.json); the tree is the only record. Notes about your tools, machine and private details then have nowhere to go",
+  "cmd.disable": "ReqTree: Disable in this project",
+  "config.recorder": "Recorder: after each turn, writes your lasting requests into the tree. Changing this writes the project's .reqtree/config.json (same switch as the gear menu in the sidebar).",
+  "config.recorder.turn": "On",
+  "config.recorder.off": "Paused (no new requests recorded)",
+  "config.recordEvery": "Hand turns to the recorder every N turns. 1 = every turn; 3 = every third turn, with those three turns together (fewer model calls, recorded a bit later).",
+  "config.sweepEvery": "Catch-up interval: every N turns, re-read your recent messages for anything missed (0 = off; it always runs before context compaction).",
+  "config.aiFindings": "Also record practices and pitfalls the AI discovers (rules prefixed \"（AI 发现）\").",
+  "config.principles": "Put the working principles in the index: find the root cause of bugs first; check what the project already has before writing something new.",
+  "config.codeMap": "Build the code map: when the AI touches an area, tell it what files, functions and dependencies are already there."
 }

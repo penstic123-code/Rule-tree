@@ -270,6 +270,7 @@ for (const theme of ['dark', 'light']) {
           document.querySelectorAll('.dp .fold-tg[aria-expanded="false"]').forEach(t => t.click());
           out.overflowX = document.documentElement.scrollWidth - innerWidth;
           out.rows = document.querySelectorAll('.row').length;
+          out.doneBtn = (document.querySelector('.donebtn') || {}).textContent || '';
           out.detailTitle = document.querySelector('.dp .sh strong')?.textContent;
           out.ai = document.querySelectorAll('.chip.ai').length;
           out.aiIcon = !!document.querySelector('.chip.ai svg.ico-ai');
@@ -299,7 +300,7 @@ for (const theme of ['dark', 'light']) {
         await b.shot(path.join(OUT, `ui-${theme}-${width}.png`));
 
         assert.ok(r.overflowX <= 0, `横向溢出 ${r.overflowX}px`);
-        assert.strictEqual(r.rows, 9);
+        assert.strictEqual(r.rows, 8, '完成的「英语课」默认收成一行「已完成 1 个」');
         assert.strictEqual(r.detailTitle, '英文版');
         assert.ok(r.ai >= 1, '没有显示 AI 正在改');
         assert.ok(r.aiIcon, 'AI 正在改要用线条图标');
@@ -323,10 +324,10 @@ for (const theme of ['dark', 'light']) {
           document.querySelector('.gear[data-act="settings"]').click();
           const items = [...document.querySelectorAll('.menu button[data-v]')].map(x => x.getAttribute('aria-checked'));
           const labels = [...document.querySelectorAll('.menu button')].map(x => x.textContent);
-          document.querySelectorAll('.menu button')[1].click();
+          document.querySelectorAll('.menu button[data-v]')[3].click();
           const cfg = window.__posted.filter(m => m.type === 'setConfig').pop();
           return { posted: window.__posted.map(m => m.type), all: window.__posted, sel, rowsAfter, aiCollapsed: !!document.querySelector('.row[data-key$="#C2"] .chip.ai svg.ico-ai'), items, labels, cfg };`);
-        assert.deepStrictEqual(posted.items, ['true', 'false'], '默认：每轮记录');
+        assert.deepStrictEqual(posted.items, ['true', 'false', 'false', 'false'], '默认：每轮记录（另有每 3 轮、每 5 轮、暂停）');
         assert.ok(posted.labels.every(l => !/确认/.test(l)), `设置菜单里还有确认模式：${posted.labels}`);
         assert.deepStrictEqual(posted.cfg.patch, { recorder: 'off' });
         const edits = posted.all.filter(m => m.type === 'edit');
@@ -336,7 +337,7 @@ for (const theme of ['dark', 'light']) {
         assert.strictEqual(edits[2].file, 'notes/plan.md');
         assert.ok(posted.all.some(m => m.type === 'undo' && m.id === 'c1'));
         assert.strictEqual(posted.sel, '写作');
-        assert.strictEqual(posted.rowsAfter, 6, '折叠后子节点应隐藏');
+        assert.strictEqual(posted.rowsAfter, 5, '折叠后子节点应隐藏（完成的需求收成一行，不算）');
         assert.ok(posted.aiCollapsed, '折叠后上级也要显示 AI 正在改的图标');
       } finally { b.close(); }
     });
@@ -1010,7 +1011,7 @@ test('侧栏：没有「只看这一支」按钮（侧栏太窄，用户觉得�
     const r = await b.eval(`
       return { rows: document.querySelectorAll('.row').length, btn: !!document.querySelector('.dp [data-act="focus"]'),
         bar: !!document.querySelector('.focusbar'), checkup: !!document.querySelector('.statusbar [data-act="checkup"]'), errors: window.__errors };`);
-    assert.strictEqual(r.rows, 9, '旧的聚焦状态还在起作用');
+    assert.strictEqual(r.rows, 8, '旧的聚焦状态还在起作用（完成的需求收成一行，不算）');
     assert.strictEqual(r.btn, false);
     assert.strictEqual(r.bar, false);
     assert.ok(r.checkup, '侧栏顶部要有「体检」按钮');
@@ -1195,10 +1196,10 @@ test('侧栏：选中一行后不在这一支的行变淡（约 55%）；Esc / �
       out.blank = dims();
       return out;`);
     assert.deepStrictEqual(r.start, [], '刚打开不变淡');
-    assert.deepStrictEqual(r.sel, ['C3', 'C4', 'G1', 'G1.1']);
+    assert.deepStrictEqual(r.sel, ['C3', 'G1', 'G1.1'], '完成的 C4 收成一行，不在列表里');
     assert.ok(r.op > 0.45 && r.op < 0.65, `变淡的透明度 ${r.op}`);
     assert.deepStrictEqual(r.esc, []); assert.strictEqual(r.stillSel, 'C2');
-    assert.deepStrictEqual(r.g, ['C2', 'C2.1', 'C2.2', 'C2.3', 'C3', 'C4']);
+    assert.deepStrictEqual(r.g, ['C2', 'C2.1', 'C2.2', 'C2.3', 'C3']);
     assert.deepStrictEqual(r.blank, []);
   } finally { b.close(); }
 });
@@ -1225,7 +1226,7 @@ test('编号默认不显示：标题悬停提示里有编号，⋯ 菜单能复�
     assert.ok(r.menu.some(x => /删除需求/.test(x)));
     assert.ok(!r.menu.some(x => /复制规则|打开原文/.test(x)), '「复制规则」「打开原文」已删：规则会自动加载，点规则就能跳到原文');
     assert.strictEqual(r.role, 'menuitemcheckbox:false');
-    assert.ok(r.after >= 10, `打开后应该显示编号：${r.after}`);
+    assert.ok(r.after >= 9, `打开后应该显示编号：${r.after}（完成的需求收成一行，少一个）`);
     assert.strictEqual(r.saved, true);
     assert.strictEqual(r.crumbs, 'P 示例项目 › C2 数据科学课');
   } finally { b.close(); }

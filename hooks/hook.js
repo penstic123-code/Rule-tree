@@ -125,6 +125,8 @@ function withReply(turns, reply) {
 // 用户点名时已经送过 X（UserPromptSubmit 的 sent）；之前补送过（标记文件用 'wx' 独占创建，几个 PostToolUse 同时跑也只补一次）。
 // PostToolUse 在后台运行，加载记录也是后台写的，可能晚到一点：有记录但缺这一路的，最多等 FALLBACK_WAIT_MS 再判断
 const FALLBACK_WAIT_MS = () => { const v = process.env.REQTREE_FALLBACK_WAIT_MS; return v != null && v !== '' ? Number(v) : 1500; };
+// 「正在做的需求」看多久以内的改动
+const FOCUS_MS = 6 * 3600000;
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function fallback(treePath, node, rel, input, trace) {
   const expected = pathOf(node).filter(n => n.parent && n.parent.parent && (n.rules.length || n.docs.some(d => Docs.exists(path.dirname(treePath), d))) && autoLoads(n)).map(n => n.id);
@@ -182,7 +184,7 @@ function cleanOldState() {
   const cutoff = Date.now() - 7 * 86400000;
   try {
     for (const f of fs.readdirSync(STATE_DIR())) {
-      if (!/^([0-9a-f]{32}(\.ai|\.sweep|\.compact|\.fallback-[^.]+-[A-Za-z0-9.]+)?|job-.*)\.json$/.test(f)) continue;
+      if (!/^([0-9a-f]{32}(\.ai|\.sweep|\.compact|\.pending|\.fallback-[^.]+-[A-Za-z0-9.]+)?|job-.*)\.json$/.test(f)) continue;
       const p = path.join(STATE_DIR(), f);
       if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
     }
@@ -215,7 +217,9 @@ function main(input, trace) {
     }
     if (input.prompt) {
       const start = Date.now();
-      st.turns = [...st.turns, { user: input.prompt, ai: '', start }].slice(-2);
+      // 留最近几轮给记录员：每 N 轮记一次时要留 N 轮
+      const keep = Math.max(2, Math.min(20, Number(store.readConfig(treePath).recordEvery) || 1));
+      st.turns = [...st.turns, { user: input.prompt, ai: '', start }].slice(-keep);
       st.recent = [...st.recent, { user: input.prompt.slice(0, RECENT_CLIP), start }].slice(-RECENT_MAX);
     }
     // 编译失败时，原生规则文件可能是旧的。面板上有红色提示，但不开面板的人看不到：
@@ -300,8 +304,14 @@ function main(input, trace) {
       turn.ai = input.last_assistant_message || '';
       store.writeJson(replyFile, { start: turn.start, ai: turn.ai });
     }
-    // 这一轮 AI 改过的需求和还没归属的文件
-    const since = turn ? turn.start : Date.now() - 30 * 60000;
+    // 每 N 轮记一次（config.recordEvery）：没攒够就记下攒了几轮、从哪一轮开始（.pending），这一轮不叫记录员；
+    // 攒够了（或者到了补漏的时候）把这几轮一起交给它。会话状态里留着最近 N 轮（见 UserPromptSubmit）
+    const every = Math.max(1, Math.min(20, Number(store.readConfig(treePath).recordEvery) || 1));
+    const pendingFile = stateFile(treePath, input.session_id, '.pending');
+    const pending = every > 1 ? store.readJson(pendingFile, null) : null;
+    const count = ((pending && pending.count) || 0) + 1;
+    // 这几轮 AI 改过的需求和还没归属的文件
+    const since = (pending && pending.start) || (turn ? turn.start : Date.now() - 30 * 60000);
     const acts = store.readActivity(treePath, Date.now() - since).filter(e => e.session === input.session_id);
     const touched = [...new Set(acts.filter(e => e.node).map(e => e.node))];
     const unmapped = [...new Set(acts.filter(e => !e.node).map(e => e.file))].slice(0, 20);
@@ -319,7 +329,20 @@ function main(input, trace) {
       const md = m.memoryDir(path.dirname(realPath(treePath)));
       if (md) for (const f of fs.readdirSync(md)) if (m.isMemFile(f) && fs.statSync(path.join(md, f)).mtimeMs >= since) addNote(md, f);
     } catch {}
-    startRecorder({ treePath, turns, transcriptPath: input.transcript_path, touched, unmapped, ...(sweep ? { sweep } : {}), ...(memory.length ? { memory } : {}) });
+    // 这个会话正在做的需求：最近几小时里 AI 改过它的文件（新的在前），加上用户点名、补送过规则的。
+    // 用户在做某个需求时说的话，默认就是对它说的；记录员拿它决定规则挂在哪
+    const focus = [];
+    const recentActs = store.readActivity(treePath, FOCUS_MS).filter(e => e.session === input.session_id && e.node);
+    for (let i = recentActs.length - 1; i >= 0 && focus.length < 4; i--) if (!focus.includes(recentActs[i].node)) focus.push(recentActs[i].node);
+    for (const id of Object.keys(session.sent || {})) if (focus.length < 4 && !focus.includes(id)) focus.push(id);
+    if (every > 1 && count < every && !sweep) {
+      store.writeJson(pendingFile, { count, start: since });
+      trace.pending = count;
+    } else {
+      if (pending) try { fs.unlinkSync(pendingFile); } catch {}
+      const batch = Math.min(count, turns.length);
+      startRecorder({ treePath, turns: turns.slice(-Math.max(batch, 2)), batch, transcriptPath: input.transcript_path, touched, unmapped, focus, ...(sweep ? { sweep } : {}), ...(memory.length ? { memory } : {}) });
+    }
     if (touched.length) try { store.touch(treePath, touched); } catch (e) { trace.touchError = e.message; }
     store.trimActivity(treePath);
     store.trimMemoryWrites(treePath);

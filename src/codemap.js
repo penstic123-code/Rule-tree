@@ -402,6 +402,18 @@ function refresh(treePath, { targets } = {}) {
   const projectDir = path.dirname(treePath);
   const tg = targets || targetsOf(projectDir);
   const treeName = path.basename(treePath);
+  // 设置里关了代码地图（config.codeMap = false）：删掉已有的地图，总目录里不再提查名字的命令
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(path.join(projectDir, '.reqtree', 'config.json'), 'utf8')) || {}; } catch {}
+  if (cfg.codeMap === false) {
+    const removed = [];
+    removeStale(path.join(projectDir, '.claude', 'rules', 'reqtree'), new Set(), removed, n => /^(map-.+|_map)\.md$/.test(n));
+    removeStale(path.join(projectDir, '.reqtree', 'map'), new Set(), removed, n => n.endsWith('.md'));
+    const had = lastBuilt(treePath);
+    try { fs.unlinkSync(path.join(projectDir, '.reqtree', 'codemap.json')); } catch {}
+    if (had) try { require('./store').compileTree(treePath, { force: true, wait: false }); } catch {}
+    return { written: [], removed, nodes: [], files: 0, ms: Date.now() - t0, off: true };
+  }
   const root = parse(fs.readFileSync(treePath, 'utf8'));
   const g = build(projectDir);
   const maps = new Map(); // id → { text, scope }

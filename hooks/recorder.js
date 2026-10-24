@@ -175,9 +175,12 @@ function isTrivial(msg) {
 }
 
 // notes：这一轮 AI 写进自动记忆的笔记 [{ file, text }]（hook 从 PostToolUse 记下的，见 job.memory）
-function buildPrompt(tree, turns, touched, unmapped, notes = [], aiFindings = false) {
+// focus：这个会话正在做的需求（最近改过它的文件、或用户点名过的，新的在前）。用户的话默认是对它说的
+// batch：每 N 轮记一次时，这次交来的轮数（大于 1 时前面几轮也还没记过，和最新一轮一样都要看）
+function buildPrompt(tree, turns, touched, unmapped, notes = [], aiFindings = false, focus = [], batch = 1) {
   const latest = turns[turns.length - 1];
   const earlier = turns.slice(0, -1).map(t => `用户：${t.user}\nAI：${t.ai}`);
+  const earlierTag = batch > 1 ? '之前几轮（还没记过，和最新一轮一样都要看）' : '更早的对话（只作上下文）';
   const noteBlock = notes.length ? `\n<这一轮 AI 写进它自己的自动记忆的笔记>\n${notes.map(n => `文件 ${n.file}：\n${n.text}`).join('\n---\n')}\n</这一轮 AI 写进它自己的自动记忆的笔记>\n` : '';
   const noteTask = notes.length ? `
 5. 自动记忆只该记和项目内容无关的事（用户本人的情况、工具和电脑环境、私人信息、外部资源在哪）。上面某份笔记整份都是这个项目的需求或规则时：先确保需求树里有（已有同一件事就不加；没有就照第 1 条加或改写），再输出 {"op":"memory_absorb","file":"文件名"} 删掉这份笔记。笔记里混着和项目无关的内容，或者拿不准的，不动它。` : '';
@@ -186,12 +189,12 @@ function buildPrompt(tree, turns, touched, unmapped, notes = [], aiFindings = fa
 <需求树>
 ${tree}
 </需求树>
-${earlier.length ? `\n<更早的对话（只作上下文）>\n${earlier.join('\n---\n')}\n</更早的对话>\n` : ''}
+${earlier.length ? `\n<${earlierTag}>\n${earlier.join('\n---\n')}\n</${earlierTag}>\n` : ''}
 <最新一轮>
 用户：${latest.user}
 AI：${latest.ai}
 </最新一轮>
-${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join('、')}` : ''}${unmapped.length ? `\n这一轮 AI 改了这些还没归属的文件：${unmapped.join('、')}` : ''}${noteBlock}
+${focus.length ? `\n这个会话正在做的需求（新的在前）：${focus.join('、')}` : ''}${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join('、')}` : ''}${unmapped.length ? `\n这一轮 AI 改了这些还没归属的文件：${unmapped.join('、')}` : ''}${noteBlock}
 
 请输出这一轮应该对需求树做的改动：
 1. 用户提出的长期要求（新规则、修改或否决已有规则、新需求）。AI 的建议只有在用户明确同意时才算。
@@ -208,8 +211,10 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
      例：旧「像素风探险地图」，新「改成2D横版像素游戏」→ replace_rule；
          P 里旧「手账风全课通用」，新「手账风只属于第一篇」→ 缩小范围：remove_rule P 那条，在第一篇 add_rule；
          P 里旧「每章互动不超过4个」，新「第5章互动可以多一点」→ 只第5章例外：在第5章 override_rule。
-   - 规则挂在它管辖范围最小的节点上；用户说"以后都""所有章节""每次"之类时，挂到覆盖这个范围的最高节点。最顶上那个需求只放明确对整个项目都成立的规则。
-   - 这个项目整体怎么做事、怎么写、怎么沟通的偏好（如"交流用中文""反馈含糊先问清""文风要平实"），不是某门课、某个模块内容特有的，挂到最顶上那个需求——哪怕说的时候进行中某一章。只有那一块内容本身的决定才挂在那一块上。
+   - **挂在哪**：用户正在做某个需求时说的话，默认就是对这个需求说的——挂在上面「正在做的需求」里最贴切的那个（通常是第一个），哪怕措辞听起来像通用的（"小标题写概念名""互动别太多"）。用户在说哪一章、哪个模块，就挂在那一章、那个模块上。
+     只有这几种才往上挂：用户明说范围更大（"以后所有课""全项目""每门课都""每次"）→ 挂到覆盖这个范围的节点；说的是和内容无关的做事方式（"交流用中文""先给结论""反馈含糊先问清"）→ 挂最顶上那个需求。
+     拿不准是只管当前需求还是更大范围：先挂在当前需求上，同时按第 4 条问「只管 X，还是全项目？」，default 是只管 X。最顶上那个需求只放明确对整个项目都成立的规则，宁少勿多。
+     没有「正在做的需求」时，按规则说的内容挂在管辖范围最小的节点上。
    - 子需求要在本范围内推翻上级的规则时，用 override_rule（node 是子需求，from 是上级 ID，text 是上级原文，new 是新内容）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
    - 用户在几种做法之间拍板（技术方案、架构、结构、取舍），记成以「决定：」开头的规则，一句话写清选了什么、为什么。例：「决定：系统之间用 EventBus 传事件，不互相直接调用（方便单独测试每个系统）」。AI 提的方案，用户明确同意了也算。对话里没说原因就只写选了什么，不要编原因。
@@ -419,10 +424,10 @@ async function main(jobPath) {
     const skipped = [];
     const notes = readNotes(job.memory);
     // 用户只说了「好」，AI 也可能在这一轮写了记忆：有新笔记就照样调用模型
-    if (turns.length && config.recorder !== 'off' && (!isTrivial(latest) || notes.length)) {
+    if (turns.length && config.recorder !== 'off' && (!isTrivial(latest) || notes.length || ((job.batch || 1) > 1 && turns.some(t => !isTrivial(t.user))))) {
       const lines = text.split(/\r?\n/).length;
-      const tree = lines > BIG_TREE_LINES ? outline(text, touched) : text;
-      const out = await askJson(buildPrompt(tree, turns, touched, unmapped, notes, config.aiFindings !== false));
+      const tree = lines > BIG_TREE_LINES ? outline(text, [...new Set([...touched, ...(job.focus || [])])]) : text;
+      const out = await askJson(buildPrompt(tree, turns, touched, unmapped, notes, config.aiFindings !== false, job.focus || [], job.batch || 1));
       if (!Array.isArray(out.ops) && !Array.isArray(out.questions)) throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
       // memory_absorb 只认这一轮写过的笔记；换成删整份记忆（先备份，可撤销）
       const own = new Map(notes.map(n => [n.file, n]));
@@ -467,7 +472,7 @@ async function main(jobPath) {
       let notePart;
       try {
         const now = fs.readFileSync(treePath, 'utf8');
-        const tree = now.split(/\r?\n/).length > BIG_TREE_LINES ? outline(now, touched) : now;
+        const tree = now.split(/\r?\n/).length > BIG_TREE_LINES ? outline(now, [...new Set([...touched, ...(job.focus || [])])]) : now;
         const sops = (await askModel(buildSweepPrompt(tree, sweep))).filter(o => SWEEP_OPS.has(o.op));
         asked = true;
         const r = sops.length ? store.submitOps(treePath, sops) : { applied: [], queued: 0 };
