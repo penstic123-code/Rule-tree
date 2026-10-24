@@ -89,10 +89,11 @@ const openDoc = p => vscode.workspace.textDocuments.find(d => d.uri.scheme === '
 // 树现在的内容：编辑器里有没保存的改动就以编辑器为准
 const currentText = p => { const doc = openDoc(p); return doc && doc.isDirty ? doc.getText() : fs.readFileSync(p, 'utf8'); };
 
-// 写树：编辑器里有未保存的改动时改编辑器内容并保存（保留用户的改动），否则加锁写文件。
+// 写树：编辑器里有未保存的改动时改编辑器内容（保留用户的改动），否则加锁写文件。
+// 用户在面板上点的操作改完就保存；后台体检（save: false）不替用户保存写到一半的内容，等用户自己保存。
 // 插件里所有写树都走这里（store.applyChange/undoChange/flushQueue 的 write 参数也传它）。
 // 加锁用异步重试，不在插件宿主里同步等锁（见 store.updateTreeAsync）
-async function writeTree(treePath, update) {
+async function writeTree(treePath, update, { save = true } = {}) {
   const doc = openDoc(treePath);
   if (doc && doc.isDirty) {
     const updated = update(doc.getText());
@@ -100,7 +101,7 @@ async function writeTree(treePath, update) {
     const edit = new vscode.WorkspaceEdit();
     edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), updated);
     await vscode.workspace.applyEdit(edit);
-    await doc.save();
+    if (save) await doc.save();
   } else {
     await store.updateTreeAsync(treePath, update);
   }
@@ -338,11 +339,18 @@ class Panel {
 
   // 跑体检、写报告、弹结果
   async runCheck(p, parts, full, memory) {
-    const run = bar => runCheckup(p, { read: currentText, write: writeTree, memory, parts, full,
+    // 同一棵树的体检正在跑（体检要十几分钟，按钮可能被再点一次）：不再开第二个，两个同时改树会互相打架
+    this.checking = this.checking || new Set();
+    if (this.checking.has(p)) return;
+    this.checking.add(p);
+    const run = bar => runCheckup(p, { read: currentText, write: (t, u) => writeTree(t, u, { save: false }), memory, parts, full,
       progress: (i, n) => { if (bar && n > 1) bar.report({ message: `${i}/${n}` }); } });
-    const r = vscode.window.withProgress && vscode.ProgressLocation
-      ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('q.checking') }, run)
-      : await run();
+    let r;
+    try {
+      r = vscode.window.withProgress && vscode.ProgressLocation
+        ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('q.checking') }, run)
+        : await run();
+    } finally { this.checking.delete(p); }
     this.load();
     const newQs = [...r.questions, ...r.stale, ...r.memory, ...(r.scope || []), ...(r.docs || [])];
     const asked = newQs.length;

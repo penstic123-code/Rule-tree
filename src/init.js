@@ -13,11 +13,12 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const store = require('./store');
 const Docs = require('./docs');
-const { parse, walk, globToRegExp, STATUS_EMOJI } = require('./parser');
+const { parse, walk, globToRegExp, STATUS_EMOJI, applyOps } = require('./parser');
 
 const INIT_CMD = process.env.REQTREE_INIT_CMD
   || 'claude -p --model sonnet --strict-mcp-config --no-session-persistence --setting-sources user';
 const INIT_TIMEOUT_MS = +process.env.REQTREE_INIT_TIMEOUT_MS || 300000;
+const EDITING = '需求树在编辑器里有没保存的改动，这次没写；保存后在命令面板运行「需求树：体检」再试';
 const ENTRY_DOCS = ['CLAUDE.md', 'AGENTS.md'];
 const MAX_TOP = 15, MAX_CHILDREN = 10;
 const SPLIT_MIN_DOC = 3000;   // 入口文档不到这么多字不拆
@@ -285,13 +286,21 @@ async function initProject(dir, { ask, treeName = '需求树.md' } = {}) {
     fs.writeFileSync(treePath, store.initialTree(dir));
   }
   store.ensureTracking(treePath);
+  const before = read(treePath);
   let r;
-  try { r = await propose(dir, { ask, treeText: read(treePath) }); } catch (error) {
+  try { r = await propose(dir, { ask, treeText: before }); } catch (error) {
     store.compileTree(treePath, { force: true });
     return { treePath, ai: false, error };
   }
+  // 用户这期间在编辑器里改树、还没保存：整份写盘会和编辑器里的内容打架，这次不写（下次打开再试）
+  if (store.isEditing(treePath)) return { treePath, ai: false, error: new Error(EDITING) };
+  // 等模型的这几十秒里，别的会话的记录员可能往树里记了新规则：整棵写回前把它们放到新树的根上，不丢
+  let treeText = r.tree;
+  const seen = new Set(existingRules(before).map(x => x.text));
+  const added = existingRules(read(treePath)).filter(x => !seen.has(x.text));
+  if (added.length) treeText = applyOps(treeText, added.map(x => ({ op: 'add_rule', node: parse(treeText).children[0].id, text: x.text, force: true }))).text;
   const rel = path.relative(dir, treePath).replace(/\\/g, '/');
-  const ops = [{ op: 'doc_write', file: rel, text: r.tree }, ...[...r.writes].map(([file, text]) => ({ op: 'doc_write', file, text }))];
+  const ops = [{ op: 'doc_write', file: rel, text: treeText }, ...[...r.writes].map(([file, text]) => ({ op: 'doc_write', file, text }))];
   const id = `${Date.now().toString(36)}init`;
   const applied = store.applyChange(treePath, ops, { source: '初始化', id });
   store.compileTree(treePath, { force: true });

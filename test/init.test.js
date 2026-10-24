@@ -162,3 +162,44 @@ test('文档挂在某个需求下、说法和这个需求的规则冲突：按�
   assert.ok(store.undoChange(treePath, store.readChanges(treePath)[0].id));
   assert.strictEqual(fs.readFileSync(path.join(dir, 'ml/rules.md'), 'utf8'), '| 其他语言版 | 没有，只做英文 |\n');
 });
+
+// ---------- 初始化和别的改动先后、同时发生 ----------
+test('初始化等模型时记录员往树里记了一条：整棵写回后这条还在（放在根上）', async () => {
+  const dir = project(FILES);
+  const treePath = path.join(dir, '需求树.md');
+  fs.writeFileSync(treePath, store.TEMPLATE.replace('- [语气]', '- 光照只有一条规则\n- [语气]'));
+  const ask = async () => {
+    store.applyChange(treePath, [{ op: 'add_rule', node: 'P', text: '存档每五分钟自动保存一次' }], { source: '记录员' });
+    return { project: '小猪', nodes: [{ id: 'R1', title: '城市', files: ['game/**'] }], split: [], rules: [{ i: 1, node: 'R1' }] };
+  };
+  const r = await Init.initProject(dir, { ask });
+  const root = parse(fs.readFileSync(r.treePath, 'utf8'));
+  assert.deepStrictEqual(root.children[0].rules.map(x => x.text), ['存档每五分钟自动保存一次']);
+  assert.deepStrictEqual(findById(root, 'R1').rules.map(x => x.text), ['光照只有一条规则']);
+});
+
+test('初始化之后体检又记了规则：撤销初始化，树回到原来的样子，后记的规则不丢', async () => {
+  const dir = project(FILES);
+  const ask = async () => ({ project: '小猪', nodes: [{ id: 'R1', title: '城市', files: ['game/**'] }], split: [] });
+  const r = await Init.initProject(dir, { ask });
+  store.applyChange(r.treePath, [{ op: 'add_rule', node: 'R1', text: '街道两边种树' }], { source: '体检' });
+  assert.ok(store.undoChange(r.treePath, r.changeId));
+  const text = fs.readFileSync(r.treePath, 'utf8');
+  assert.ok(text.includes(store.FOLDER_INTRO), '回到按文件夹生成的树');
+  assert.ok(parse(text).children[0].rules.some(x => x.text === '街道两边种树'));
+});
+
+test('体检的默认做法只做成一半（新规则加上了，旧的那条找不到删不掉）：整个撤掉，开着问，不记成已自动处理', async () => {
+  const { settle } = require('../src/checkup');
+  const dir = project({});
+  const treePath = path.join(dir, '需求树.md');
+  fs.writeFileSync(treePath, '# P x\n- 段落不超过 4 行\n');
+  const q = { source: '体检', text: '两条冲突', default: 0, sure: true, options: [
+    { label: '换', ops: [{ op: 'add_rule', node: 'P', text: '段落不超过 6 行', force: true }, { op: 'remove_rule', node: 'P', text: '根本没有这条规则' }] },
+    { label: '不动', ops: [] },
+  ] };
+  const r = await settle(treePath, q, {});
+  assert.strictEqual(r.auto, null);
+  assert.ok(r.question);
+  assert.ok(!fs.readFileSync(treePath, 'utf8').includes('6 行'));
+});

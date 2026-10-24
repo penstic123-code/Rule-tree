@@ -14,6 +14,7 @@ const path = require('path');
 const { parse, walk, pathOf } = require('./parser');
 const codex = require('./targets/codex');
 const Docs = require('./docs');
+const { worktreesOf } = require('./common');
 
 const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
 const MARK = '<!-- reqtree:generated -->';
@@ -136,6 +137,14 @@ function compileClaude(treePath) {
     if (text) files.set(`${n.id}.md`, text);
   }
 
+  const res = writeRules(dir, files);
+  // git worktree 里没有这些规则文件（一般不进 git），在那里干活的 AI 一条都加载不到：每个 worktree 抄一份。
+  // 2026-10-25：猪猪进城记大部分活在 .claude/worktrees/ 里做，规则和记录员都没起作用
+  for (const wt of worktreesOf(projectDir)) try { writeRules(path.join(wt, OUT_DIR), files); } catch {}
+  return { ...res, dir };
+}
+
+function writeRules(dir, files) {
   fs.mkdirSync(dir, { recursive: true });
   const written = [], removed = [];
   for (const [name, text] of files) {
@@ -151,7 +160,7 @@ function compileClaude(treePath) {
     const p = path.join(dir, name);
     if (fs.readFileSync(p, 'utf8').includes(MARK)) { fs.unlinkSync(p); removed.push(name); }
   }
-  return { written, removed, dir };
+  return { written, removed };
 }
 
 // 树比编译结果新、或编译结果是旧格式时才编译（hook 每次调用它，要便宜：先比时间，时间没问题才读一个小文件）。
@@ -160,8 +169,11 @@ function ensureCompiled(treePath) {
   const projectDir = path.dirname(treePath);
   const targets = targetsOf(projectDir);
   const stamp = path.join(projectDir, OUT_DIR, '_index.md');
+  const fresh = s => fs.statSync(s).mtimeMs >= fs.statSync(treePath).mtimeMs && fs.readFileSync(s, 'utf8').includes(FORMAT);
+  const wtStamps = () => worktreesOf(projectDir).map(w => path.join(w, OUT_DIR, '_index.md'));
+  // 新开的 worktree 里还没有规则文件，也算要编译
   const claudeStale = () => {
-    try { return !(fs.statSync(stamp).mtimeMs >= fs.statSync(treePath).mtimeMs && fs.readFileSync(stamp, 'utf8').includes(FORMAT)); }
+    try { return !fresh(stamp) || wtStamps().some(s => { try { return !fresh(s); } catch { return true; } }); }
     catch { return true; }
   };
   // 挂的文档改过：规则里写的目录和行号可能过时了，也要重编
@@ -172,7 +184,7 @@ function ensureCompiled(treePath) {
   const r = compile(treePath, { targets });
   // 内容没变时也刷新时间戳，下次就不用再比
   const now = new Date();
-  if (targets.claude) try { fs.utimesSync(stamp, now, now); } catch {}
+  if (targets.claude) for (const s of [stamp, ...wtStamps()]) try { fs.utimesSync(s, now, now); } catch {}
   if (targets.codex) try { fs.utimesSync(path.join(projectDir, codex.RULES_DIR, '_index.md'), now, now); } catch {}
   return r;
 }

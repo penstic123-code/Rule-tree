@@ -13,16 +13,59 @@ const isRoot = node => !node.parent || !node.parent.parent;
 // 改文件的工具。只跟踪这几个，不跟踪 Bash（每条命令都启动一次 node 不划算）
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
-// 从 dir 往上找需求树，到 git 根为止（Claude Code 和 Codex 都可能在子目录里启动）
+// git worktree 是同一个项目的另一份检出：根目录下的 .git 是个文件，写着「gitdir: <主仓库>/.git/worktrees/<名字>」。
+// 需求树.md 一般不进 git，worktree 里没有，要回主仓库找。dir 是 worktree 的根时返回主仓库目录，否则 null
+function worktreeMain(dir) {
+  let t;
+  try { t = fs.readFileSync(path.join(dir, '.git'), 'utf8'); } catch { return null; }
+  const m = /^gitdir:\s*(.+?)\s*$/m.exec(t);
+  if (!m) return null;
+  const wt = path.dirname(path.resolve(dir, m[1]));
+  return path.basename(wt) === 'worktrees' && path.basename(path.dirname(wt)) === '.git' ? path.dirname(path.dirname(wt)) : null;
+}
+
+// 主仓库登记过、现在还在的 worktree 根目录
+function worktreesOf(mainDir) {
+  const base = path.join(mainDir, '.git', 'worktrees');
+  let names;
+  try { names = fs.readdirSync(base); } catch { return []; }
+  const out = [];
+  for (const n of names) {
+    try {
+      const d = path.dirname(path.resolve(fs.readFileSync(path.join(base, n, 'gitdir'), 'utf8').trim()));
+      if (fs.existsSync(path.join(d, '.git'))) out.push(d);
+    } catch {}
+  }
+  return out;
+}
+
+// 从 dir 往上找需求树，到 git 根为止（Claude Code 和 Codex 都可能在子目录里启动）；git 根是 worktree 时到主仓库找
 function findTreeUp(dir) {
   const { findTree } = require('./store');
   for (let d = path.resolve(dir); ;) {
     const t = findTree(d);
     if (t) return t;
     const up = path.dirname(d);
-    if (up === d || fs.existsSync(path.join(d, '.git'))) return null;
+    if (fs.existsSync(path.join(d, '.git'))) { const main = worktreeMain(d); return main ? findTree(main) : null; }
+    if (up === d) return null;
     d = up;
   }
+}
+
+// 文件在项目里的相对路径（正斜杠）。文件在这个项目的某个 worktree 里时，按那个 worktree 的根算，需求的文件范围才对得上
+function projectRel(treeDir, file) {
+  const { samePath } = require('./store');
+  for (let d = path.dirname(file); ;) {
+    if (fs.existsSync(path.join(d, '.git'))) {
+      const main = worktreeMain(d);
+      if (main && samePath(main, treeDir)) return path.relative(d, file).split(path.sep).join('/');
+      break;
+    }
+    const up = path.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return path.relative(treeDir, file).split(path.sep).join('/');
 }
 
 // 往临时目录里的日志追加一行（超过 512 KB 就换一份）。日志写不进去不能影响正事
@@ -35,4 +78,4 @@ function appendTmpLog(name, line) {
   } catch {}
 }
 
-module.exports = { tmpDir, isRoot, EDIT_TOOLS, findTreeUp, appendTmpLog };
+module.exports = { tmpDir, isRoot, EDIT_TOOLS, findTreeUp, worktreeMain, worktreesOf, projectRel, appendTmpLog };

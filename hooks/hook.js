@@ -19,7 +19,7 @@ const { mentionContext, isMachinePrompt, renderNode } = require('../src/mention'
 const { autoLoads } = require('../src/compile');
 const store = require('../src/store');
 const Docs = require('../src/docs');
-const { tmpDir: STATE_DIR, EDIT_TOOLS, findTreeUp, appendTmpLog } = require('../src/common');
+const { tmpDir: STATE_DIR, EDIT_TOOLS, findTreeUp, projectRel, appendTmpLog } = require('../src/common');
 
 // 这次工具调用改了哪个文件（绝对路径）。只认编辑类工具：命令行改的文件靠猜不可靠，
 // 每条命令都启动一次 node 也不划算（这台机器约 0.2 秒），AI 改文件绝大多数走 Edit/Write
@@ -270,7 +270,7 @@ function main(input, trace) {
     for (const file of editedFiles(input, cwd)) {
       const f = realPath(file);
       if (store.samePath(f, realTree)) { store.compileTree(treePath); continue; }
-      const rel = path.relative(path.dirname(realTree), f).split(path.sep).join('/');
+      const rel = projectRel(path.dirname(realTree), f);
       // 项目外的文件只认一种：这个项目的自动记忆（Claude Code 放在 ~/.claude/projects/<项目>/memory/）
       if (rel.startsWith('..') || path.isAbsolute(rel)) { noteMemoryWrite(treePath, f, input, trace); continue; }
       if (/^\.(reqtree|claude)\//.test(rel)) continue;

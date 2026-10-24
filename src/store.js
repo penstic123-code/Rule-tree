@@ -16,7 +16,7 @@
 //     editing     用户有未保存改动的标记       *.tmp  原子写的中间文件
 const fs = require('fs');
 const path = require('path');
-const { applyOps, STATUS_LABEL } = require('./parser');
+const { applyOps, parse, STATUS_LABEL } = require('./parser');
 const { compile, ensureCompiled } = require('./compile');
 
 // 只认项目根目录：优先 需求树.md，其次第一个 *.tree.md
@@ -397,8 +397,17 @@ function undoChange(treePath, id, { write } = {}) {
   const all = entry.ops.slice().reverse().flatMap(o => o.undo || []);
   // 记忆文件、文档的反操作（memory_restore、doc_restore）不改树，直接做
   const mem = require('./memory'), Docs = require('./docs');
+  // 整棵树放回（撤销初始化）时，之后的改动记进树的规则会跟着消失（体检可能已经把它们从文档里删了）：
+  // 先收起来，放回后加到根上，不丢
+  const wholeTree = all.some(u => u.op === 'doc_put_back' && samePath(path.resolve(path.dirname(treePath), u.file), treePath));
+  const kept = wholeTree ? readChanges(treePath, 500).filter(e => e.time > entry.time && !e.undone)
+    .flatMap(e => e.ops).filter(o => /^(add|replace|override)_rule$/.test(o.op)).map(o => (o.op === 'override_rule' ? o.new : o.text)).filter(Boolean) : [];
   let count = 0;
   for (const u of all.filter(isFileOp)) { try { if (Docs.isDocOp(u) ? Docs.undoDoc(treePath, u) : mem.restoreMemory(u)) count++; } catch {} }
+  if (kept.length && fs.existsSync(treePath)) {
+    const top = parse(fs.readFileSync(treePath, 'utf8')).children[0];
+    if (top) all.push(...kept.map(text => ({ op: 'add_rule', node: top.id, text })));
+  }
   const undo = all.filter(u => !isFileOp(u));
   // 只有文件的反操作（初始化：需求树本身也是整份放回的）：不再写树，放回的树重新编译
   if (!undo.length) {

@@ -501,6 +501,11 @@ async function settle(treePath, q, { write }) {
   if (opt.ops.length) {
     changeId = store.newChangeId();
     applied = await store.applyChange(treePath, opt.ops, { source: '体检', write, id: changeId });
+    // 只做成一半（比如加了新规则、旧的那条却没找到删不掉）：撤掉做成的那部分，当成没做成，开着问
+    if (applied.length && (applied.skipped || []).some(s => !['duplicate', 'same'].includes(s.reason))) {
+      await store.undoChange(treePath, changeId, { write });
+      applied = [];
+    }
     if (!applied.length) changeId = null;
   }
   const done = !opt.ops.length || applied.length > 0;
