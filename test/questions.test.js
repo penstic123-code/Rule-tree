@@ -371,24 +371,38 @@ const CONFLICT_Q = {
   default: 0,
 };
 
-test('体检：没写键、可能冲突的规则交给（假）模型，变成问题；默认做法不先写进树；回答后按选的改', async () => {
+test('体检：可能冲突的规则交给（假）模型——拿不准的先按默认做法改、同时问你；有把握的直接改、不问，撤销过的不再提', async () => {
   const { tree } = project(CONFLICT_TREE);
   process.env.FAKE_OUT = JSON.stringify({ questions: [CONFLICT_Q, { text: '坏的', options: [{ label: 'x', ops: [{ op: 'delete_node', node: 'C1' }] }, { label: 'y', ops: [] }] }] });
   try {
     const r = await runCheckup(tree);
     assert.ifError(r.error);
     assert.strictEqual(r.questions.length, 1, '坏的问题丢掉');
-    assert.strictEqual(read(tree), CONFLICT_TREE, '体检的问题不先改树');
+    const after = read(tree);
+    assert.match(after, /^- \[改写1\] 每章互动不超过4个$/m, '默认做法先写进树');
+    assert.match(after, /^- \[改写1\] 每章互动不超过5个$/m);
     const [q] = Q.openQuestions(tree);
     assert.strictEqual(q.source, '体检');
-    assert.strictEqual(q.defaultApplied, false);
+    assert.strictEqual(q.defaultApplied, true);
     // 再体检一次：同样的问题还开着，不重复问
     assert.strictEqual((await runCheckup(tree)).questions.length, 0);
-    await Q.answerQuestion(tree, q.id, 0);
-    const after = read(tree);
-    assert.match(after, /^- \[改写1\] 每章互动不超过4个$/m);
-    assert.match(after, /^- \[改写1\] 每章互动不超过5个$/m);
-    assert.strictEqual((after.match(/不超过5个/g) || []).length, 1);
+    // 改选「统一用4」：先撤销默认做法，再按选的改
+    await Q.answerQuestion(tree, q.id, 1);
+    assert.ok(!read(tree).includes('不超过5个'));
+    assert.ok(!read(tree).includes('[改写1]'));
+    // 有把握的：直接改，不问；撤销以后下次体检不再提
+    const p2 = project(CONFLICT_TREE);
+    process.env.FAKE_OUT = JSON.stringify({ questions: [{ ...CONFLICT_Q, default: 1, sure: true }] });
+    const r2 = await runCheckup(p2.tree);
+    assert.strictEqual(r2.questions.length, 0);
+    assert.strictEqual(r2.auto.length, 1);
+    assert.ok(!read(p2.tree).includes('不超过5个'));
+    assert.strictEqual(Q.openQuestions(p2.tree).length, 0);
+    assert.ok(store.undoChange(p2.tree, store.readChanges(p2.tree)[0].id));
+    assert.match(read(p2.tree), /不超过5个/);
+    const r3 = await runCheckup(p2.tree);
+    assert.strictEqual(r3.auto.length + r3.questions.length, 0);
+    assert.match(read(p2.tree), /不超过5个/, '撤销过的不再改');
   } finally { delete process.env.FAKE_OUT; }
 });
 
@@ -562,10 +576,10 @@ test('插件：久未动的问题按界面语言显示（英文）', async () =>
   } finally { dispose(); }
 });
 
-test('插件：「需求树：体检」合并重复、调用（假）模型，冲突变成问题并弹通知', async () => {
+test('插件：「需求树：体检」合并重复、调用（假）模型，拿不准的冲突先按默认做法改并弹通知，改选后按选的改', async () => {
   const { dir, tree } = project(CONFLICT_TREE + '- 例子要配插图\n- 例子都要配插图\n');
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
-  const fake = fakeVscode(dir, { answer: (m, items) => (/体检/.test(m) ? items.find(i => i.title === '统一用4') : undefined) });
+  const fake = fakeVscode(dir, { answer: (m, items) => (/全局写/.test(m) ? items.find(i => i.title === '统一用4') : undefined) });
   const { panel, api, dispose } = activateWith(fake);
   process.env.FAKE_OUT = JSON.stringify({ questions: [CONFLICT_Q] });
   try {
@@ -574,11 +588,12 @@ test('插件：「需求树：体检」合并重复、调用（假）模型，�
     fakeVscode.pick = (items, opts) => (opts && opts.canPickMany ? items.filter(i => i.picked && i.id !== 'full') : undefined);
     const r = await fake.commands['reqtree.checkup']();
     assert.strictEqual(r.merged.length, 1);
-    assert.ok(fake.shown.includes('需求树体检：合并了 1 条重复规则，有 1 个问题等你回答'), fake.shown.join('\n'));
+    assert.ok(fake.shown.includes('需求树体检：合并了 1 条重复规则（都可以在「最近改动」里撤销），有 1 个拿不准的问题等你回答'), fake.shown.join('\n'));
     await panel.asking;
-    const note = fake.notes.find(n => /体检/.test(n.m));
-    assert.match(note.m, /（建议：AI 课用5（本课例外））$/);
-    assert.ok(!note.items.some(i => /（现在）/.test(i.title)), '体检的建议没有先写进树，不标「现在」');
-    assert.ok(!read(tree).includes('不超过5个'));
+    const note = fake.notes.find(n => /全局写/.test(n.m));
+    assert.match(note.m, /先按「AI 课用5（本课例外）」记了/);
+    assert.ok(note.items.some(i => /（现在）/.test(i.title)), '默认做法已经写进树，标「现在」');
+    assert.ok(!read(tree).includes('不超过5个'), '改选「统一用4」');
+    assert.ok(fs.existsSync(path.join(dir, '.reqtree', 'checkup-report.md')), '写了报告');
   } finally { delete process.env.FAKE_OUT; fakeVscode.pick = null; dispose(); }
 });

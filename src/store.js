@@ -117,7 +117,8 @@ const stateLock = treePath => metaFile(treePath, 'state.lock');
 // 开关 recorder，补漏间隔 sweepEvery（每 N 轮把最近 N 句用户原话再交给记录员查一遍漏记，0 关掉）。只认 DEFAULT_CONFIG 里有的键：旧版本的 confirm（「先让我确认」，已去掉）、
 // since（已搬到 state.json）读的时候忽略，迁移时删掉；面板传来别的键也不写。
 // aiFindings：AI 在回复里说出的、以后还用得上的做法和坑也记成规则（开头标「（AI 发现）」），默认开
-const DEFAULT_CONFIG = { recorder: 'turn', sweepEvery: 8, aiFindings: true };
+// principles：总目录里写「动手原则」（遇到 bug 先找根因、写新东西前先看项目里有没有），默认开
+const DEFAULT_CONFIG = { recorder: 'turn', sweepEvery: 8, aiFindings: true, principles: true };
 const pickConfig = c => Object.fromEntries(Object.keys(DEFAULT_CONFIG).map(k => [k, c[k] === undefined ? DEFAULT_CONFIG[k] : c[k]]));
 const rawConfig = treePath => readJson(metaFile(treePath, 'config.json'), null);
 const readConfig = treePath => pickConfig(rawConfig(treePath) || {});
@@ -348,6 +349,7 @@ function describeOp(o) {
     case 'delete_node': return `删除需求 ${o.node}`;
     case 'override_rule': return `在 ${o.node} 里把上级的${q(o.text)}改成${q(o.new)}`;
     case 'memory_remove': return o.wholeFile ? `删掉记忆文件 ${o.file}（${q(o.text)}）` : `删掉记忆 ${o.file} 里的${q(o.text)}`;
+    case 'doc_remove': return `从 ${o.file} 里删掉${q(o.text)}`;
     default: return o.op;
   }
 }
@@ -360,7 +362,9 @@ function logChange(treePath, entry) {
 }
 
 // 反操作里会出现的操作（applyOps 认的）
-const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore']);
+const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore', 'doc_restore']);
+// 改文件、不改树的操作：记忆（src/memory.js）和文档（src/docs.js）
+const isFileOp = o => require('./memory').isMemoryOp(o) || require('./docs').isDocOp(o);
 // 旧版本「先让我确认」模式记下的反操作 reject_pending（applyOps 已经不认），能翻译的条件见 translateLegacyUndo
 const canTranslate = o => o.op === 'reject_pending' && !!o.node && (Array.isArray(o.globs) ? o.globs.length > 0 : !!o.text && (o.pending === 'add' || o.pending === 'remove'));
 const undoable = e => e.ops.every(o => (o.undo || []).every(u => UNDO_OPS.has(u.op) || canTranslate(u)));
@@ -406,20 +410,20 @@ function writeThen(treePath, update, write, after) {
 // 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你'（升级清理记为 '升级'）。
 // id：这条改动记录用的编号（问题要记下默认做法是哪条改动，之后好撤销）；不给就新起一个。
 // 返回生效的改动（数组），数组上另挂 skipped：没做成的改动和原因（见 parser.applyOps）
-// 改记忆文件的操作（memory_*，见 src/memory.js）不改树，和树的改动记成同一条。
-// 记忆放在树写成功之后才改：同一批里树的改动没写进去（找不到需求、找不到规则……，「已经有了」不算），
-// 或者写树出错，记忆都不动，免得规则从记忆里删了、树里却没加上
+// 改记忆文件、文档的操作（memory_*，见 src/memory.js；doc_*，见 src/docs.js）不改树，和树的改动记成同一条。
+// 它们放在树写成功之后才改：同一批里树的改动没写进去（找不到需求、找不到规则……，「已经有了」不算），
+// 或者写树出错，记忆和文档都不动，免得规则从记忆、文档里删了，树里却没加上
 function applyChange(treePath, ops, { source, write, id } = {}) {
-  const mem = require('./memory');
-  const memOps = (ops || []).filter(mem.isMemoryOp);
-  const treeOps = (ops || []).filter(o => !mem.isMemoryOp(o));
+  const mem = require('./memory'), Docs = require('./docs');
+  const fileOps = (ops || []).filter(isFileOp);
+  const treeOps = (ops || []).filter(o => !isFileOp(o));
   let applied = [], skipped = [];
   const update = text => { const r = applyOps(text, treeOps); applied = r.applied; skipped = r.skipped; return r.text; };
   const after = () => {
     const blocked = skipped.some(s => s.reason !== 'duplicate' && s.reason !== 'same');
-    for (const o of memOps) {
+    for (const o of fileOps) {
       let a = null;
-      if (!blocked) try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : null; } catch {}
+      if (!blocked) try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : o.op === 'doc_remove' ? Docs.removeDocText(treePath, o) : null; } catch {}
       if (a) applied.push(a); else skipped.push({ op: o, reason: blocked ? 'blocked' : 'no-rule' });
     }
     if (applied.length) {
@@ -437,11 +441,11 @@ function undoChange(treePath, id, { write } = {}) {
   const entry = readChanges(treePath, 500).find(e => e.id === id);
   if (!entry || entry.undone || !entry.undoable) return write ? Promise.resolve(false) : false;
   const all = entry.ops.slice().reverse().flatMap(o => o.undo || []);
-  // 记忆文件的反操作（memory_restore）不改树，直接做
-  const mem = require('./memory');
+  // 记忆文件、文档的反操作（memory_restore、doc_restore）不改树，直接做
+  const mem = require('./memory'), Docs = require('./docs');
   let count = 0;
-  for (const u of all.filter(mem.isMemoryOp)) { try { if (mem.restoreMemory(u)) count++; } catch {} }
-  const undo = all.filter(u => !mem.isMemoryOp(u));
+  for (const u of all.filter(isFileOp)) { try { if (u.op === 'doc_restore' ? Docs.restoreDoc(treePath, u) : mem.restoreMemory(u)) count++; } catch {} }
+  const undo = all.filter(u => !isFileOp(u));
   const update = text => { const r = applyOps(text, translateLegacyUndo(text, undo)); count += r.applied.length; return r.text; };
   return writeThen(treePath, update, write, () => {
     if (count) logChange(treePath, { undone: id, time: Date.now() });

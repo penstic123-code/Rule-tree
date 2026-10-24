@@ -19,7 +19,7 @@ const Docs = require('../docs');
 const RULES_DIR = path.join('.reqtree', 'rules');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 .reqtree/rules/_index.md 里；输出格式变了就加 1（同 compile.js 的 FORMAT）
-const FORMAT = '<!-- reqtree:codex-format 4 -->';
+const FORMAT = '<!-- reqtree:codex-format 5 -->';
 const BEGIN = '<!-- reqtree:begin -->';
 const END = '<!-- reqtree:end -->';
 // 安装过 Codex 目标的标记，也存记录员的模型设置（用户可以手改）
@@ -79,7 +79,8 @@ function renderUnit(u, treeName, docLine = () => '') {
 }
 
 // 托管块。eol 跟着用户的 AGENTS.md 走
-function renderBlock(root, treeName, us, docLine = () => '') {
+// opts：{ principles, who }，和 Claude 的总目录一样（compile.indexOpts）
+function renderBlock(root, treeName, us, docLine = () => '', opts = {}) {
   const doing = [...walk(root)].filter(n => n.status === 'doing').map(n => `${n.id} ${n.title}`);
   const glob = globalRules(root);
   const lines = [
@@ -91,6 +92,9 @@ function renderBlock(root, treeName, us, docLine = () => '') {
   if (doing.length) lines.push(`进行中：${doing.join('、')}。`);
   lines.push('用户提出的长期要求由后台记录员在每轮结束后写进需求树，你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。');
   lines.push('项目的长期要求和规则只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 AGENTS.md，免得同一条规则记两处。');
+  lines.push('规则里以「决定：」开头的，是用户拍板定下的做法和理由。不要自己推翻；觉得该改，先问用户。');
+  if (opts.principles !== false) lines.push(require('../compile').PRINCIPLES);
+  if (opts.who) lines.push(`改代码前先读代码地图：\`.reqtree/map/<需求ID>.md\` 是那个需求的文件里已经有的代码和依赖，\`.reqtree/map/_map.md\` 是全项目的公共模块。${opts.who}`);
   const rootDocs = root.children.filter(isRoot).map(docLine).filter(Boolean);
   if (glob.length || rootDocs.length) {
     lines.push('', '### 全局规则', '', ...rootDocs.map(l => `- ${l}`));
@@ -194,7 +198,7 @@ function compile(treePath) {
   const agents = agentsFile(projectDir);
   let before = '';
   try { before = fs.readFileSync(agents, 'utf8'); } catch {}
-  const block = renderBlock(root, treeName, us, docLine);
+  const block = renderBlock(root, treeName, us, docLine, require('../compile').indexOpts(projectDir));
   const found = findBlock(before);
   if (found && found.broken) warnings.push(`${path.basename(agents)} 里需求树的部分不完整（有开始标记 ${BEGIN}，没有结束标记 ${END}），没有更新它；补上结束标记或删掉开始标记后再编译`);
   const after = upsertBlock(before, block);

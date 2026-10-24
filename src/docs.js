@@ -45,4 +45,60 @@ function readLine(projectDir, node) {
   return `动手前先读背景文档：${list}。文档和需求树说法不同时以需求树为准；做完一块，文档里的进度这类内容过时了就顺手更新。`;
 }
 
-module.exports = { resolve, exists, purpose, readLine };
+// ---------- 从文档里删一行（体检用：和需求树重复的、已经搬进需求树的规则） ----------
+// 只删能找准的整行：去掉列表符号和加粗后，和要删的那句几乎一样（Dice ≥ 0.8），全文只有一处。
+// 标题、表格行、下面还挂着子项的行都不删（删了会把结构弄坏），找不准的也不删，交给报告提醒。
+// 删之前整份备份到 .reqtree/doc-backup/（以防万一）；撤销时把那一行插回原位（doc_restore），不整份覆盖，免得冲掉之后的修改
+const DOC_SAME = 0.8;
+const bodyOf = l => clean(l.replace(/^\s*(?:[-*+]|\d+[.)、])\s+/, '')).replace(/[。；;，,.\s]+$/, '');
+const indentOf = l => l.match(/^\s*/)[0].length;
+function removeDocText(treePath, op) {
+  const projectDir = path.dirname(treePath);
+  const file = typeof op.file === 'string' && resolve(projectDir, op.file);
+  if (!file || !op.text) return null;
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  const { similarity } = require('./parser');
+  const nl = /\r\n/.test(text) ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const want = bodyOf(op.text);
+  const hits = [];
+  let fence = false;
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) { fence = !fence; return; }
+    if (fence || /^\s*(#|\||>)/.test(l) || !l.trim()) return;
+    const body = bodyOf(l);
+    if (body && (body === want || similarity(body, want) >= DOC_SAME)) hits.push(i);
+  });
+  if (hits.length !== 1) return null;
+  const at = hits[0];
+  const next = lines.slice(at + 1).find(l => l.trim());
+  if (next && /^\s*(?:[-*+]|\d+[.)])\s/.test(next) && indentOf(next) > indentOf(lines[at])) return null;
+  try {
+    const dir = path.join(projectDir, '.reqtree', 'doc-backup');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.copyFileSync(file, path.join(dir, `${Date.now()}-${op.file.replace(/[\\/:]/g, '_')}`));
+  } catch {}
+  const lineText = lines[at];
+  lines.splice(at, 1);
+  fs.writeFileSync(file, lines.join(nl));
+  return { op: 'doc_remove', file: op.file, text: bodyOf(lineText), undo: [{ op: 'doc_restore', file: op.file, at, lineText }] };
+}
+
+// 撤销：那一行不在了就插回原来的位置
+function restoreDoc(treePath, u) {
+  const file = typeof u.file === 'string' && resolve(path.dirname(treePath), u.file);
+  if (!file || typeof u.lineText !== 'string') return false;
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return false; }
+  const nl = /\r\n/.test(text) ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  if (lines.includes(u.lineText)) return false;
+  lines.splice(Math.min(u.at || 0, lines.length), 0, u.lineText);
+  fs.writeFileSync(file, lines.join(nl));
+  return true;
+}
+
+const isDocOp = o => !!o && typeof o.op === 'string' && o.op.startsWith('doc_');
+
+module.exports = { resolve, exists, purpose, readLine, removeDocText, restoreDoc, isDocOp };

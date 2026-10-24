@@ -96,7 +96,8 @@ function shapeQuestion(q, ctx, allowed) {
     seen.add(label);
     return { label, ops };
   });
-  return keepOptions({ text: oneLineText(q.text, 200), options, default: def });
+  // sure：体检用，模型有把握时直接按默认做法处理、不问（见 src/checkup.js 的 settle）
+  return keepOptions({ text: oneLineText(q.text, 200), options, default: def, ...(q.sure === true ? { sure: true } : {}) });
 }
 // 去掉不合格（null）的选项，default 跟着挪
 function keepOptions(q) {
@@ -211,6 +212,7 @@ ${touched.length ? `\n这一轮 AI 改了这些需求的文件：${touched.join(
    - 这个项目整体怎么做事、怎么写、怎么沟通的偏好（如"交流用中文""反馈含糊先问清""文风要平实"），不是某门课、某个模块内容特有的，挂到最顶上那个需求——哪怕说的时候进行中某一章。只有那一块内容本身的决定才挂在那一块上。
    - 子需求要在本范围内推翻上级的规则时，用 override_rule（node 是子需求，from 是上级 ID，text 是上级原文，new 是新内容）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
+   - 用户在几种做法之间拍板（技术方案、架构、结构、取舍），记成以「决定：」开头的规则，一句话写清选了什么、为什么。例：「决定：系统之间用 EventBus 传事件，不互相直接调用（方便单独测试每个系统）」。AI 提的方案，用户明确同意了也算。对话里没说原因就只写选了什么，不要编原因。
 ${aiFindings ? `   - AI 在这一轮回复里明确说出的、以后改这块还用得上的做法或坑（例：「qa.mjs 必须传绝对路径，相对路径会静默得到空结果」「这个接口要先登录再调」），用户没有反对的，也记成规则，挂在对应需求上，规则开头写「（AI 发现）」。只记确定的、能照着做的；这一轮的进展、猜测、一次性的修复步骤不记。
 ` : ''}2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，按第 4 条问「做完了吗」，default 是「还没」（ops 为空）。
 3. 没归属的文件如果明显属于某个需求，用 add_files 给出 glob（如 DataScience/ch02-*.html）；拿不准就不给。
@@ -499,7 +501,18 @@ async function main(jobPath) {
   // 状态只是给面板看的。树已经改好了、只是状态写不进去（state.lock 一直被占）时，不能把这一轮说成出错
   try { store.writeRecorderStatus(treePath, status); }
   catch (e) { log(`面板状态没写进去（${e.message}）${status.ok ? '；这一轮的改动已经写进需求树' : ''}`); }
+  // 代码地图：从没建过，或者这一轮 AI 改了文件、离上次超过 2 分钟，就在这里（后台）重建
+  try {
+    const codemap = require('../src/codemap');
+    const last = codemap.lastBuilt(treePath);
+    const edited = touched.length || unmapped.length;
+    if (!last || (edited && Date.now() - last > MAP_EVERY_MS)) {
+      const r = codemap.refresh(treePath);
+      log(`代码地图：看了 ${r.files} 个文件，${r.nodes.length} 个需求有地图，改了 ${r.written.length} 份，用时 ${r.ms} ms`);
+    }
+  } catch (e) { log('代码地图没更新：' + e.stack); }
 }
+const MAP_EVERY_MS = 2 * 60000;
 
 if (require.main === module) {
   // 做完就退出：超时被杀掉的子进程万一留下了句柄，也不让记录员一直挂着

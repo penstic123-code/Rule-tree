@@ -78,6 +78,19 @@ test('补送：这个会话没有任何加载记录（老版本 Claude Code 没�
   assert.strictEqual(edit(dir, 's-fb-3', 'c/ch02-a.html'), null);
 });
 
+test('补送：文件同时属于横切的需求（按文件类型的「写作」）和课程，两份都没加载就两份都补', () => {
+  const { dir, tree } = project();
+  fs.writeFileSync(tree, TREE + '\n## W 写作\n> 文件：*/ch*.html\n- 句子要短\n');
+  store.compileTree(tree, { force: true });
+  const s = 's-fb-cross';
+  loaded(dir, s, '.claude/rules/reqtree/_index.md');
+  const out = edit(dir, s, 'c/ch02-a.html');
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /开场用霍乱/);
+  assert.match(ctx, /句子要短/);
+  assert.deepStrictEqual(store.readContext(tree, 60000).filter(e => e.reason === 'fallback').map(e => e.node).sort(), ['C1.2', 'W']);
+});
+
 test('补送：用户点名时已经送过这个需求的规则 → 不补；子 agent 自己的上下文要单独算', () => {
   const { dir } = project();
   const s = 's-fb-4';

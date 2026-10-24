@@ -120,13 +120,14 @@ async function checkWith(tree, out, opts = {}) {
   try { return await runCheckup(tree, opts); } finally { delete process.env.FAKE_OUT; }
 }
 
-test('体检（假模型）：记忆按分工逐份判断——已在树里的直接删（可撤销），该进树的、冲突的、过时的问你，该留的不动', async () => {
+test('体检（假模型）：记忆按分工逐份判断——有把握的直接处理（可撤销，撤销过的不再动），拿不准的问你，该留的不动', async () => {
   const { tree, mem } = project();
   fs.writeFileSync(path.join(mem, 'pics.md'), '---\nname: pics\ndescription: 配图\nmetadata:\n  type: feedback\n---\n\n每一章都要有 3 幅插图\n');
   fs.writeFileSync(path.join(mem, 'agents.md'), '---\nname: agents\nmetadata:\n  type: feedback\n---\n\nC1 课最多开 5 个 agent 并行。\n');
   fs.writeFileSync(path.join(mem, 'old.md'), '---\nname: old\nmetadata:\n  type: project\n---\n\n十二门徒课下一步做彼得关。\n');
   fs.writeFileSync(path.join(mem, 'me.md'), '---\nname: me\nmetadata:\n  type: user\n---\n\n用户是课程作者。\n');
   fs.writeFileSync(path.join(mem, 'many.md'), '---\nname: many\nmetadata:\n  type: feedback\n---\n\n每章三张图。\n');
+  fs.writeFileSync(path.join(mem, 'para.md'), '---\nname: para\nmetadata:\n  type: feedback\n---\n\n段落不超过 6 行。\n');
   const r = await checkWith(tree, {
     questions: [],
     memory: [
@@ -135,6 +136,7 @@ test('体检（假模型）：记忆按分工逐份判断——已在树里的�
       { file: 'many.md', kind: 'covered', where: 'Z9' },           // 对不上需求：丢掉
       { file: 'agents.md', kind: 'move', node: 'C1', rules: ['最多开 5 个 agent 并行'], whole: true },
       { file: 'pics.md', kind: 'conflict', node: 'C1', rule: '每章配三张图', text: '每章配 3 幅插图', newer: 'memory', whole: true },
+      { file: 'para.md', kind: 'conflict', node: 'P', rule: '段落不超过 4 行', text: '段落不超过 6 行', newer: 'tree', sure: false, whole: true },
       { file: 'old.md', kind: 'stale', why: '那门课已经删了' },
       { file: 'style.md', kind: 'keep' },
       { file: '../escape.md', kind: 'stale' },
@@ -142,35 +144,37 @@ test('体检（假模型）：记忆按分工逐份判断——已在树里的�
     ],
   });
   assert.ifError(r.error);
-  // 直接删的只有 talk.md
+  // 已经在树里的：直接删 talk.md（用户本人、对不上需求的、该留的不动）
   assert.deepStrictEqual(r.removed.map(o => o.file), ['talk.md']);
   assert.ok(!fs.existsSync(path.join(mem, 'talk.md')));
   assert.ok(!read(path.join(mem, 'MEMORY.md')).includes('talk.md'), '索引那一行也删了');
   for (const f of ['me.md', 'many.md', 'style.md']) assert.ok(fs.existsSync(path.join(mem, f)), f);
-  const [c] = store.readChanges(tree);
+  const changeOf = f => store.readChanges(tree, 50).find(e => !e.undone && e.ops.some(o => o.file === f));
+  const c = changeOf('talk.md');
   assert.strictEqual(c.source, '体检');
   assert.ok(store.undoChange(tree, c.id));
   assert.ok(fs.existsSync(path.join(mem, 'talk.md')), '撤销后放回');
-  // 问的三个
-  const by = f => r.memory.find(q => q.text.includes(f));
-  assert.strictEqual(r.memory.length, 3, r.memory.map(q => q.text).join('\n'));
-  const move = by('agents.md');
-  assert.match(move.text, /最多开 5 个 agent 并行/);
-  assert.strictEqual(move.defaultApplied, false);
-  await Q.answerQuestion(tree, move.id, 0);
+  // 有把握的直接处理：搬进树、按更新的记忆改树、删过时的
+  assert.strictEqual(r.auto.length, 3, r.auto.map(q => q.text).join('\n'));
   assert.match(read(tree), /## C1 课[\s\S]*- 最多开 5 个 agent 并行/);
   assert.ok(!fs.existsSync(path.join(mem, 'agents.md')), '搬进树后删掉记忆');
-  const conflict = by('pics.md');
-  assert.strictEqual(conflict.default, 0, '记忆更新：建议按记忆');
-  await Q.answerQuestion(tree, conflict.id, 0);
   assert.match(read(tree), /- 每章配 3 幅插图/);
   assert.ok(!read(tree).includes('每章配三张图'));
-  const stale = by('old.md');
-  await Q.answerQuestion(tree, stale.id, 1);
-  assert.ok(fs.existsSync(path.join(mem, 'old.md')), '选留着就不删');
-  // 问过的不再问（记忆没改过）
-  const again = await checkWith(tree, { questions: [], memory: [{ file: 'old.md', kind: 'stale', why: 'x' }] });
-  assert.strictEqual(again.memory.length, 0);
+  assert.ok(!fs.existsSync(path.join(mem, 'old.md')));
+  // 拿不准哪边新的：默认做法（按需求树，删掉记忆）先写进去，同时问你
+  assert.strictEqual(r.memory.length, 1);
+  const q = r.memory[0];
+  assert.match(q.text, /para\.md/);
+  assert.strictEqual(q.defaultApplied, true);
+  assert.ok(!fs.existsSync(path.join(mem, 'para.md')));
+  await Q.answerQuestion(tree, q.id, 0);
+  assert.match(read(tree), /段落不超过 6 行/, '改选「按记忆」：先撤销默认做法，再按记忆改');
+  // 撤销一项直接处理的：放回去，下次体检不会再删它
+  assert.ok(store.undoChange(tree, changeOf('old.md').id));
+  assert.ok(fs.existsSync(path.join(mem, 'old.md')));
+  const again = await checkWith(tree, { questions: [], memory: [{ file: 'old.md', kind: 'stale', why: 'x' }] }, { full: true });
+  assert.strictEqual(again.auto.length + again.memory.length, 0);
+  assert.ok(fs.existsSync(path.join(mem, 'old.md')), '撤销过的不再动');
   // memory=false 不查记忆
   const p2 = project();
   assert.strictEqual((await runCheckup(p2.tree, { model: false, memory: false })).memory.length, 0);
@@ -180,9 +184,8 @@ test('体检：记忆混着别的内容（whole: false）时只往树里加，�
   const { tree, mem } = project();
   fs.writeFileSync(path.join(mem, 'mix.md'), '---\nname: mix\n---\n\n服务器是 1.2.3.4。C1 每章开头放一个小故事。\n');
   const r = await checkWith(tree, { questions: [], memory: [{ file: 'mix.md', kind: 'move', node: 'C1', rules: ['每章开头放一个小故事'], whole: false }] });
-  const q = r.memory[0];
+  const q = r.auto[0];
   assert.deepStrictEqual(q.options[0].ops.map(o => o.op), ['add_rule']);
-  await Q.answerQuestion(tree, q.id, 0);
   assert.match(read(tree), /每章开头放一个小故事/);
   assert.ok(fs.existsSync(path.join(mem, 'mix.md')));
 });
@@ -319,6 +322,7 @@ test('体检：没看全的记忆（长到要切成几段）、字面对不上�
   assert.strictEqual(r.memory.length, 2);
   const q = r.memory.find(x => x.text.includes('para.md'));
   assert.match(q.text, /已经有了，删掉这份记忆吗/);
+  assert.strictEqual(q.default, 1, "拿不准：默认留着");
   await Q.answerQuestion(tree, q.id, 1); // 留在记忆
   // 下次模型说 covered（而且字面对得上）也不删：这份记忆问过、没改过
   fs.writeFileSync(path.join(mem, 'talk2.md'), 'x');

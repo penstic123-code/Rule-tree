@@ -23,6 +23,8 @@ const FILES_RE = /^\s*>\s*(?:文件|files)\s*[:：]\s*(.+)$/i;
 // 节点的背景文档（章节表、进度、经验）：> 文档：DataScience/_CHAPTERS.md, DataScience/项目规则与经验.md
 // 不搬进规则，编译时只写一句「动手前先读」，AI 改到这个需求的文件时看到
 const DOCS_RE = /^\s*>\s*(?:文档|docs?)\s*[:：]\s*(.+)$/i;
+// 决定：用户拍板的做法和理由，写成以「决定：」开头的规则（「Decision:」也认）。AI 要推翻先问用户
+const DECISION_RE = /^(?:决定|decision)\s*[:：]/i;
 
 function splitStatus(text) {
   let rest = text.replace(/️/g, '').trim();
@@ -82,7 +84,8 @@ function parse(text) {
     const r = raw.match(RULE_RE);
     if (r && node !== root) {
       const k = r[1].match(KEY_RE);
-      node.rules.push({ key: k ? k[1].trim() : null, text: (k ? k[2] : r[1]).trim(), line: i, owner: node });
+      const text = (k ? k[2] : r[1]).trim();
+      node.rules.push({ key: k ? k[1].trim() : null, text, line: i, owner: node, decision: DECISION_RE.test(text) });
     } else if (raw.trim() && node !== root) {
       node.notes.push(raw.trim());
     }
@@ -613,6 +616,14 @@ function splitGlobs(s) {
 }
 
 // 找出管这个文件的最深节点；relPath 用 / 分隔、相对于树文件所在目录
+// 文件属于哪些需求：自己的文件对应匹配上的全部节点，从浅到深。按内容分的需求（某门课）和按文件类型横切的需求（「写作」）可以同时命中
+function nodesForFile(root, relPath) {
+  const out = [];
+  for (const n of walk(root)) if (n.files.some(g => globToRegExp(g).test(relPath))) out.push(n);
+  return out.sort((a, b) => a.level - b.level);
+}
+
+// 最深的那一个（面板上「AI 正在改」显示它）
 function nodeForFile(root, relPath) {
   let best = null;
   for (const n of walk(root)) {
@@ -625,7 +636,7 @@ function nodeForFile(root, relPath) {
 
 module.exports = {
   STATUS_EMOJI, STATUS_LABEL, parse, walk, findById, pathOf, effectiveRules, check,
-  setStatusInText, nodeForFile, applyOps, legacyCleanupOps, stripLegacyMarks, outline, relocate, splitGlobs, globToRegExp,
+  DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, applyOps, legacyCleanupOps, stripLegacyMarks, outline, relocate, splitGlobs, globToRegExp,
   oneLine, closestRule, norm, sameMeaning, numbersOf, SKIP_REASON,
   similarity, DUPLICATE, // 测试校准去重门槛用
 };

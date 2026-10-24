@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { parse, nodeForFile, pathOf } = require('../src/parser');
+const { parse, nodeForFile, nodesForFile, pathOf } = require('../src/parser');
 const { mentionContext, isMachinePrompt, renderNode } = require('../src/mention');
 const { autoLoads } = require('../src/compile');
 const store = require('../src/store');
@@ -273,8 +273,12 @@ function main(input, trace) {
       const node = nodeForFile(root, rel);
       trace.rel = rel; trace.node = node && node.id;
       store.appendActivity(treePath, { node: node ? node.id : null, file: rel, time: Date.now(), session: input.session_id, agent: input.agent_id || null });
-      const fb = node && fallback(treePath, node, rel, input, trace);
-      if (fb) fallbacks.push(fb);
+      // 命中几个需求就补几个（横切的需求和按内容分的需求各补各的）；上级随下级一起补，不单独补
+      const hits = nodesForFile(root, rel);
+      for (const n of hits.filter(h => !hits.some(m => m !== h && pathOf(m).includes(h)))) {
+        const fb = fallback(treePath, n, rel, input, trace);
+        if (fb) fallbacks.push(fb);
+      }
     }
     if (fallbacks.length) return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: fallbacks.join('\n\n') } });
     return;

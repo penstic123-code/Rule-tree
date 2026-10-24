@@ -19,7 +19,7 @@ const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 _index.md 里。编译的输出或说明文字变了就加 1：ensureCompiled 只比时间，
 // 旧版本生成的文件可能比树还新，不看版本的话升级后会一直留着过时的说明（比如「标 🆕，等用户确认」）
-const FORMAT = '<!-- reqtree:format 7 -->';
+const FORMAT = '<!-- reqtree:format 8 -->';
 
 // 节点的生效范围：自己的 files，或最近上级的；都没有返回 null（全局）
 function scopeOf(node) {
@@ -61,8 +61,12 @@ function compileNode(node, treeName, projectDir) {
   return lines.join('\n') + '\n';
 }
 
+// 动手原则（config 的 principles，默认开）：不重复造轮子、遇到 bug 先找根因。借鉴 ponytail 的「阶梯」，见 设计-信息架构.md 第四节
+const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②写新东西之前依次问：真需要吗 → 项目里已经有了吗（看代码地图，或用下面的命令查）→ 标准库或平台自带的能做吗 → 已经装的依赖能做吗 → 最后才写最少能用的代码；校验、数据安全、无障碍不省。';
+
 // 全局说明：告诉 AI 这套东西怎么用。不写 paths，每次都加载，保持很短。
-function compileIndex(root, treeName) {
+// opts.principles：写不写动手原则；opts.who：查名字的命令说明（代码地图生成过才有）
+function compileIndex(root, treeName, opts = {}) {
   const doing = [...walk(root)].filter(n => n.status === 'doing').map(n => `${n.id} ${n.title}`);
   return [
     MARK,
@@ -73,7 +77,19 @@ function compileIndex(root, treeName) {
     '用户提出的长期要求由后台记录员在每轮结束后直接写进需求树（用户可以在面板上撤销），你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。',
     '项目的需求和规则（包括某门课、某块内容怎么做、开几个 agent）只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 CLAUDE.md，免得同一条规则记两处。自动记忆只记和项目内容无关的事：用户本人的情况、工具和电脑环境（本机的坑、命令注意事项）、私人信息（服务器、账号）、外部资源在哪。',
     '自动记忆和需求树说法不同时，按需求树做，并告诉用户两边有冲突，可以跑一次「需求树：体检」。',
+    '同一个文件属于几个需求时（比如既属于某门课，又属于「写作」这类按文件类型划分的需求），几份规则都要照做；说法冲突时以文件范围更窄的那份为准。',
+    '规则里以「决定：」开头的，是用户拍板定下的做法和理由。不要自己推翻；觉得该改，先问用户。',
+    opts.principles === false ? '' : PRINCIPLES,
+    opts.who ? `改代码前先看代码地图（改到对应文件时自动加载）：这块已经有哪些文件、对外的函数和类、依赖的公共模块。${opts.who}` : '',
   ].filter(Boolean).join('\n') + '\n';
+}
+
+// 总目录的选项：读 .reqtree/config.json（不经过 store，免得互相 require）；代码地图建过才写查名字的命令
+function indexOpts(projectDir) {
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(path.join(projectDir, '.reqtree', 'config.json'), 'utf8')) || {}; } catch {}
+  const mapped = fs.existsSync(path.join(projectDir, '.reqtree', 'codemap.json'));
+  return { principles: cfg.principles !== false, who: mapped ? require('./codemap').whoHint() : '' };
 }
 
 // 编译给哪些 AI 工具：装过 Codex（.reqtree/codex.json 或 AGENTS.md 里有托管块）就编 Codex；
@@ -114,7 +130,7 @@ function compileClaude(treePath) {
   const treeName = path.basename(treePath);
   const dir = path.join(projectDir, OUT_DIR);
   const root = parse(fs.readFileSync(treePath, 'utf8'));
-  const files = new Map([['_index.md', compileIndex(root, treeName)]]);
+  const files = new Map([['_index.md', compileIndex(root, treeName, indexOpts(projectDir))]]);
   for (const n of walk(root)) {
     const text = compileNode(n, treeName, projectDir);
     if (text) files.set(`${n.id}.md`, text);
@@ -129,7 +145,8 @@ function compileClaude(treePath) {
     if (old !== text) { fs.writeFileSync(p, text); written.push(name); }
   }
   for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.md') || files.has(name)) continue;
+    // 代码地图（map-*.md、_map.md）归 src/codemap.js 管
+    if (!name.endsWith('.md') || files.has(name) || /^(map-.+|_map)\.md$/.test(name)) continue;
     // 只删自己生成的文件
     const p = path.join(dir, name);
     if (fs.readFileSync(p, 'utf8').includes(MARK)) { fs.unlinkSync(p); removed.push(name); }
@@ -156,4 +173,4 @@ function ensureCompiled(treePath) {
   return r;
 }
 
-module.exports = { compile, ensureCompiled, scopeOf, autoLoads, targetsOf };
+module.exports = { compile, ensureCompiled, scopeOf, autoLoads, targetsOf, indexOpts, PRINCIPLES };

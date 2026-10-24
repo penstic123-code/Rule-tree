@@ -324,11 +324,16 @@ class Panel {
     if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
     if (r.docDup && r.docDup.length) notes.push(T('q.docDup', r.docDup) + '\n' + r.docDup.map(d => `  - ${d.doc}：${d.text}（${d.node}）`).join('\n'));
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
-    const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length);
+    const auto = r.auto || [], split = r.split || [];
+    const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length, split.length);
     const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
     if (asked) report.push(T('q.reportQuestions', asked), '', ...newQs.map(q => `- ${qText(q)}`), '');
+    // 直接处理了的：问题记录写「问的事 → 按哪个做的」，删文档重复的直接写做了什么
+    if (auto.length) report.push(T('q.reportAuto', auto.length), '', ...auto.map(a => `- ${qText(a)}${a.options ? ` → ${optLabel(a.options[a.default])}` : ''}`), '');
+    if (split.length) report.push(T('q.reportSplit'), '', ...split.map(s => `- ${T('q.splitLine', s.title, s.id, s.node, s.globs.join(', '), s.rules)}`), '');
+    if (r.merged.length) report.push(T('q.reportMerged'), '', ...r.merged.map(o => `- ${o.node}：${o.text}`), '');
     if (notes.length) report.push(T('q.reportNotes'), '', ...notes.map(n => `- ${n}`), '');
-    if (!asked && !notes.length) report.push(T('q.reportNone'), '');
+    if (!asked && !notes.length && !auto.length && !split.length && !r.merged.length) report.push(T('q.reportNone'), '');
     const reportFile = store.metaFile(p, 'checkup-report.md');
     try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, report.join('\n')); } catch {}
     const buttons = [T('q.report'), ...(asked ? [T('q.answer')] : [])];

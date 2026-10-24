@@ -115,6 +115,11 @@
           const t = String(o.text || '');
           return T('op.memory_remove', String(o.file || '').split(/[\\/]/).pop(), t.length > 60 ? t.slice(0, 59) + '…' : t, !!o.wholeFile);
         }
+        // 体检从文档（CLAUDE.md、挂的背景文档）里删掉的一行
+        case 'doc_remove': {
+          const t = String(o.text || '');
+          return T('op.doc_remove', String(o.file || ''), t.length > 60 ? t.slice(0, 59) + '…' : t);
+        }
         default: return null;
       }
     };

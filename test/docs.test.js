@@ -15,6 +15,8 @@ process.env.REQTREE_CLAUDE_CMD = `"${process.execPath}" "${path.join(__dirname, 
 const { parse, findById } = require('../src/parser');
 const { compile } = require('../src/compile');
 const { runCheckup, checkPlan, docProblems } = require('../src/checkup');
+const store = require('../src/store');
+const Docs = require('../src/docs');
 
 const TREE = `# P 项目
 - 段落不超过 4 行
@@ -72,26 +74,95 @@ test('体检（本地）：挂了却不存在的文档；一份都没挂的需�
   assert.deepStrictEqual(r.docUnlinked.map(d => d.doc), ['e/进度.md']);
 });
 
-test('体检：可以只查文档；文档里重复的提醒、该搬进树的变成问题；没改过的下次不再看，全部重查才看', async () => {
+test('体检：可以只查文档；和树重复的从文档里删掉、该搬进树的搬进去再删（可撤销）；找不准的只提醒；没改过的下次不再看', async () => {
   const { dir, tree } = project();
+  fs.appendFileSync(path.join(dir, 'CLAUDE.md'), '\n| 表格 | 每章配图 |\n');
   const plan = checkPlan(tree, { parts: { rules: false, memory: false, docs: true } });
   assert.deepStrictEqual(plan.docs.map(d => d.name).sort(), ['CLAUDE.md', 'c/_CHAPTERS.md', 'd/notes.md']);
   assert.strictEqual(plan.calls, 1);
   process.env.FAKE_OUT = JSON.stringify({ questions: [], docs: [
     { doc: 'CLAUDE.md', kind: 'dup', text: '段落不超过四行', node: 'P' },
+    { doc: 'CLAUDE.md', kind: 'dup', text: '每章配图', node: 'C1' },                       // 在表格里：不删，提醒
     { doc: 'c/_CHAPTERS.md', kind: 'move', text: '第1章 ✅', node: 'C1', rule: '每章做完标 ✅' },
     { doc: 'nope.md', kind: 'move', text: 'x', node: 'C1', rule: 'x' },
   ] });
   let r;
   try { r = await runCheckup(tree, { memory: false, parts: { rules: false, memory: false, docs: true } }); } finally { delete process.env.FAKE_OUT; }
   assert.strictEqual(r.merged.length, 0, '没选规则就不合并');
-  assert.deepStrictEqual(r.docDup, [{ doc: 'CLAUDE.md', text: '段落不超过四行', node: 'P' }]);
-  assert.strictEqual(r.docs.length, 1);
-  assert.match(r.docs[0].text, /搬进需求树（C1）/);
-  assert.strictEqual(checkPlan(tree, { parts: { rules: false, memory: false, docs: true } }).calls, 0, '没改过的不再看');
+  const claude = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
+  assert.ok(!claude.includes('段落不超过四行'), '重复的那一行删了');
+  assert.match(claude, /\| 表格 \| 每章配图 \|/, '表格行不动');
+  assert.deepStrictEqual(r.docDup, [{ doc: 'CLAUDE.md', text: '每章配图', node: 'C1' }]);
+  assert.strictEqual(r.docs.length, 0, '有把握的不问');
+  assert.strictEqual(r.auto.length, 2);
+  assert.match(fs.readFileSync(tree, 'utf8'), /## C1 课[\s\S]*- 每章做完标 ✅/);
+  assert.ok(!fs.readFileSync(path.join(dir, 'c', '_CHAPTERS.md'), 'utf8').includes('第1章 ✅'), '搬进树后从文档删掉');
+  assert.ok(fs.readdirSync(path.join(dir, '.reqtree', 'doc-backup')).length >= 2, '删之前备份');
+  // 撤销：那一行放回原位；撤销过的下次不再看
+  const ch = store.readChanges(tree, 20).find(e => e.ops.some(o => o.op === 'doc_remove' && o.file === 'CLAUDE.md'));
+  assert.match(ch.summary.join(), /从 CLAUDE\.md 里删掉「段落不超过四行」/);
+  assert.ok(store.undoChange(tree, ch.id));
+  assert.match(fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), /^- 段落不超过四行$/m);
+  assert.strictEqual(checkPlan(tree, { parts: { rules: false, memory: false, docs: true } }).calls, 0, '没改过的、撤销回去的都不再看');
   assert.strictEqual(checkPlan(tree, { parts: { rules: false, memory: false, docs: true }, full: true }).docs.length, 3);
   fs.appendFileSync(path.join(dir, 'd', 'notes.md'), '新内容\n');
   assert.deepStrictEqual(checkPlan(tree, { parts: { rules: false, memory: false, docs: true } }).docs.map(d => d.name), ['d/notes.md']);
+});
+
+test('从文档删一行：只删找得准的整行；标题、表格、带子项的、出现两次的都不删', () => {
+  const { dir, tree } = project();
+  const f = path.join(dir, 'c', 'g.md');
+  fs.writeFileSync(f, '# 段落不超过四行\n- 段落不超过四行\n- 每章配图\n  - 至少三张\n- 用中文\n- 用中文\n');
+  const rm = text => Docs.removeDocText(tree, { file: 'c/g.md', text });
+  assert.ok(rm('段落不超过四行。'), '标点不同也算');
+  assert.strictEqual(rm('每章配图'), null, '下面挂着子项');
+  assert.strictEqual(rm('用中文'), null, '出现两次');
+  assert.strictEqual(Docs.removeDocText(tree, { file: '../out.md', text: 'x' }), null, '项目外的不碰');
+  assert.strictEqual(fs.readFileSync(f, 'utf8'), '# 段落不超过四行\n- 每章配图\n  - 至少三张\n- 用中文\n- 用中文\n');
+});
+
+test('体检：下级重复了上级已有的规则，删下级的；上级范围罩不住下级时不删', async () => {
+  const { tree } = project();
+  fs.writeFileSync(tree, '# P 项目\n- 段落不超过 4 行\n\n## C1 课\n> 文件：c/**\n- 段落不超过 4 行\n- 每章配图\n\n### C1.1 第一章\n> 文件：c/ch01.html\n- 每章配图\n\n## C2 别的\n> 文件：d/**\n- 每章配图\n');
+  const r = await runCheckup(tree, { model: false, memory: false, parts: { rules: true, memory: false, docs: false } });
+  assert.deepStrictEqual(r.merged.map(o => `${o.node}:${o.text}`).sort(), ['C1.1:每章配图', 'C1:段落不超过 4 行']);
+  assert.match(fs.readFileSync(tree, 'utf8'), /## C2 别的\n> 文件：d\/\*\*\n- 每章配图/, '兄弟需求不算上级');
+});
+
+test('体检：分组时某组只管一部分文件，拆成子需求（可撤销）；范围不变窄、规则太少的不拆', async () => {
+  const { dir, tree } = project();
+  for (const n of ['ch01.html', 'ch02.html']) fs.writeFileSync(path.join(dir, 'c', n), '');
+  fs.mkdirSync(path.join(dir, 'c', 'js'));
+  fs.writeFileSync(path.join(dir, 'c', 'js', 'a.js'), '');
+  fs.writeFileSync(tree, '# P 项目\n\n## C1 课\n> 文件：c/**\n- 句子要短\n- 少用你\n- 不写元语言\n- 用 pointer 事件\n- 存储加 try\n- 不用 CDN\n');
+  const cats = [{ node: 'C1', groups: [
+    { name: '写作', files: ['c/ch*.html'], rules: ['句子要短', '少用你', '不写元语言'] },
+    { name: '技术', files: ['c/**'], rules: ['用 pointer 事件', '存储加 try', '不用 CDN'] },
+  ] }];
+  process.env.FAKE_OUT = JSON.stringify({ questions: [], categories: cats });
+  let r;
+  try { r = await runCheckup(tree, { memory: false, parts: { rules: true, memory: false, docs: false } }); } finally { delete process.env.FAKE_OUT; }
+  assert.deepStrictEqual(r.split.map(s => [s.id, s.title, s.globs.join()]), [['C1.1', '写作', 'c/ch*.html']]);
+  const t = fs.readFileSync(tree, 'utf8');
+  assert.match(t, /### C1\.1 写作\n> 文件：c\/ch\*\.html\n- 句子要短\n- 少用你\n- 不写元语言/);
+  assert.ok(!/## C1 课[\s\S]*- 句子要短[\s\S]*### C1\.1/.test(t), '从上级搬走了');
+  const ch = store.readChanges(tree)[0];
+  assert.ok(store.undoChange(tree, ch.id));
+  assert.strictEqual(fs.readFileSync(tree, 'utf8').includes('C1.1'), false, '撤销后合回去');
+  assert.match(fs.readFileSync(tree, 'utf8'), /- 句子要短/);
+});
+
+test('一个文件属于几个需求（横切的「写作」和课程）：nodesForFile 全部找出来，编译说明里写了范围窄的优先', () => {
+  const { nodesForFile } = require('../src/parser');
+  const root = parse('# P 项目\n\n## W 写作\n> 文件：*/ch*.html\n- 句子要短\n\n## C1 课\n> 文件：c/**\n- 每章配图\n\n### C1.1 第一章\n> 文件：c/ch01.html\n- 用霍乱举例\n');
+  assert.deepStrictEqual(nodesForFile(root, 'c/ch01.html').map(n => n.id), ['W', 'C1', 'C1.1']);
+  assert.deepStrictEqual(nodesForFile(root, 'c/js/a.js').map(n => n.id), ['C1']);
+  const { dir, tree } = project();
+  compile(tree, { targets: { claude: true } });
+  const idx = fs.readFileSync(path.join(dir, '.claude', 'rules', 'reqtree', '_index.md'), 'utf8');
+  assert.match(idx, /以文件范围更窄的那份为准/);
+  assert.match(idx, /「决定：」开头的/);
+  assert.match(idx, /动手原则：①遇到 bug 先找根因/);
 });
 
 test('体检分批：文档很长时切成几段、分几批调用', () => {
