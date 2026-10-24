@@ -152,6 +152,44 @@ test('体检：分组时某组只管一部分文件，拆成子需求（可撤�
   assert.match(fs.readFileSync(tree, 'utf8'), /- 句子要短/);
 });
 
+test('长文档附目录（每节标题和行号），只挂一节写那一节的行号；短文档不附；节名找不到时体检提醒', () => {
+  const { dir, tree } = project();
+  const long = '# 写作规范\n用途：怎么写正文\n\n## 一、内容原则\n' + '内容。\n'.repeat(400) + '\n## 一C、写作风格\n' + '风格。\n'.repeat(400) + '\n## 二、互动\n```\n## 代码块里的不算\n```\n' + '互动。\n'.repeat(300);
+  fs.mkdirSync(path.join(dir, 'spec'));
+  fs.writeFileSync(path.join(dir, 'spec', 'w.md'), long);
+  const toc = Docs.toc(long);
+  assert.match(toc, /^一、内容原则 4–405；一C、写作风格 406–807；二、互动 808–/);
+  assert.ok(!toc.includes('代码块'));
+  const whole = Docs.describe(dir, 'spec/w.md');
+  assert.ok(whole.long);
+  assert.match(whole.text, /`spec\/w\.md`（怎么写正文），约 \d+ 字，目录：一、内容原则 4–405/);
+  const sec = Docs.describe(dir, 'spec/w.md#写作风格');
+  assert.strictEqual(sec.text, '`spec/w.md` 的「一C、写作风格」（第 406–807 行）');
+  assert.ok(!Docs.describe(dir, 'c/_CHAPTERS.md').long, '短文档不附目录');
+  // 编译进规则：说明只读需要的节
+  fs.writeFileSync(tree, TREE + '\n## W 写作\n> 文件：*/ch*.html\n> 文档：spec/w.md#写作风格, spec/w.md#不存在的节\n- 句子要短\n');
+  compile(tree, { targets: { claude: true } });
+  const w = fs.readFileSync(path.join(dir, '.claude', 'rules', 'reqtree', 'W.md'), 'utf8');
+  assert.match(w, /`spec\/w\.md` 的「一C、写作风格」（第 406–807 行）/);
+  assert.match(w, /按行号只读那几行/);
+  // 节名找不到：体检提醒
+  const r = docProblems(fs.readFileSync(tree, 'utf8'), dir, tree);
+  assert.ok(r.docMissing.some(d => d.doc === 'spec/w.md#不存在的节'));
+  assert.ok(!r.docMissing.some(d => d.doc === 'spec/w.md#写作风格'));
+});
+
+test('挂的文档改了（行号变了），下一次检查就重新编译', () => {
+  const { ensureCompiled } = require('../src/compile');
+  const { dir, tree } = project();
+  compile(tree, { targets: { claude: true } });
+  assert.strictEqual(ensureCompiled(tree), null, '没变不重编');
+  const doc = path.join(dir, 'c', '_CHAPTERS.md');
+  fs.appendFileSync(doc, '- 第2章\n');
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(doc, later, later);
+  assert.ok(ensureCompiled(tree), '文档改了要重编');
+});
+
 test('一个文件属于几个需求（横切的「写作」和课程）：nodesForFile 全部找出来，编译说明里写了范围窄的优先', () => {
   const { nodesForFile } = require('../src/parser');
   const root = parse('# P 项目\n\n## W 写作\n> 文件：*/ch*.html\n- 句子要短\n\n## C1 课\n> 文件：c/**\n- 每章配图\n\n### C1.1 第一章\n> 文件：c/ch01.html\n- 用霍乱举例\n');

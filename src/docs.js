@@ -1,16 +1,30 @@
 'use strict';
-// 背景文档：需求下的「> 文档：DataScience/_CHAPTERS.md」。
-// 规则写在需求树里，章节表、进度、踩过的坑这类背景留在文档里。文档全文不搬进规则（太长、会过时），
-// 编译时只给这个需求的规则文件加一句「动手前先读 X（用途）」：AI 改到这个需求的文件时才看到，每份文档一行字。
-// 用途取文档开头的「用途：…」一行，没有就取第一个标题。
+// 背景文档：需求下的「> 文档：DataScience/_CHAPTERS.md」，或只挂一节「> 文档：规范/内容与写作.md#写作风格」。
+// 分工：规则是一句话就能照做的要求（每次改到对应文件都要读，所以要短）；文档放规则装不下的：为什么、具体怎么做、例子、数据、进度。
+// 文档全文不搬进规则（太长、会过时），编译时只给这个需求的规则文件加一句「动手前先读」：
+//   - 挂了一节：写明那一节在第几行到第几行，只读那几行；
+//   - 挂了整份、又比较长（LONG_CHARS 字以上）：附一张目录（每节的标题和行号），让 AI 只读和这次任务有关的节；
+//   - 短文档：直接读。
+// 用途取文档开头的「用途：…」一行，没有就取第一个标题。行号随文档变：文档改了要重新编译（compile.ensureCompiled 会看文档的修改时间）
 const fs = require('fs');
 const path = require('path');
 
 const PURPOSE_MAX = 60;
 const HEAD_LINES = 20;
+const LONG_CHARS = 3000;   // 超过这么多字的文档附目录
+const TOC_ITEMS = 16;      // 目录最多列几节
+const TOC_NAME = 16;       // 每节标题最多几个字
 
-// 文档的绝对路径；写成项目外面的路径（../、绝对路径）返回 null，不读项目外的文件
+// 「路径#节名」拆开；没有 # 的 section 为 ''
+function splitRef(ref) {
+  const s = String(ref || '');
+  const i = s.indexOf('#');
+  return i < 0 ? { file: s.trim(), section: '' } : { file: s.slice(0, i).trim(), section: s.slice(i + 1).trim() };
+}
+
+// 文档的绝对路径；写成项目外面的路径（../、绝对路径）返回 null，不读项目外的文件。可以带 #节名（忽略）
 function resolve(projectDir, rel) {
+  rel = splitRef(rel).file;
   const p = path.resolve(projectDir, rel);
   const r = path.relative(projectDir, p);
   return r && !r.startsWith('..') && !path.isAbsolute(r) ? p : null;
@@ -37,12 +51,85 @@ function purpose(projectDir, rel) {
   return h ? clip(clean(h.replace(/^#+\s+/, ''))) : '';
 }
 
+// 文档的各节：[{ level, title, start, end }]（行号从 1 起，end 含）。代码块里的 # 不算标题
+function sections(text) {
+  const lines = text.split(/\r?\n/);
+  const heads = [];
+  let fence = false;
+  lines.forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) { fence = !fence; return; }
+    const m = !fence && l.match(/^(#{1,4})\s+(.+?)\s*#*\s*$/);
+    if (m) heads.push({ level: m[1].length, title: clean(m[2]), start: i + 1 });
+  });
+  heads.forEach((h, k) => {
+    const next = heads.slice(k + 1).find(x => x.level <= h.level);
+    h.end = next ? next.start - 1 : lines.length;
+  });
+  return heads;
+}
+
+// 按节名找一节：先找标题完全一样的，再找包含这个名字的（「写作风格」能找到「一C、写作风格」）
+const norm = s => clean(s).replace(/[\s、，,.:：（）()]/g, '').toLowerCase();
+function findSection(text, name) {
+  const want = norm(name);
+  if (!want) return null;
+  const all = sections(text);
+  return all.find(h => norm(h.title) === want) || all.find(h => norm(h.title).includes(want)) || null;
+}
+
+// 目录：选最主要的那一级标题（文档里第一个出现次数 ≥ 2 的级别，通常是 ##），列标题和行号
+function toc(text) {
+  // 只有一个一级标题时，它是文档的大标题，不算一节
+  let all = sections(text);
+  if (all.filter(h => h.level === 1).length === 1) all = all.filter(h => h.level > 1);
+  if (all.length < 2) return '';
+  const levels = [...new Set(all.map(h => h.level))].sort();
+  const level = levels.find(l => all.filter(h => h.level === l).length >= 2) || levels[0];
+  const items = all.filter(h => h.level === level);
+  const cut = s => { const a = [...s]; return a.length > TOC_NAME ? a.slice(0, TOC_NAME).join('') + '…' : s; };
+  const shown = items.slice(0, TOC_ITEMS).map(h => `${cut(h.title)} ${h.start}–${h.end}`);
+  return shown.join('；') + (items.length > TOC_ITEMS ? `；等 ${items.length} 节` : '');
+}
+
+// 一份挂上的文档怎么写进「动手前先读」：整份短文档写用途；长文档附目录；只挂一节的写那一节的行号。
+// 节名找不到时退回整份（体检会提醒节名对不上）
+function describe(projectDir, ref) {
+  const { file, section } = splitRef(ref);
+  let text = '';
+  try { text = fs.readFileSync(resolve(projectDir, file), 'utf8'); } catch { return null; }
+  if (section) {
+    const h = findSection(text, section);
+    if (h) return { section: true, text: `\`${file}\` 的「${h.title}」（第 ${h.start}–${h.end} 行）` };
+  }
+  const u = purpose(projectDir, file);
+  const chars = [...text].length;
+  const t = chars > LONG_CHARS ? toc(text) : '';
+  return { long: !!t, text: `\`${file}\`${u ? `（${u}）` : ''}${t ? `，约 ${Math.round(chars / 100) * 100} 字，目录：${t}` : ''}` };
+}
+
 // 编译进规则文件的那一句；文档不存在就不写（体检会提醒）
 function readLine(projectDir, node) {
-  const docs = node.docs.filter(d => exists(projectDir, d));
-  if (!docs.length) return '';
-  const list = docs.map(d => { const u = purpose(projectDir, d); return `\`${d}\`${u ? `（${u}）` : ''}`; }).join('、');
-  return `动手前先读背景文档：${list}。文档和需求树说法不同时以需求树为准；做完一块，文档里的进度这类内容过时了就顺手更新。`;
+  const parts = node.docs.filter(d => exists(projectDir, d)).map(d => describe(projectDir, d)).filter(Boolean);
+  if (!parts.length) return '';
+  const how = parts.some(p => p.long || p.section)
+    ? '长文档先看目录，只读和这次任务有关的节，读文件时按行号只读那几行；只挂了一节的，只读那一节。'
+    : '';
+  return `动手前先读背景文档：${parts.map(p => p.text).join('、')}。${how}文档和需求树说法不同时以需求树为准；做完一块，文档里的进度这类内容过时了就顺手更新。`;
+}
+
+// 挂的文档里，最晚改的那份的修改时间（编译看它判断行号是不是过时了）。不 parse 整棵树，只找「> 文档：」行
+function docsMtime(treePath) {
+  let text = '';
+  try { text = fs.readFileSync(treePath, 'utf8'); } catch { return 0; }
+  const dir = path.dirname(treePath);
+  let latest = 0;
+  for (const m of text.matchAll(/^\s*>\s*(?:文档|docs?)\s*[:：]\s*(.+)$/gim)) {
+    for (const ref of m[1].split(/[,，、]/)) {
+      const p = resolve(dir, ref.trim());
+      try { if (p) latest = Math.max(latest, fs.statSync(p).mtimeMs); } catch {}
+    }
+  }
+  return latest;
 }
 
 // ---------- 从文档里删一行（体检用：和需求树重复的、已经搬进需求树的规则） ----------
@@ -101,4 +188,4 @@ function restoreDoc(treePath, u) {
 
 const isDocOp = o => !!o && typeof o.op === 'string' && o.op.startsWith('doc_');
 
-module.exports = { resolve, exists, purpose, readLine, removeDocText, restoreDoc, isDocOp };
+module.exports = { resolve, exists, purpose, readLine, removeDocText, restoreDoc, isDocOp, splitRef, sections, findSection, toc, describe, docsMtime, LONG_CHARS };

@@ -63,8 +63,11 @@ const memoryMode = () => {
   return cfg && cfg.get('memoryMode', 'dedupe') === 'treeOnly' ? 'treeOnly' : 'dedupe';
 };
 // 按设置开关每个项目的自动记忆。改了文件才提示一次（新开会话后生效）
-function applyMemoryMode() {
+// changed：用户刚在设置里改了 memoryMode。启动时只在 treeOnly 下关掉自动记忆；默认模式下不碰设置——
+// 不然用户自己在 Claude Code 里关掉的自动记忆，每次启动都会被悄悄打开（评审发现的 bug）
+function applyMemoryMode(changed = false) {
   const off = memoryMode() === 'treeOnly';
+  if (!off && !changed) return;
   for (const f of (vscode.workspace.workspaceFolders || []).filter(x => x.uri.scheme === 'file')) {
     const dir = f.uri.fsPath;
     if (!store.findTree(dir)) continue;
@@ -342,10 +345,6 @@ class Panel {
     if (r.docMissing && r.docMissing.length) notes.push(T('q.docMissing', r.docMissing));
     if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
-    // 不用处理的：文档里还留着的重复、和树说法不同的（AI 以树为准）。放在最后，只给你知道
-    const fyi = [];
-    if (r.docDup && r.docDup.length) fyi.push(T('q.docDup', r.docDup), ...r.docDup.map(d => `  - ${d.doc}：${d.text}（${d.node}）`));
-    if (r.docConflicts && r.docConflicts.length) fyi.push(T('q.docConflicts', r.docConflicts.length), ...r.docConflicts.map(d => `  - ${d.doc}「${d.text}」↔ ${d.node}「${d.rule}」`));
     const auto = r.auto || [], split = r.split || [];
     const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length, split.length);
     const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
@@ -356,7 +355,6 @@ class Panel {
     if (auto.length) report.push(T('q.reportAuto', auto.length), '', ...auto.map(a => `- ${qText(a)}${a.options ? ` → ${optLabel(a.options[a.default])}` : ''}`), '');
     if (split.length) report.push(T('q.reportSplit'), '', ...split.map(s => `- ${T('q.splitLine', s.title, s.id, s.node, s.globs.join(', '), s.rules)}`), '');
     if (r.merged.length) report.push(T('q.reportMerged'), '', ...r.merged.map(o => `- ${o.node}：${o.text}`), '');
-    if (fyi.length) report.push(T('q.reportFyi'), '', ...fyi.map(l => (l.startsWith('  ') ? l : `- ${l}`)), '');
     if (!asked && !notes.length && !auto.length && !split.length && !r.merged.length) report.push(T('q.reportNone'), '');
     const reportFile = store.metaFile(p, 'checkup-report.md');
     try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, report.join('\n')); } catch {}
@@ -517,9 +515,14 @@ class Panel {
       case 'disable': return vscode.commands.executeCommand('reqtree.disable');
       case 'openDoc': {
         // 打开需求挂的文档；只开项目里的文件
-        const f = p && require('./src/docs').resolve(path.dirname(p), String(msg.doc || ''));
+        // 只挂了一节（路径#节名）：打开后跳到那一节
+        const Docs = require('./src/docs');
+        const f = p && Docs.resolve(path.dirname(p), String(msg.doc || ''));
         if (!f || !fs.existsSync(f)) { vscode.window.showWarningMessage(T('x.docGone', String(msg.doc || ''))); return; }
-        await vscode.window.showTextDocument(vscode.Uri.file(f));
+        const sec = Docs.splitRef(msg.doc).section;
+        const h = sec ? Docs.findSection(fs.readFileSync(f, 'utf8'), sec) : null;
+        const line = h ? h.start - 1 : 0;
+        await vscode.window.showTextDocument(vscode.Uri.file(f), h && vscode.Range ? { selection: new vscode.Range(line, 0, line, 0) } : undefined);
         return;
       }
       case 'open': {
@@ -619,7 +622,7 @@ function activate(context) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('reqtree.language')) { panel.relang(); panel.load(); }
       else if (e.affectsConfiguration('reqtree.askQuestions')) panel.load();
-      else if (e.affectsConfiguration('reqtree.memoryMode')) applyMemoryMode();
+      else if (e.affectsConfiguration('reqtree.memoryMode')) applyMemoryMode(true);
       // 设置里改了记录员、频率、代码地图这些：写进每个项目的 .reqtree/config.json（hook 读那里）
       const patch = {};
       for (const k of SYNCED) if (e.affectsConfiguration('reqtree.' + k)) patch[k] = vscode.workspace.getConfiguration('reqtree').get(k);

@@ -270,7 +270,7 @@ test('treeOnly：写 "autoMemoryEnabled": false，别的设置原样保留；切
 test('插件：设置 memoryMode 为 treeOnly 时启动就关掉自动记忆并提示；dedupe 时去掉', () => {
   const { dir } = project();
   const f = path.join(dir, '.claude', 'settings.local.json');
-  for (const [mode, want] of [['treeOnly', false], ['dedupe', undefined]]) {
+  for (const [mode, want] of [['treeOnly', false], ['dedupe', false]]) {
     const shown = [];
     const disposable = { dispose() {} };
     const Uri = { file: p => ({ scheme: 'file', fsPath: p, toString: () => 'file:///' + p }), joinPath: (u, ...s) => Uri.file(path.join(u.fsPath, ...s)) };
@@ -296,7 +296,8 @@ test('插件：设置 memoryMode 为 treeOnly 时启动就关掉自动记忆并�
     } finally { Module._load = load; }
     context.subscriptions.forEach(d => d.dispose && d.dispose());
     assert.strictEqual(JSON.parse(read(f)).autoMemoryEnabled, want, mode);
-    assert.ok(shown.some(m => (want === false ? /关闭 Claude Code 的自动记忆/ : /恢复/).test(m)), shown.join('\n'));
+    if (mode === 'treeOnly') assert.ok(shown.some(m => /关闭 Claude Code 的自动记忆/.test(m)), shown.join('\n'));
+    else assert.ok(!shown.some(m => /恢复/.test(m)), '默认模式启动时不该动设置');
   }
 });
 

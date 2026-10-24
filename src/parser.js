@@ -224,18 +224,6 @@ function similarity(a, b) {
 // 「每章练习题都要带解析」/「每章练习题带解析」0.75 算重复；「开场用伦敦地图」/「开场用勇士」0.4 不算。
 const DUPLICATE = 0.7;
 
-// 本节点和上级里，和这句话最像的现有规则
-function closestRule(node, text) {
-  let best = null, score = 0;
-  for (let n = node; n && n.parent; n = n.parent) {
-    for (const r of n.rules) {
-      const s = similarity(r.text, text);
-      if (s > score) { best = r; score = s; }
-    }
-  }
-  return { rule: best, score };
-}
-
 // 新需求的 ID 自动分配：P 下面沿用兄弟们的字母（C1、C2 → C3），更深的层用 上级ID.序号（C2 → C2.3）
 function nextChildId(root, parent) {
   const taken = new Set([...walk(root)].map(n => n.id));
@@ -637,6 +625,6 @@ function nodeForFile(root, relPath) {
 module.exports = {
   STATUS_EMOJI, STATUS_LABEL, parse, walk, findById, pathOf, effectiveRules, check,
   DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, applyOps, legacyCleanupOps, stripLegacyMarks, outline, relocate, splitGlobs, globToRegExp,
-  oneLine, closestRule, norm, sameMeaning, numbersOf, SKIP_REASON,
+  oneLine, norm, sameMeaning, numbersOf, SKIP_REASON,
   similarity, DUPLICATE, // 测试校准去重门槛用
 };

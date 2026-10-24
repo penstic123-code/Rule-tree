@@ -19,7 +19,7 @@ const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 _index.md 里。编译的输出或说明文字变了就加 1：ensureCompiled 只比时间，
 // 旧版本生成的文件可能比树还新，不看版本的话升级后会一直留着过时的说明（比如「标 🆕，等用户确认」）
-const FORMAT = '<!-- reqtree:format 8 -->';
+const FORMAT = '<!-- reqtree:format 10 -->';
 
 // 节点的生效范围：自己的 files，或最近上级的；都没有返回 null（全局）
 function scopeOf(node) {
@@ -62,7 +62,7 @@ function compileNode(node, treeName, projectDir) {
 }
 
 // 动手原则（config 的 principles，默认开）：不重复造轮子、遇到 bug 先找根因。借鉴 ponytail 的「阶梯」，见 设计-信息架构.md 第四节
-const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②写新东西之前依次问：真需要吗 → 项目里已经有了吗（看代码地图，或用下面的命令查）→ 标准库或平台自带的能做吗 → 已经装的依赖能做吗 → 最后才写最少能用的代码；校验、数据安全、无障碍不省。';
+const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②写新东西之前依次问：真需要吗 → 项目里已经有了吗（看代码地图，或用下面的命令查）→ 标准库或平台自带的能做吗 → 已经装的依赖能做吗 → 最后才写最少能用的代码；校验、数据安全、无障碍不省。③不要光照用户说的做：用户的要求和项目的实际情况、以后好不好维护有冲突时，先指出问题、给出建议，用户拍板后再动手。';
 
 // 全局说明：告诉 AI 这套东西怎么用。不写 paths，每次都加载，保持很短。
 // opts.principles：写不写动手原则；opts.who：查名字的命令说明（代码地图生成过才有）
@@ -164,7 +164,11 @@ function ensureCompiled(treePath) {
     try { return !(fs.statSync(stamp).mtimeMs >= fs.statSync(treePath).mtimeMs && fs.readFileSync(stamp, 'utf8').includes(FORMAT)); }
     catch { return true; }
   };
-  if (!(targets.claude && claudeStale()) && !(targets.codex && codex.stale(treePath))) return null;
+  // 挂的文档改过：规则里写的目录和行号可能过时了，也要重编
+  const docsStale = () => {
+    try { return Docs.docsMtime(treePath) > fs.statSync(stamp).mtimeMs; } catch { return false; }
+  };
+  if (!(targets.claude && claudeStale()) && !(targets.codex && codex.stale(treePath)) && !docsStale()) return null;
   const r = compile(treePath, { targets });
   // 内容没变时也刷新时间戳，下次就不用再比
   const now = new Date();

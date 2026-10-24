@@ -59,27 +59,8 @@ function covers(upper, lower) {
   return low.every(g => dirs.some(d => g.startsWith(d)));
 }
 
-// 记忆给模型看的样子：每份一段（文件名、类型、更新日期、正文）。每份最多 MEMORY_NOTE_CHARS 字，总长不超过 MEMORY_PROMPT_CHARS。
-// 旧版本把所有记忆压成一行、总共 8000 字，排在后面的记忆根本到不了模型那里（Vibelearning 的 20 份约 1.5 万字）
-const MEMORY_NOTE_CHARS = 1500;
-const MEMORY_PROMPT_CHARS = 30000;
 const CLAUDE_MD_CHARS = 8000;
 const clipChars = (s, max) => { const a = [...s]; return a.length > max ? a.slice(0, max).join('') + '…（截断）' : s; };
-// 返回 { text, shown 给模型看了的文件, clipped 被截断的文件 }：模型只能判断它看到的；没看全的不自动删
-function memoryForPrompt(notes) {
-  const out = [], shown = new Set(), clipped = new Set();
-  let size = 0;
-  for (const m of notes) {
-    const full = [m.description, m.body].filter(Boolean).join('\n');
-    const body = clipChars(full, MEMORY_NOTE_CHARS);
-    const block = `### ${m.file}（${m.type ? `类型 ${m.type}，` : ''}更新于 ${m.modified}）\n${body}`;
-    if (size + block.length > MEMORY_PROMPT_CHARS) break;
-    out.push(block); size += block.length;
-    shown.add(m.file);
-    if (body !== full) clipped.add(m.file);
-  }
-  return { text: out.join('\n\n'), shown, clipped };
-}
 
 // 自动删之前再核对一次：记忆里至少有一句和「已经有了」的那处（需求和它下面的规则，或 CLAUDE.md）字面上相近（Dice ≥ 0.5）。
 // 模型说重复、字面上却对不上的，改成问用户，不直接删
@@ -103,7 +84,6 @@ const MEMORY_TASK = `另外逐份看自动记忆，每份在 memory 里写一项
 // 不管哪种项目，规则（以后都要照做的要求）只该在需求树里；文档放参考资料：架构、接口、进度、章节表、决策的来由、踩过的坑
 const DOC_TASK = `另外逐份看文档。分工：规则（以后都要照做的要求）只该写在需求树里；文档只放参考资料（架构、接口、进度、章节表、某个决定的来由、经验）。CLAUDE.md、AGENTS.md 每次都全文加载，最好只留"东西在哪"这类说明。文档里每处写成规则的地方，在 docs 里写一项（只是参考资料的不写）：
 - dup：需求树里已经有同一条（措辞不同也算）。doc 是文档名（照下面每段标题里的写），text 是文档里那句的原文（尽量短，能在文档里搜到），node 是树里那条所在的需求 ID。
-- conflict：和需求树里某条说的是同一件事，说法不一样。doc、text 同上，node 是需求 ID，rule 是树里原文。
 - move：需求树里还没有的长期规则。doc、text 同上，node 写该挂的需求 ID（管辖范围最小的那个；管全项目的写顶层需求），rule 是照文档意思写成的一条简短规则。
 dup 和 move 会直接处理：规则进树，文档里那一行删掉（用户可以撤销）。所以 text 要是文档里完整的一行（去掉列表符号），只是参考资料、说明来由的句子不要写进来。
 每段文档最多 15 项，拿不准的不写。
@@ -121,7 +101,8 @@ function docList(root, projectDir) {
   const out = [], seen = new Set();
   const add = (name, node) => { const k = name.replace(/\\/g, '/'); if (!seen.has(k) && Docs.exists(projectDir, k)) { seen.add(k); out.push({ name: k, node }); } };
   for (const f of ['CLAUDE.md', '.claude/CLAUDE.md', 'AGENTS.md']) add(f, null);
-  for (const n of walk(root)) for (const d of n.docs) add(d, n.id);
+  // 只挂了一节的，体检照样看整份（重复、该搬的规则可能在别的节里）
+  for (const n of walk(root)) for (const d of n.docs) add(Docs.splitRef(d).file, n.id);
   return out;
 }
 
@@ -131,8 +112,15 @@ function docProblems(text, projectDir, treePath) {
   const root = parse(text);
   const linked = new Set(), docMissing = [], docUnlinked = [];
   for (const n of walk(root)) for (const d of n.docs) {
-    linked.add(d.replace(/\\/g, '/'));
-    if (!Docs.exists(projectDir, d)) docMissing.push({ node: n.id, doc: d });
+    const { file, section } = Docs.splitRef(d);
+    linked.add(file.replace(/\\/g, '/'));
+    if (!Docs.exists(projectDir, d)) { docMissing.push({ node: n.id, doc: d }); continue; }
+    // 只挂一节，节名在文档里找不到了（标题改过名）：AI 会退回读整份，提醒改节名
+    if (section) {
+      let t = '';
+      try { t = fs.readFileSync(Docs.resolve(projectDir, d), 'utf8'); } catch {}
+      if (!Docs.findSection(t, section)) docMissing.push({ node: n.id, doc: d });
+    }
   }
   const treeName = treePath ? path.basename(treePath) : '';
   // 已经挂了文档的需求不再提醒其余的 .md（那是有意只挂入口文档，比如子任务简报、样例不用 AI 每次先读）
@@ -292,7 +280,7 @@ default 是最可能的那个选项的序号（从 0 起）。sure：有把握�
 ` : `这次不用找规则冲突，questions 输出空数组。
 `}${memory ? MEMORY_TASK : ''}${docs ? DOC_TASK : ''}${categoryTask}
 只输出 JSON，不要任何别的文字；没有冲突就输出 {"questions":[]}：
-{"questions":[{"text":"全局写每章互动不超过4个，C1 写不超过5个：","options":[{"label":"C1 用5（本课例外）","ops":[...]},{"label":"统一用4","ops":[...]},{"label":"两条都留着","ops":[]}],"default":0,"sure":false}]${memory ? ',"memory":[{"file":"a.md","kind":"covered","where":"P"},{"file":"b.md","kind":"move","node":"C1","rules":["规则"],"whole":true},{"file":"c.md","kind":"conflict","node":"C2","rule":"树里原文","text":"记忆的说法","newer":"memory","whole":true},{"file":"d.md","kind":"stale","why":"那门课已经删了"},{"file":"e.md","kind":"doc","node":"C1"},{"file":"f.md","kind":"keep"}]' : ''}${docs ? ',"docs":[{"doc":"A/_BRIEF.md","kind":"dup","text":"文档原句","node":"C1"},{"doc":"A/_BRIEF.md","kind":"conflict","text":"文档原句","node":"C1","rule":"树里原文"},{"doc":"A/_BRIEF.md","kind":"move","text":"文档原句","node":"C1","rule":"新规则"}]' : ''}${categoryTask ? ',"categories":[{"node":"P","groups":[{"name":"写作","rules":["树里原文"]}]}]' : ''}}`;
+{"questions":[{"text":"全局写每章互动不超过4个，C1 写不超过5个：","options":[{"label":"C1 用5（本课例外）","ops":[...]},{"label":"统一用4","ops":[...]},{"label":"两条都留着","ops":[]}],"default":0,"sure":false}]${memory ? ',"memory":[{"file":"a.md","kind":"covered","where":"P"},{"file":"b.md","kind":"move","node":"C1","rules":["规则"],"whole":true},{"file":"c.md","kind":"conflict","node":"C2","rule":"树里原文","text":"记忆的说法","newer":"memory","whole":true},{"file":"d.md","kind":"stale","why":"那门课已经删了"},{"file":"e.md","kind":"doc","node":"C1"},{"file":"f.md","kind":"keep"}]' : ''}${docs ? ',"docs":[{"doc":"A/_BRIEF.md","kind":"dup","text":"文档原句","node":"C1"},{"doc":"A/_BRIEF.md","kind":"move","text":"文档原句","node":"C1","rule":"新规则"}]' : ''}${categoryTask ? ',"categories":[{"node":"P","groups":[{"name":"写作","rules":["树里原文"]}]}]' : ''}}`;
 }
 
 // 模型对每份记忆的判断 → { remove 直接删的改动, questions 要问的 }。文件、需求、规则对不上的丢掉。

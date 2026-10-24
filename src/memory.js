@@ -13,7 +13,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parse, walk, findById, similarity, norm, DUPLICATE } = require('./parser');
+const { parse, walk, similarity, norm, DUPLICATE } = require('./parser');
 
 const slugOf = dir => String(dir).replace(/[^A-Za-z0-9]/g, '-');
 
@@ -143,18 +143,6 @@ function findDuplicates(treeText, dir) {
   return out;
 }
 
-// 模型说是同一件事的：文件、句子、需求、规则都要对得上，否则不要
-function checkDuplicate(d, treeText, dir) {
-  if (!d || typeof d !== 'object' || typeof d.file !== 'string' || !isMemFile(d.file) || typeof d.memory !== 'string' || typeof d.rule !== 'string') return null;
-  if (!fs.existsSync(path.join(dir, d.file))) return null;
-  const m = readMemoryFile(dir, d.file);
-  const texts = [...(m.description ? [m.description] : []), ...m.lines.map(l => l.text)];
-  const memory = texts.find(t => t === d.memory.trim()) || texts.find(t => similarity(t, d.memory) >= 0.5);
-  const node = findById(parse(treeText), d.node);
-  const rule = node && (node.rules.find(r => r.text === d.rule.trim()) || node.rules.find(r => norm(r.text) === norm(d.rule)));
-  return memory && rule ? { file: d.file, memory, node: node.id, rule: rule.text } : null;
-}
-
 const memKey = d => `${d.file}|${norm(d.memory)}|${d.node}|${norm(d.rule)}`;
 // 记忆和需求树各有一份：问删哪份。默认建议删记忆里的（需求树是准绳），不先改
 function memoryQuestion(d, dir) {
@@ -255,6 +243,6 @@ function setAutoMemory(projectDir, enabled) {
 }
 
 module.exports = {
-  slugOf, gitRoot, memoryDir, readMemory, readNote, readNotes, noteOf, isMemFile, findDuplicates, checkDuplicate, memKey, memoryQuestion,
+  slugOf, gitRoot, memoryDir, readMemory, readNote, readNotes, noteOf, isMemFile, findDuplicates, memKey, memoryQuestion,
   removeMemory, restoreMemory, isMemoryOp, setAutoMemory, readSettings,
 };

@@ -19,7 +19,7 @@ const Docs = require('../docs');
 const RULES_DIR = path.join('.reqtree', 'rules');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 .reqtree/rules/_index.md 里；输出格式变了就加 1（同 compile.js 的 FORMAT）
-const FORMAT = '<!-- reqtree:codex-format 5 -->';
+const FORMAT = '<!-- reqtree:codex-format 7 -->';
 const BEGIN = '<!-- reqtree:begin -->';
 const END = '<!-- reqtree:end -->';
 // 安装过 Codex 目标的标记，也存记录员的模型设置（用户可以手改）

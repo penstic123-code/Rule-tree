@@ -1,255 +1,249 @@
-# Vibe Friend · ReqTree
+# ReqTree
 
-If you build things with an AI assistant, you've probably typed "didn't we already agree on this?" more times than you'd like. ReqTree is for that moment. It keeps the requirements and rules you set in chat in one tree. When the AI edits a file, it hands over just the rules for that part; when you mention a long-term preference in passing, a background recorder writes it down, and if it gets it wrong, one click undoes it.
+**As the project grows, you and the AI both still know what it looks like right now.**
 
-For [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex), with a VS Code extension. **English** | [中文](README.md)
+A VS Code extension for [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex). **English** | [中文](README.md)
 
-![Say a rule in chat, it shows up in the tree, then undo it](docs/images/en/demo.gif)
+![Say a rule in chat, it appears in the tree, then click undo](docs/images/en/demo.gif)
 
-Say "from now on, end every chapter with one thinking question" in chat. When the turn ends, it's in the tree. Wrong place? Click undo.
+Say "end every chapter with a reflection question" in chat. When the turn is over, it appears in the tree in the sidebar. Next week, when the AI edits that chapter again, it follows the rule without being told.
 
 ## Sound familiar?
 
-You work with an AI assistant on a long project. A few weeks in, the same rule has grown a few copies of itself: said once in chat, written once in CLAUDE.md, stored once in the assistant's memory, copied again into a project doc. Then you change your mind, update one of them, and the other three keep insisting on the old version.
+Building code, a course or a game with an AI goes smoothly for the first few days. Once the project grows, these start to show up.
 
-Requirements drift the same way. A feature gets revised again and again; the plan from three weeks ago has been overturned twice. Eventually even you can't say what the project currently looks like: which requirements are done, which are in progress, which version of a rule is the latest.
+**You can no longer say what the project looks like.** A feature has been changed three times; a plan from three weeks ago was overturned twice. What's done, what's in progress, which version of a rule is current: you have to dig through chat history to remember.
 
-The assistant isn't having a great time either. The conversation gets long, the context gets compacted, and the "paragraphs at most 4 lines" rule you agreed on early is gone. A subagent gets half the rules. Ask "what did we decide?" and it picks one of three documents that disagree with each other.
+**You've said the same thing several times, and the AI still forgets.** Within one conversation, the AI remembers what you said. It forgets at three moments: when you start a new conversation; when the conversation gets long and the earlier part is squeezed into a summary; and when the AI sends out a "sub-agent" (another AI it calls in to help), which never sees your conversation at all.
 
-![Rules scattered across many places](docs/images/en/pain.png)
+**The AI doesn't know which task a rule belongs to.** While working on chapter 3 you say "every example needs a picture". Is that only for chapter 3, or for every chapter from now on? The AI's built-in "auto memory" writes it down, but not which task it belongs to. So chapter 3's rule shows up while editing chapter 5, and as notes pile up they start contradicting each other.
 
-I audited my own course project after a few months of work: 21 rule documents, over 80,000 characters, 237 duplicated, contradictory or outdated rules. One document said "run only one agent at a time", another said "two or three chapters can run in parallel"; the same "three checks" rule had been copied 15 times.
+**Rules are scattered, and they disagree.** The same rule was said in chat, written into CLAUDE.md (the instructions file Claude Code reads every time it starts), saved in the AI's memory, and copied into a project doc. Later you changed your mind and updated only one of them. I checked my own course project, several months old: 21 rule documents, over 80,000 characters, with 237 duplicates, contradictions and outdated rules.
 
-## What it does
+**The bigger the project, the more the AI reads every time it starts.** CLAUDE.md keeps growing and is read in full in every conversation; a style guide runs to thousands of words and is read top to bottom to change one comma; the AI doesn't know where code lives, so it searches everywhere. Every word it reads costs money and takes up room in the conversation.
 
-<table>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-1-change-tracking.png" alt="Requirements changed so often — what does the project look like now? → One tree shows it all: how far each part is, which rules are current; changes by the recorder and from the panel are logged and undoable"><br><sub>Problem</sub><br>Requirements changed so often — what does the project look like now?<br><sub>ReqTree</sub><br>One tree shows it all: how far each part is, which rules are current; changes by the recorder and from the panel are logged and undoable</td>
-<td width="50%" valign="top"><img src="docs/images/en/use-2-one-place.png" alt="The same rule lives in four places. Which one counts? → Every rule lives in one file, in exactly one place"><br><sub>Problem</sub><br>The same rule lives in four places. Which one counts?<br><sub>ReqTree</sub><br>Every rule lives in one file, in exactly one place</td>
-</tr>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-3-rewrite-not-append.png" alt="The same rule gets added again and again → The recorder rewrites the original instead of adding; undo in one click"><br><sub>Problem</sub><br>The same rule gets added again and again<br><sub>ReqTree</sub><br>The recorder rewrites the original instead of adding; undo in one click</td>
-<td width="50%" valign="top"><img src="docs/images/en/use-4-survive-compaction.png" alt="Long chats and compaction make the AI forget the rules → Rules use Claude Code's native mechanism and survive compaction and subagents"><br><sub>Problem</sub><br>Long chats and compaction make the AI forget the rules<br><sub>ReqTree</sub><br>Rules use Claude Code's native mechanism and survive compaction and subagents</td>
-</tr>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-5-load-on-demand.png" alt="Every rule gets stuffed into the context → Only the rules for the file being edited come along"><br><sub>Problem</sub><br>Every rule gets stuffed into the context<br><sub>ReqTree</sub><br>Only the rules for the file being edited come along</td>
-<td width="50%" valign="top"><img src="docs/images/en/use-6-override.png" alt="Parent and child rules contradict each other → A child requirement overrides its parent, only within its own scope"><br><sub>Problem</sub><br>Parent and child rules contradict each other<br><sub>ReqTree</sub><br>A child requirement overrides its parent, only within its own scope</td>
-</tr>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/en/use-7-live-status.png" alt="What is the AI working on right now? → The sidebar and map show it live"><br><sub>Problem</sub><br>What is the AI working on right now?<br><sub>ReqTree</sub><br>The sidebar and map show it live</td>
-<td width="50%" valign="top"><img src="docs/images/en/use-8-click-not-markdown.png" alt="Hand-editing Markdown → Add rules, change status, undo — all by clicking"><br><sub>Problem</sub><br>Hand-editing Markdown<br><sub>ReqTree</sub><br>Add rules, change status, undo — all by clicking</td>
-</tr>
-</table>
+**The AI reinvents the wheel, or writes code that fights other code.** There's already a function for it in the project, but the AI doesn't know and writes a near-copy.
+
+## How ReqTree solves it
+
+Here's one example, start to finish. You're building a data science course and working on chapter 3.
+
+**Step 1: you just talk; it takes notes in the background.** You say in passing "every example in this chapter needs a picture". When the turn is over, a background helper (the "recorder") reads this, and decides it's a lasting requirement rather than a one-off instruction like "shorten this paragraph". It knows you're working on chapter 3, so it writes the sentence into a file in your project called `需求树.md` (the tree), under "Chapter 3". You don't do anything.
+
+The recorder relies on a small model and sometimes gets it wrong: say you meant pictures for this chapter only, and it recorded "every chapter needs pictures". Open "Recent changes" at the bottom of the sidebar, where every change is listed (when, which requirement, what it became), find the wrong one and click "Undo" next to it. The tree goes back to how it was before.
+
+**Step 2: next time the AI edits chapter 3, the rule shows up by itself.** Next week you start a new conversation and ask the AI to edit chapter 3. As soon as it opens chapter 3's file, "every example needs a picture" appears in front of it, without you saying it again. When it edits chapter 5, the rule doesn't appear, because it belongs to chapter 3 only. Rules reach the AI by file: for any task, the AI reads only the rules inherited from the levels above plus the task's own rules, and nothing from other tasks.
+
+![Only the rules on the path to the file being edited come along](docs/images/en/scope.png)
+
+**Step 3: you can see the whole picture at any time.** The sidebar shows a tree: each course and each chapter is a "requirement", with its rules and status (in progress, to do, done). Whichever chapter the AI is editing lights up.
+
+**Step 4: as rules pile up, it tidies them.** Over time some rules repeat, some contradict, some go stale. Click "Check-up" and it merges duplicates, resolves contradictions and clears out stale ones. Every change can be undone; it only asks you when it genuinely can't decide.
+
+![How ReqTree works: what comes in, background tidying, where it's stored, who it reaches](docs/images/architecture.en.svg)
+
+## Rules, docs and memory: what goes where
+
+A project's information comes in several kinds. Mixed together, it costs tokens and drifts out of sync. ReqTree gives each kind a fixed place:
+
+| Where | What | Example | When the AI reads it |
+|---|---|---|---|
+| **Rules** (in the tree) | A requirement you can follow from one sentence | "Every example needs a picture", "Paragraphs at most 4 lines" | Shows up automatically when the matching files are touched |
+| **Decisions** (rules starting with "Decision:") | The option you chose among several, with the reason | "Decision: charts are plain SVG, no chart library (pages must open offline)" | Same; the AI must ask you before overturning one |
+| **Docs** (attached to requirements) | What a rule can't hold: why, how exactly, examples, data, progress | A chapter list, the detailed reasoning of a style guide, an architecture note | When the matching files are touched, the AI is told to read the contents first and only the sections it needs |
+| **Code map** (generated) | What's already in this part of the code | "This area has `common.js`, which provides `DS.toast`…" | Shows up automatically when the matching files are touched |
+| **The AI's auto memory** | Things unrelated to the project's content | Your machine, your personal habits | Managed by Claude Code |
+| **CLAUDE.md** | The project's front door: what it is, where things are | A dozen lines is enough | Read every time, so the shorter the better |
+
+**Rules vs docs**: if it can be written as one "do…" or "don't…" that you can simply follow, it's a rule; if it needs explanation, examples or data, it's a doc. Rules say *what*; docs say *why* and *how exactly*. Each thing is written in one place only: when a check-up finds a doc line stating a rule the tree already has, it deletes that line from the doc (after a backup, and undoably).
+
+**Long docs: read only the sections that matter.** The AI doesn't need all of a several-thousand-word style guide to fix one comma. ReqTree gives every long attached doc a table of contents: each section's title and line range. The AI reads that short list first, then only the sections relevant to the task. You can also attach a single section to a requirement, so "Writing" gets only the "Writing style" section of the guide: put `> docs: guides/writing.md#Writing style` under the requirement.
+
+**A file can belong to several requirements.** For example, "Writing" covers every course's chapter pages, and "Data science course" covers all of that course's files. Editing a data science chapter page brings in both sets of rules; editing the course's scripts leaves the writing rules out. So a shared writing guide is written once, not copied into every course. When the two disagree, the one covering the narrower set of files wins.
 
 ## The interface
 
-| Sidebar (dark theme) | Mind map (light theme): select a requirement and the other branches fade |
+| Sidebar (dark theme) | Map (light theme): click a requirement and the other branches fade |
 |---|---|
 | <img src="docs/images/en/ui-sidebar.png" width="300"> | <img src="docs/images/en/ui-map.png" width="560"> |
 
-| Focus: only this branch | Context meter: which rules this session loaded, and how big each is |
+| Focus on one branch | Context usage: which rules this conversation read, and how long each is |
 |---|---|
 | <img src="docs/images/en/ui-focus.png" width="430"> | <img src="docs/images/en/ui-context.png" width="430"> |
 
-The UI follows VS Code's display language (English or Chinese).
+In the sidebar, requirements in progress come first, and finished ones fold into a single "N done" line. The interface comes in English and Chinese; if your tree is written in Chinese, it uses Chinese.
 
 ## Installing
 
-**You need** Node.js 18+, VS Code, and Claude Code or OpenAI Codex.
+**You need** Node.js 18 or later, VS Code, and Claude Code or OpenAI Codex.
 
 ### Let the AI install it
 
-Open a Claude Code or Codex session in your project and send it this:
+Open a Claude Code or Codex conversation in your project and send it this:
 
 ```text
-Please set up ReqTree (https://github.com/penstic123-code/Vibe-Friend) in this project:
-1. Run npx github:penstic123-code/Vibe-Friend init .  (if you are Codex, add --tool codex at the end)
-2. Download the latest reqtree-*.vsix from https://github.com/penstic123-code/Vibe-Friend/releases/latest to a folder outside this project and tell me where it is
-3. Don't run code --install-extension yourself; tell me how to install it in VS Code from the VSIX
+Install ReqTree (https://github.com/penstic123-code/Vibe-Friend) in this project:
+1. Run npx github:penstic123-code/Vibe-Friend init . (if you are Codex, add --tool codex at the end)
+2. Download the latest reqtree-*.vsix from https://github.com/penstic123-code/Vibe-Friend/releases/latest, put it outside the project folder, and tell me where
+3. Don't run code --install-extension yourself; tell me how to install it from VSIX in VS Code
 ```
 
-After step 1 the project has its hooks and a template `需求树.md`. The extension is left for you to click, because installing it from the command line inside VS Code restarts the AI session that's running — mid-sentence. Once it's installed, start a new session and you're set.
+Install the extension by hand: installing an extension from the command line inside VS Code restarts the running AI conversation along with it, so it can't finish what it was saying. Once it's installed, start a new conversation.
 
 ### Install it yourself
 
-1. Install the VS Code extension: download `reqtree-<version>.vsix` from [Releases](https://github.com/penstic123-code/Vibe-Friend/releases), then Extensions → `…` → "Install from VSIX".
-2. Open your project. The extension asks whether to enable ReqTree here — click enable. (Or run "需求树：在本项目启用" from the command palette.)
-3. Start a new Claude Code session and work as usual.
+1. Download `reqtree-<version>.vsix` from [Releases](https://github.com/penstic123-code/Vibe-Friend/releases), then in VS Code's Extensions panel → `…` → "Install from VSIX".
+2. Open your project. The extension asks "Enable ReqTree in this project?"; click "Enable".
+3. Start a new Claude Code conversation and work as usual.
 
-Rather skip the extension? The command line works too:
+To stop using it, choose "Disable ReqTree in this project" in the sidebar's gear menu. The tree file stays, so you can turn it back on later.
+
+Command line only:
 
 ```bash
-npx github:penstic123-code/Vibe-Friend init <your-project>               # Claude Code
-npx github:penstic123-code/Vibe-Friend init <your-project> --tool codex # OpenAI Codex
+npx github:penstic123-code/Vibe-Friend init <your project folder>               # Claude Code
+npx github:penstic123-code/Vibe-Friend init <your project folder> --tool codex # OpenAI Codex
 ```
 
-Enabling installs hooks in the project (Claude Code: `.claude/settings.local.json`; Codex: `.codex/hooks.json` plus a managed block in `AGENTS.md`) and creates a template `需求树.md` if there is none. The hook scripts are copied to `~/.reqtree/runtime/` and refreshed when the extension updates. For Codex details see [docs/codex.md](docs/codex.md) (in Chinese).
+For Codex specifics, see [docs/codex.md](docs/codex.md).
 
-## After that
+## What the tree looks like
 
-Day to day you don't do anything extra:
-- Say "from now on, end every chapter with a reflection question", and after that turn it appears in the tree.
-- When the assistant edits `ch01.html`, it automatically gets the rules of Chapter 1 and everything above it; other courses' rules stay out of the way.
-- The sidebar shows which requirement the assistant is editing. If the recorder got something wrong, click undo under "Recent changes".
-
-### What the tree looks like
+`需求树.md` is a plain Markdown file. You can edit it directly, or do everything by clicking in the sidebar.
 
 ```markdown
 # P Example course
-- [para] Paragraphs at most 4 lines          ← root rules apply everywhere
+- Paragraphs at most 4 lines                ← top-level rule: applies to the whole project
 
 ## W Writing
-> 文件：*/ch*.html                           ← split by file type: every course's chapter pages
-> 文档：guides/writing.md
+> 文件：*/ch*.html                          ← the files this requirement covers: every course's chapter pages
+> 文档：guides/writing.md#Writing style     ← attach only the "Writing style" section of the guide
 - One new idea per paragraph
 
 ## C2 Data science course 🔨
-> 文件：DataScience/**                       ← the files this requirement covers
-> 文档：DataScience/_CHAPTERS.md             ← reference docs: the AI is told to read them first
+> 文件：DataScience/**                      ← all of this course's files
+> 文档：DataScience/_CHAPTERS.md            ← chapter list: the AI is told to check it before editing this course
 - No direct quotes; retell everything
 - Decision: charts are plain SVG, no chart library (pages must open offline)
 
-### C2.1 Chapter 1 🔨
-> 文件：DataScience/ch01-*.html
-- [para] The opening may run to 6 lines      ← same key: overrides the parent in Chapter 1
-- Hook the reader within the first screen
+### C2.3 Chapter 3 🔨
+> 文件：DataScience/ch03-*.html
+- Every example needs a picture
 ```
 
-- A heading is a requirement: an ID first, a status last (✅ done 🔨 in progress ⏳ to do ❓ undecided).
-- List items under a heading are its rules.
-- A file can belong to several requirements. Editing `DataScience/ch01-cholera.html` above brings in Writing, Data science and Chapter 1 together; editing `DataScience/js/common.js` leaves the writing rules out. So a shared writing guide is written once, on a requirement split by file type, instead of being copied into every course. When two of them disagree, the one with the narrower file scope wins.
-- `> 文档：` (or `> docs:`) attaches reference material such as a chapter list, progress notes, an architecture overview or API docs. The doc isn't copied into the rules; the requirement's rule file just gets one line saying "read X first (what it's for)", taken from a `Purpose:` line at the top of the doc.
-- A rule starting with "决定：" or "Decision:" is a choice you made, with its reason. When you settle between options, the recorder writes it down with the why, and the AI has to ask you before overturning it.
-- A requirement without `> 文件：` (files) inherits its parent's scope; if no ancestor has one, the panel warns you.
+- A heading starting with `#` is a "requirement": an ID first, a status last (✅ done 🔨 in progress ⏳ to do ❓ undecided)
+- Each line under it starting with `-` is a rule
+- `> 文件：` (or `> files:`) says which files the requirement covers; `*` means any file name, `**` any number of folders. Without it, the requirement inherits its parent's files
+- `> 文档：` (or `> docs:`) attaches a reference doc; add `#` and a section name to attach just that section
 
-## How it works
+### Requirements and sub-requirements, rules and sub-rules
 
-Everything revolves around one file. While you chat, a background recorder writes long-term requirements into `需求树.md`. The tree is compiled into one rule file per requirement, each declaring which files it covers. When the assistant touches matching files, Claude Code itself hands it those rules.
+The number of `#`s is the level: `### C2.3 Chapter 3` under `## C2 Data science course` is its **sub-requirement**. A sub-requirement usually covers part of its parent's files: the course covers all its files, chapter 3 only chapter 3's pages.
 
-![From one sentence to the rules the assistant sees](docs/images/en/idea.png)
+**Rules from the level above apply below too.** When the AI edits chapter 3 it reads three layers: the project's (paragraphs at most 4 lines), the course's (no direct quotes), and chapter 3's (every example needs a picture). So a rule is written once, at the highest level it applies to, not copied into every chapter.
 
-**Loading on demand.** Each requirement compiles to `.claude/rules/reqtree/<ID>.md` with a `paths:` header. These are Claude Code's native path-scoped rules: they enter the context only when the assistant reads or writes a matching file. A parent's scope contains its children's, so editing Chapter 1 brings in the root, the course and the chapter rules; the other courses' rules stay home.
+**A lower level can replace one of the upper level's rules, within its own scope.** Say the project limits paragraphs to 4 lines, but chapter 1's opening should run longer. Give both rules the same name (the word in square brackets) and the lower one replaces the upper one:
 
-![Only the rules on the path to the file you edit](docs/images/en/scope.png)
+```markdown
+# P Example course
+- [para] Paragraphs at most 4 lines
 
-**The recorder.** At the end of each turn, a hook wakes up Claude Haiku in the background. It receives the requirement tree and the last two turns (your message and the assistant's final reply in each); every 8 turns and before the context is compacted, it also gets up to 20 of your recent messages to see whether anything slipped through. All of this goes to the model provider you already use (Anthropic for Claude Code, OpenAI's codex exec for Codex). It first looks for a rule on the same topic: if there is one, it rewrites it; otherwise it adds one. One-off instructions ("shorten this paragraph") are not recorded, and short replies like "ok" or "continue" don't even wake the model. Changes apply immediately and are logged in `.reqtree/changes.jsonl` with an inverse operation, so each one can be undone.
+### C2.1 Chapter 1
+- [para] The opening may run to 6 lines     ← replaces the rule above, in chapter 1 only
+```
 
-**When it's unsure, it asks.** If a new statement is about the same thing as an existing rule, the recorder rewrites the old rule to match the latest wording, even if you never said "change it to". Some things only you can settle. Does "chapter 5 can have a few more interactions" make an exception for that chapter, or apply to every chapter from now on? Does "the journal style is only for part one" narrow the old rule or add a new one? Is a chapter finished? In cases like these the recorder writes down the most likely reading and shows a notification in VS Code with a few options. You can ignore it, and the first reading stays in effect; if you pick another option, the first change is undone and replaced with yours. Requirements marked in progress that haven't been touched for a few days get the same kind of question: is it done? Questions are kept in `.reqtree/questions.jsonl`; after seven days without an answer, the first reading stands. If it gets chatty, the `reqtree.askQuestions` setting can reduce this to a count on the sidebar icon, or turn the questions off.
+When editing chapter 1, the AI reads "the opening may run to 6 lines"; for every other chapter it's still "at most 4 lines". If you say "chapter 1's opening can be longer" in chat, the recorder writes it in this form for you.
 
-**Check-up.** "ReqTree: Check-up" (the Check-up button in the sidebar and on the map, or `reqtree check --fix` on the command line) first asks what to look at: the rules in the tree, the AI's auto memory, and docs (docs attached to requirements, plus CLAUDE.md and AGENTS.md at the project root). Everything is ticked by default, and your choice is remembered. It works like the recorder: whatever it can settle, it fixes directly, logging each fix in "Recent changes" so it can be undone; it asks only when it is genuinely unsure, and even then the most likely fix is already in place.
+## Other features
 
-For rules, near-identical rules within one requirement are merged, keeping the later one, and a child rule that repeats a parent's is removed. Rules that disagree between a parent and a child without being written as an override ("at most 4 interactions per chapter" for the project, "at most 5" in one course) are fixed directly when one is clearly the later word or clearly a deliberate exception, and asked about otherwise. A rule repeated across several sibling requirements is lifted to their common parent. A requirement with many rules that split cleanly by file becomes sub-requirements: if half of a course's rules only concern chapter pages, they move to a sub-requirement scoped to `ch*.html`, so the AI doesn't read them while editing scripts. Groups that don't split by file are only grouped in the panel. Rules that never reach the assistant (no files on the requirement or its parents, or none of its files exist anymore) are pointed out.
+**When it's unsure, it asks.** Some things only you can settle: does "chapter 5 can have a few more interactions" make an exception for that chapter, or apply to every chapter from now on? In cases like this the recorder writes down the most likely reading (by default, just the requirement you're working on) and shows a notification in VS Code with options. You can ignore it; the first reading stays in effect.
 
-For docs, a line that states a rule the tree already has is deleted from the doc; a rule the tree lacks is moved into the tree and then deleted from the doc; a contradiction asks which side is right. Only whole lines that can be found unambiguously are deleted. Lines in tables, lines with sub-items and lines it can't pin down are left alone and listed in the report for you. The doc is backed up to `.reqtree/doc-backup/` first, and undoing puts the line back where it was. Attached docs that are missing, and docs sitting in a requirement's folder without being attached, are flagged too.
+**Check-up.** Rules used for long enough repeat, contradict and go stale. Click "Check-up" in the sidebar and it:
 
-Memory and docs together can run to a hundred thousand characters, too much for one look, so they are read in batches with one model call each; long files are cut into pieces, and every file gets read. Notes and docs unchanged since the last check-up are skipped, so the first run is slow and later ones are quick, and anything you undo stays undone on later runs. The results go into a report: what was fixed, what you're being asked, and what's left for you to do by hand. Open it from "View report" in the notification, or later from the gear menu in the sidebar or the ⋯ menu on the map. The model is called only when you run the check-up.
+- merges duplicate rules, and removes a sub-requirement's rule that repeats one from above
+- resolves contradictions: if one rule is clearly the later word, that one wins; it asks you only when it can't tell
+- splits a requirement with too many rules into sub-requirements when the rules divide by file (e.g. half of them only concern chapter pages)
+- tidies the AI's auto memory: notes already in the tree are deleted, project rules move into the tree
+- tidies docs and CLAUDE.md: lines that repeat the tree are deleted, rules that belong in the tree move there
 
-**Code map.** An AI writes duplicate code, or code that fights other code, mostly because it doesn't know what the project already has. ReqTree builds a map from the code: for each requirement, the files other code uses most, the one-line description at the top of each, their public functions and classes, the outside modules this area depends on, and the signals it emits and listens to. Like rules, a map loads only when the AI touches that area (`.claude/rules/reqtree/map-<ID>.md`); the project's most-used shared modules and Godot autoload singletons go into `_map.md`, which is always loaded. To find where something is defined and who uses it, the AI runs `node ~/.reqtree/runtime/src/codemap.js who <name>`; signals are split into emitters and listeners. The map reads code with regular expressions and no model, about a second for a few hundred files, and the recorder refreshes it in the background after a turn that changed files. It understands GDScript (`class_name`, signals, autoload singletons, scripts attached to scenes), JavaScript/TypeScript (including globals like `window.X`), Python and the scripts an HTML page loads; other languages are read by their usual definition keywords. Why not aider's repo map or graphify: they do more, but neither supports GDScript.
+Every change is logged in "Recent changes" and can be undone; anything you undo stays undone on later check-ups. A report is written at the end; open it from "Last check-up report" in the gear menu.
 
-**Working principles.** The compiled index carries a short set of principles for every task: when there's a bug, find the root cause first, and fix contradicting rules, unsound architecture or clashing systems before patching symptoms; before writing something new, ask in order whether it's needed at all, whether the project already has it (see the code map), whether the standard library or platform does it, whether an installed dependency does it, and only then write the least code that works. The second half borrows the "ladder" from [ponytail](https://github.com/DietrichGebert/ponytail). To turn this off, put `"principles": false` in `.reqtree/config.json`.
+**Code map.** Before the AI edits an area of code, it automatically gets a "map" of it: the files there, the description at the top of each, the functions and classes they provide, the shared modules the area depends on, and the signals it emits and listens to. To find where a function is defined and who uses it, the AI runs a lookup command. The map uses no model; a few hundred files take about a second, and it updates as the code changes. It understands JavaScript/TypeScript, Python, Godot's GDScript and the scripts a web page loads; other languages are read by their usual patterns.
 
-**Rules, docs and memory each have one job.** A rule kept in two places will sooner or later be changed in one and not the other. So the tree holds rules, the things to do every time, including a course's conventions and how many agents to run. Docs hold reference material such as chapter lists, progress, architecture notes and the reasons behind a decision, attached to requirements with `> 文档：`. Claude Code's auto memory keeps only things unrelated to the project's content: who you are, your tools and machine, and private details such as servers and accounts. The tree is committed to the repository, so private details don't belong there. CLAUDE.md and AGENTS.md are loaded in full every time, so they work best as a few lines saying where things are, leaving the rules to the tree. If the assistant writes a project rule into memory during a turn, the recorder moves it into the tree and deletes the note. Practices and pitfalls the assistant discovers while working ("this script needs an absolute path") are recorded as rules too, prefixed "（AI 发现）", unless you objected; turn this off with "Also record what the AI finds out" in the gear menu. During a check-up, old notes already covered by the tree or CLAUDE.md are deleted; notes that belong in the tree, contradict it or look outdated are brought to you one by one; notes that read like experience or progress for one area are flagged for moving into that area's doc. Every note is backed up before it is deleted, so each deletion can be undone. If you'd rather have no auto memory, set `reqtree.memoryMode` to `treeOnly`.
+**Working principles.** Every time it starts work, the AI reads three principles: when there's a bug, find the root cause first, and fix contradicting rules or unsound architecture before patching symptoms; before writing something new, check whether the project, the standard library or an installed dependency already has it (borrowed from [ponytail](https://github.com/DietrichGebert/ponytail)); and don't just do what you're told: when your request clashes with how the project actually is or how maintainable it will be, point out the problem and suggest a better way, then wait for your call.
 
-![The recorder notes long-term requirements in the background](docs/images/en/recorder.png)
+**Settings.** The gear menu in the sidebar sets how often to record (every turn, every 3 or 5 turns together, or paused) and turns the code map and working principles on or off. Search for `reqtree` in VS Code settings for all options.
 
-**Why not inject rules with hooks?** Early versions did exactly that. Claude Code's native rules turned out to be more reliable: they work inside subagents and after compaction, and rules created or edited mid-session are pushed to the assistant. So rules are left to the native mechanism, and the hooks only do what it can't — track which requirement is being edited and wake the recorder. The one exception is discussion before any file is touched: when you ask "how should Chapter 3 work?", the assistant hasn't opened a file yet, so the hook adds the rules of the requirement you named, once per session.
+## Common questions
 
-| Part | What it does |
-|---|---|
-| `src/parser.js` | Parses the tree; every edit goes through `applyOps`, and each operation returns its inverse; similarity-based dedupe |
-| `src/compile.js` | Compiles each requirement into a native rule file; inheritance via nested scopes, overrides written as "within this scope, this one wins" |
-| `src/store.js` | Locked atomic writes, recompiles after every write, change log and undo, state files |
-| `hooks/hook.js` | Keeps rules fresh when you send a message, records which requirement an edited file belongs to, starts the recorder at the end of a turn, and logs which rules were loaded |
-| `hooks/recorder.js` | Uses Haiku to decide whether the turn contained a long-term requirement, then rewrites or adds a rule; unclear cases become questions |
-| `src/questions.js`, `src/checkup.js` | Storing, answering and undoing questions; stale requirements; check-up |
-| `src/codemap.js` | Code map and the name lookup command |
-| `extension.js`, `media/` | VS Code sidebar and mind map |
+**Doesn't the AI already remember what I said?**
+Within one conversation, yes. The trouble is when it can't see: a new conversation knows nothing of the last one; a long conversation gets squeezed into a summary; a sub-agent never sees your conversation, and the main AI only gets the sub-agent's result back. ReqTree doesn't rely on the AI remembering. It keeps rules in files and puts them in front of the AI when they're needed.
 
-## Saving context and tokens
+**With thousands of files, and a rule buried in a few lines in some folder, how would the AI even know it exists?**
+It doesn't have to look. Rules are compiled into Claude Code's built-in "load by path" mechanism: when the AI reads or writes a file, Claude Code hands it the rules that cover that file, sub-agents included. And the AI doesn't read thousands of files either; each time it reads only the few rules on the path to the current file.
 
-| Feature | Status |
-|---|---|
-| Rules load on demand: they enter the context when the AI reads or edits a matching file | ✅ |
-| Hooks add rules only when you name a requirement whose files the assistant hasn't touched yet; otherwise nothing | ✅ |
-| Old rules are rewritten instead of duplicated, so the tree doesn't keep growing | ✅ |
-| The recorder uses the inexpensive Haiku model in the background; short replies skip it | ✅ |
-| Context meter: which rules each session loaded, how many characters each, resident vs on demand | ✅ |
-| Split CLAUDE.md: move requirement-specific content into the tree so it loads on demand | Planned |
-| Cross-file duplicate and contradiction check between the tree, CLAUDE.md and project docs | Planned (experiment script exists) |
+**Wouldn't a well-organized project make this unnecessary?**
+A tidy structure prevents a lot, but neat files aren't the same as well-kept rules. Rules keep growing, some contradict each other, and some are scattered across CLAUDE.md, memory and docs, each saying something different. ReqTree keeps them in order, continuously, without you doing it by hand. For newcomers who don't yet know how to organize a project, it also helps sort the project out: which files each task covers and which rules it follows.
 
-In practice, the AI reads 30–50% fewer characters of rules to work on one chapter of a course — see "How much better after moving them into a tree?" below.
+**The AI won't mix up two contradicting rules, will it?**
+When it can see the contradiction, it usually picks one, and not necessarily the one you meant most recently; when it can't see it, it can't notice. My course project had 237 duplicates, contradictions and outdated rules across 21 documents. ReqTree keeps each rule in one place, rewrites the old rule when you say something new, and the check-up finds the contradictions that remain.
+
+## Compared with other approaches
+
+| Approach | Does | Doesn't |
+|---|---|---|
+| Put every rule in CLAUDE.md | The AI reads it every time | Read in full no matter what you edit; keeps growing and costing tokens; you maintain it |
+| The AI's auto memory | Writes some things down automatically | Doesn't know which task a rule belongs to; piles up and contradicts itself |
+| Write your own rule docs | As detailed as you like | You record and update them yourself; the AI doesn't know which to read when |
+| [graphify](https://github.com/safishamsi/graphify), [aider's repo map](https://aider.chat/docs/repomap.html) | Help the AI understand code structure, more thoroughly than ReqTree's code map | Only cover code, not your requirements and rules; neither supports GDScript |
+| **ReqTree** | Records requirements automatically, sorts them by task, delivers only what the current edit needs, tidies duplicates and contradictions | The recorder occasionally files a rule in the wrong place; you undo or fix it |
 
 ## Test data
 
-Each experiment below answers one question. Raw data and experiment conditions are in [`测试数据记录.md`](测试数据记录.md) (the test log, in Chinese).
+Each experiment answers one question. Raw data and conditions are in [`测试数据记录.md`](测试数据记录.md).
 
 ### Does the recorder get things wrong or add duplicates?
 
-The recorder mostly meets six situations: you restate an old rule in new words; you change your mind; you give a new rule; you ask for a one-off edit; you reject a rule; you repeat a parent's rule inside a child requirement. Two easily confused ones were added later: "open Chapter 1 with the cholera story" is a decision Chapter 1 should keep following, while "tighten that paragraph in Chapter 1" is done once it's done. Run five times each with the real Haiku model, the recorder handled every case correctly: no duplicates, changes of mind rewrite the original rule, one-off edits are not recorded.
+The recorder mostly meets a handful of situations: you restate an old rule in other words; you change your mind; you give a new rule; you ask for a one-off edit; you reject a rule. Run against the real model five times each, the recorder got every one right: no duplicates added, changed minds rewrote the original rule, one-offs weren't recorded.
 
 ![Recorder accuracy](docs/images/en/chart-recorder.png)
 
 ### Compared with letting the AI maintain its own rule document?
 
-A simulated 32-turn conversation: the user gradually states 13 long-term requirements, changes their mind, cancels some, adds exceptions. One arm lets the AI keep its own rule document; the other uses ReqTree. When the AI keeps the document, "drop the reflection questions" often becomes a new line "no reflection questions" while the old rule stays, and an exception like "only 3 exercises in Chapter 2" sometimes turns into a global rule. ReqTree deletes the cancelled rule and files the exception under Chapter 2. At first ReqTree also missed decisions about a single chapter's content; after the recorder's criteria were fixed, it captured almost all 13 requirements.
+A simulated 32-turn conversation: the user gives 13 lasting requirements over time, changing their mind, cancelling and adding exceptions. One group lets the AI keep its own rule document; the other uses ReqTree. When the AI kept its own notes and you said "drop the reflection questions", it often added "no reflection questions" and kept the old rule too; an exception like "chapter 2 gets only 3 questions" sometimes became a global rule. ReqTree deleted the cancelled rule and put the exception under chapter 2.
 
-![Rule problems after a simulated conversation](docs/images/en/chart-confusion.png)
+![Rule problems after the simulated conversation](docs/images/en/chart-confusion.png)
 
-### How messy are real rule documents?
+### How much does it save?
 
-Back to that course project. Across its 21 rule documents the problems sit mostly across files: the same rule copied in several places, updated in one and stale in the others; one file says "run one agent at a time", another says "two or three chapters can run in parallel".
+My course project used to read about 14,000 characters of CLAUDE.md plus rules at the start of every conversation. After moving the guides into docs and the rules under their requirements, the fixed part dropped to about 2,600 characters; the rest is read only when the matching files are touched. For any one chapter of any course, the AI reads 30–50% fewer rules.
 
-![Audit of real rule documents](docs/images/en/chart-audit.png)
-
-### How much better after moving them into a tree?
-
-The rules from those 21 documents were moved into one requirement tree and audited again with the same checker. Duplicates and outdated rules dropped sharply, because each rule now has one place and old wording was replaced by the latest during the move. Contradictions did not drop: where a course rule conflicts with a global one, the original text never said "this course is an exception", so the move can't decide which one wins. That call is still yours, and now it comes to you as a question.
-
-![Before and after moving the rules into a tree](docs/images/en/chart-migrate.png)
-
-The context savings are easier to see. Before, every session carried CLAUDE.md and the memory, and working on a course meant reading that course's whole rule document. With the tree, only the global rules are always loaded; a course's rules arrive when its files are touched. To work on one chapter of any course, the AI reads 30–50% fewer characters of rules.
-
-![How much the AI reads to work on one chapter](docs/images/en/chart-chapter.png)
+![How much the AI reads for one chapter](docs/images/en/chart-chapter.png)
 
 ### Replaying real conversations
 
-436 messages I actually typed across 12 sessions over several weeks were replayed in order. One arm let the AI record rules as it normally would, into CLAUDE.md, memory and course documents (seeing only some of them each time); the other used ReqTree. Both were checked against the same answer key.
+I replayed 436 messages I typed across 12 conversations over a few weeks, in order: one group let the AI record things its usual way into CLAUDE.md, memory and course docs; the other used ReqTree. ReqTree missed less, kept fewer overturned rules, and ended up with a rule base a third the size.
 
-ReqTree missed fewer requirements, kept fewer overturned rules, and ended with a rule base a third the size. Its extra errors were of one kind: general preferences mentioned while working on one course, such as "reply in Chinese", got filed under that course, so other courses didn't get them. The recorder's criteria have since been adjusted for this.
-
-![The rule base after replaying real conversations](docs/images/en/chart-replay.png)
+![Rule base after replaying real conversations](docs/images/en/chart-replay.png)
 
 ## Current limits
 
-- Works with Claude Code and OpenAI Codex. Codex has no path-scoped rules, so ReqTree uses an index in `AGENTS.md` plus hooks that deliver the right rules (see docs/codex.md).
-- The recorder relies on a small model and occasionally files a rule in the wrong place. When it notices it is unsure, it asks you; mistakes it doesn't notice are yours to fix in the panel, or to undo under "Recent changes".
-- Each turn costs one extra Haiku call, run in the background (about 6 seconds).
-- Developed on Windows; macOS and Linux are covered by CI.
+- Rules are delivered by file. It works best when different tasks touch different files; if everything lives in one file, there's no way to send only part of the rules. Which files a requirement covers can be changed at any time, down to a single file.
+- The recorder relies on a small model and occasionally files a rule in the wrong place. When it notices it's unsure it asks; otherwise you fix it in the panel or undo it in "Recent changes".
+- Each turn adds one small-model call, run in the background (about 6 seconds), so you don't wait. You can record every few turns instead.
+- Codex has no "deliver rules by file" mechanism, so ReqTree uses an index plus top-ups; see [docs/codex.md](docs/codex.md).
+- Developed on Windows; macOS and Linux are covered by automated tests.
 
-## Command line
+## For developers
 
-```bash
-node bin/reqtree.js init    <project>          # enable: install hooks, compile rules
-node bin/reqtree.js tree    需求树.md           # print the whole tree
-node bin/reqtree.js rules   需求树.md C2.1      # the rules in effect for one requirement
-node bin/reqtree.js compile 需求树.md           # compile by hand (normally automatic)
-node bin/reqtree.js check   需求树.md           # duplicate IDs and rules, requirements without files, stale 🔨
-node bin/reqtree.js check   需求树.md --fix     # check-up of rules, memory and docs (--no-model skips the model, --no-memory skips memory, --full re-checks everything)
-node bin/reqtree.js questions 需求树.md         # questions waiting for you
-node bin/reqtree.js answer  需求树.md <question ID> <option number|dismiss>
-node bin/reqtree.js map     需求树.md           # rebuild the code map (normally automatic)
-node bin/reqtree.js who     需求树.md add_money  # where a function, class or signal is defined and who uses it (or give a file path)
-```
-
-**Note:** don't force-reinstall the extension from the command line (`code --install-extension --force`) while Claude Code is running in VS Code. It restarts the extension host, and Claude Code restarts with it.
-
-## Development
+How it's built and why, see [docs/architecture.md](docs/architecture.md) (Chinese).
 
 ```bash
 node --test test/*.test.js        # all automated tests (UI tests need Edge or Chrome)
-node test/eval-recorder.js 3      # evaluate the recorder with the real Haiku model (costs a little)
-node test/eval-confusion.js 2     # the with/without comparison (about 200 model calls)
+node bin/reqtree.js               # command-line usage
 ```
+
+**Note**: don't force-reinstall the extension from the command line (`code --install-extension --force`) while using Claude Code. It restarts VS Code's extension host, and Claude Code restarts with it.
 
 ## License
 
