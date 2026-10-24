@@ -307,23 +307,46 @@ class Panel {
       const go = await vscode.window.showInformationMessage(T('q.checkPlan', plan.notes.length, plan.docs.length, plan.calls), { modal: true }, T('q.checkGo'));
       if (go !== T('q.checkGo')) return;
     }
-    const run = () => runCheckup(p, { read: currentText, write: writeTree, memory, parts, full });
+    const run = bar => runCheckup(p, { read: currentText, write: writeTree, memory, parts, full,
+      progress: (i, n) => { if (bar && n > 1) bar.report({ message: `${i}/${n}` }); } });
     const r = vscode.window.withProgress && vscode.ProgressLocation
       ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('q.checking') }, run)
       : await run();
     this.load();
-    if (r.error) vscode.window.showWarningMessage(T('q.checkFail', errText(r.error)));
-    const asked = r.questions.length + r.stale.length + r.memory.length + (r.scope || []).length + (r.docs || []).length;
-    vscode.window.showInformationMessage(T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length));
-    if (r.noFiles && r.noFiles.length) vscode.window.showWarningMessage(T('q.noFiles', r.noFiles));
-    if (r.missing && r.missing.length) vscode.window.showWarningMessage(T('q.missing', r.missing));
-    if (r.docMissing && r.docMissing.length) vscode.window.showWarningMessage(T('q.docMissing', r.docMissing));
-    if (r.docUnlinked && r.docUnlinked.length) vscode.window.showInformationMessage(T('q.docUnlinked', r.docUnlinked));
-    if (r.docDup && r.docDup.length) vscode.window.showInformationMessage(T('q.docDup', r.docDup));
-    if (r.toDoc && r.toDoc.length) vscode.window.showInformationMessage(T('q.toDoc', r.toDoc));
+    const newQs = [...r.questions, ...r.stale, ...r.memory, ...(r.scope || []), ...(r.docs || [])];
+    const asked = newQs.length;
+    // 结果写成一份报告（通知过几秒就收起，报告随时能再打开）
+    const notes = [];
+    if (r.error) notes.push(T('q.checkFail', errText(r.error), r.checked.failed, r.checked.calls));
+    if (r.noFiles && r.noFiles.length) notes.push(T('q.noFiles', r.noFiles));
+    if (r.missing && r.missing.length) notes.push(T('q.missing', r.missing));
+    if (r.docMissing && r.docMissing.length) notes.push(T('q.docMissing', r.docMissing));
+    if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
+    if (r.docDup && r.docDup.length) notes.push(T('q.docDup', r.docDup) + '\n' + r.docDup.map(d => `  - ${d.doc}：${d.text}（${d.node}）`).join('\n'));
+    if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
+    const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length);
+    const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
+    if (asked) report.push(T('q.reportQuestions', asked), '', ...newQs.map(q => `- ${qText(q)}`), '');
+    if (notes.length) report.push(T('q.reportNotes'), '', ...notes.map(n => `- ${n}`), '');
+    if (!asked && !notes.length) report.push(T('q.reportNone'), '');
+    const reportFile = store.metaFile(p, 'checkup-report.md');
+    try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, report.join('\n')); } catch {}
+    const buttons = [T('q.report'), ...(asked ? [T('q.answer')] : [])];
+    const show = r.error ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
+    Promise.resolve(show(r.error ? `${done}\n${notes[0]}` : done, ...buttons)).then(b => {
+      if (b === T('q.report')) vscode.window.showTextDocument(vscode.Uri.file(reportFile));
+      else if (b === T('q.answer')) this.questionsCommand();
+    }, () => {});
     // 不弹通知的设置下，用户刚主动体检、正等着结果：直接打开问题列表
     if (asked && askMode() !== 'notify') await this.questionsCommand();
     return r;
+  }
+
+  // 命令「需求树：查看体检报告」：打开上次体检写下的报告（.reqtree/checkup-report.md）
+  async reportCommand() {
+    const f = findTrees().map(t => store.metaFile(t, 'checkup-report.md')).find(x => fs.existsSync(x));
+    if (!f) { vscode.window.showInformationMessage(T('q.noReport')); return; }
+    await vscode.window.showTextDocument(vscode.Uri.file(f));
   }
 
   // 面板上的编辑操作（树行和详情面板都发 edit 消息）。按需求 ID 定位（不怕文件被改过导致行号错位），
@@ -460,6 +483,7 @@ class Panel {
       case 'ready': return this.push();
       case 'openMap': return this.openMap();
       case 'checkup': return this.checkupCommand();
+      case 'checkupReport': return this.reportCommand();
       case 'create': return create();
       case 'openDoc': {
         // 打开需求挂的文档；只开项目里的文件
@@ -547,6 +571,7 @@ function activate(context) {
     vscode.commands.registerCommand('reqtree.enable', () => enableCommand(panel)),
     vscode.commands.registerCommand('reqtree.questions', () => panel.questionsCommand()),
     vscode.commands.registerCommand('reqtree.checkup', () => panel.checkupCommand()),
+    vscode.commands.registerCommand('reqtree.checkupReport', () => panel.reportCommand()),
   );
   // 改了 reqtree.language：界面马上换语言
   if (vscode.workspace.onDidChangeConfiguration) {

@@ -14,6 +14,7 @@
   "config.language.en": "English",
   "cmd.questions": "ReqTree: Questions waiting for you",
   "cmd.checkup": "ReqTree: Check-up",
+  "cmd.checkupReport": "ReqTree: Last check-up report",
   "config.askQuestions": "When the recorder is unsure (does a rule cover the whole project or just this part, does it replace an old rule, is a requirement done), it records the most likely option and asks you.",
   "config.askQuestions.notify": "Ask with a notification (it does not block you)",
   "config.askQuestions.panel": "Only show the count on the side bar icon; answer with \"ReqTree: Questions waiting for you\"",

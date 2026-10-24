@@ -2,7 +2,7 @@
   "name": "reqtree",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "publisher": "shidipeng",
   "license": "MIT",
   "repository": {
@@ -84,6 +84,10 @@
       {
         "command": "reqtree.checkup",
         "title": "%cmd.checkup%"
+      },
+      {
+        "command": "reqtree.checkupReport",
+        "title": "%cmd.checkupReport%"
       }
     ],
     "menus": {

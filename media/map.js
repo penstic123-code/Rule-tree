@@ -502,6 +502,7 @@
         { label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); if (data) render(); } },
         { label: T('ctx.menu'), run: () => { if (data && data.files.length) D.showContext(file(), { now: data.now, onPick: select }); } },
         { label: T('m.collapseDone'), run: () => runTree('collapseDone') },
+        { label: T('v.checkupReport'), run: () => post({ type: 'checkupReport' }) },
       ]);
       return;
     }

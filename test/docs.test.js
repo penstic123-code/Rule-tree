@@ -101,3 +101,19 @@ test('体检分批：文档很长时切成几段、分几批调用', () => {
   assert.ok(plan.calls >= 3, `calls=${plan.calls}`);
   assert.ok(plan.batches.flat().filter(s => s.name === 'c/_CHAPTERS.md').length >= 5);
 });
+
+test('体检分批：某一批出错（如超时）不停下，后面的批照跑；出错那批的文件下次再看', async () => {
+  const { dir, tree } = project();
+  fs.writeFileSync(path.join(dir, 'c', '_CHAPTERS.md'), '# 长\n' + '第N章的进度记录。'.repeat(8000));
+  const parts = { rules: false, memory: false, docs: true };
+  const calls = checkPlan(tree, { parts }).calls;
+  let n = 0;
+  const seenProgress = [];
+  const r = await runCheckup(tree, { memory: false, parts, progress: (i, total) => seenProgress.push([i, total]),
+    ask: async () => { n++; if (n === 1) throw new Error('调用模型超时'); return { docs: [] }; } });
+  assert.strictEqual(n, calls, '每一批都调用了');
+  assert.strictEqual(r.checked.failed, 1);
+  assert.ok(r.error);
+  assert.strictEqual(seenProgress.length, calls);
+  assert.ok(checkPlan(tree, { parts }).docs.some(d => d.name === 'c/_CHAPTERS.md'), '出错那份下次再看');
+});

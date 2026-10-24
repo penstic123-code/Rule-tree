@@ -14,6 +14,7 @@
   "config.language.en": "英文",
   "cmd.questions": "需求树：待回答的问题",
   "cmd.checkup": "需求树：体检",
+  "cmd.checkupReport": "需求树：查看体检报告",
   "config.askQuestions": "记录员拿不准的时候（管全项目还是只管这一块、是不是取代旧规则、需求做完没有），先按最可能的记下，再问你。",
   "config.askQuestions.notify": "弹通知问（不挡操作）",
   "config.askQuestions.panel": "只在侧栏图标上显示个数，用「需求树：待回答的问题」回答",

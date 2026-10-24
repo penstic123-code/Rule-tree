@@ -183,6 +183,8 @@ function docPlan(items, { text, shown, asked, count = 0 }) {
 const BATCH_CHARS = 30000;
 const PIECE_CHARS = 12000;
 const SEEN_FILE = 'checkup-seen.json';
+// 体检一批内容多，每次调用等得比记录员久
+const CHECK_TIMEOUT_MS = +process.env.REQTREE_CHECK_TIMEOUT_MS || 300000;
 const crypto = require('crypto');
 const fingerprint = s => crypto.createHash('md5').update(s).digest('hex');
 const readSeen = treePath => { try { return JSON.parse(fs.readFileSync(store.metaFile(treePath, SEEN_FILE), 'utf8')) || {}; } catch { return {}; } };
@@ -436,19 +438,20 @@ const log = msg => { try { require('../hooks/recorder').log(msg); } catch {} };
 // model：false 时不调用模型；ask：调用模型的函数（测试可以换）；
 // memory：自动记忆文件夹，不传就按项目找（src/memory.js），false 不查记忆（设置 reqtree.memoryMode 为 treeOnly 时）。
 // parts：查哪几样 { rules 规则（合并重复、冲突、久未动、加载不到、分组）, memory 自动记忆, docs 文档和 CLAUDE.md/AGENTS.md }，不给就全查；
-// full：true 时不管上次查过没有，全部重查。
+// full：true 时不管上次查过没有，全部重查。progress(i, n)：开始第 i 批（共 n 批）时调用，插件拿来显示进度。
+// 某一批出错（多半是超时）不影响其他批；出错那批的内容不记指纹，下次体检再看。
 // 返回 { merged 删掉的重复规则, stale 新加的久未动问题, memory 新加的记忆问题, removed 直接删掉的记忆（已在树或 CLAUDE.md 里）,
 //        scope 新加的「文件找不到」问题, noFiles 规则不会加载的需求 ID, missing 标着 🔨 却找不到文件的需求 [{ node, title, globs }],
 //        categorized 规则分了组的需求 ID（只改面板显示）, questions 新加的冲突问题,
 //        docs 新加的文档问题, docDup 文档里和树重复、可以删的 [{ doc, text, node }], docMissing 挂了却不存在的文档, docUnlinked 没挂的文档,
-//        toDoc 该挪进文档的记忆 [{ file, node, docs }], checked { notes, docs, calls } 这次看了几份、调用几次模型, error 调用模型出错的说明 }
-async function runCheckup(treePath, { read, write, model = true, ask, memory, parts = {}, full = false } = {}) {
+//        toDoc 该挪进文档的记忆 [{ file, node, docs }], checked { notes, docs, calls, failed } 这次看了几份、调用几次模型、几次出错, error 最后一次调用模型出错的说明 }
+async function runCheckup(treePath, { read, write, model = true, ask, memory, parts = {}, full = false, progress } = {}) {
   const rec = require('../hooks/recorder');
   const mem = require('./memory');
   const readText = read || (p => fs.readFileSync(p, 'utf8'));
   const want = { rules: parts.rules !== false, memory: parts.memory !== false && memory !== false, docs: parts.docs !== false };
   const result = { merged: [], stale: [], memory: [], removed: [], scope: [], noFiles: [], missing: [], categorized: [], questions: [],
-    docs: [], docDup: [], docMissing: [], docUnlinked: [], toDoc: [], checked: { notes: 0, docs: 0, calls: 0 }, error: null };
+    docs: [], docDup: [], docMissing: [], docUnlinked: [], toDoc: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
   const projectDir = path.dirname(treePath);
   const asked = new Set(Q.readQuestions(treePath).map(q => q.memKey).filter(Boolean));
 
@@ -488,22 +491,28 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   if (!model) return result;
 
   const plan = checkPlan(treePath, { read: readText, parts: want, full, memory: memDir || false });
-  result.checked = { notes: plan.notes.length, docs: plan.docs.length, calls: plan.calls };
+  result.checked = { notes: plan.notes.length, docs: plan.docs.length, calls: plan.calls, failed: 0 };
   const seen = { ...readSeen(treePath) };
   const saveSeen = () => { try { store.writeJson(store.metaFile(treePath, SEEN_FILE), seen); } catch (e) { rec.log('体检记录没存上：' + e.message); } };
   let claudeMd = '';
   try { claudeMd = clipChars(fs.readFileSync(path.join(projectDir, 'CLAUDE.md'), 'utf8'), CLAUDE_MD_CHARS); } catch {}
   const Cat = require('./categories');
+  const askModel = ask || (p => rec.askJson(p, { timeoutMs: CHECK_TIMEOUT_MS }));
+  const failedNames = new Set();
+  let rulesDone = !want.rules;
   for (let i = 0; i < plan.batches.length; i++) {
     const batch = plan.batches[i];
-    const first = i === 0 && want.rules;
+    // 冲突和分组只查一次：放在第一批，第一批出错就挪到下一批
+    const first = !rulesDone;
+    if (progress) try { progress(i + 1, plan.batches.length); } catch {}
     try {
       const text = readText(treePath);
       const memSegs = batch.filter(s => s.kind === 'mem'), docSegs = batch.filter(s => s.kind === 'doc');
       const prompt = buildCheckPrompt(text, memSegs.map(s => s.block).join('\n\n'), memSegs.length ? claudeMd : '',
         first ? Cat.promptTask(text, Cat.read(treePath)) : '', docSegs.map(s => s.block).join('\n\n'), first);
-      const out = await (ask || rec.askJson)(prompt);
+      const out = await askModel(prompt);
       if (first) {
+        rulesDone = true;
         // 规则分类：只改面板的显示方式
         if (out && Array.isArray(out.categories)) try { result.categorized = Cat.save(treePath, text, out.categories); } catch (e) { rec.log('规则分类没存上：' + e.message); }
         const ctx = { root: parse(text), unmapped: [], user: '' };
@@ -531,20 +540,21 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
       }
       // 这一批看完了：记下指纹，下次没改过就不再看（切成几段的，最后一段看完才记）
       for (const s of batch) {
-        if (s.part && s.part[0] !== s.part[1]) continue;
+        if (failedNames.has(s.name) || (s.part && s.part[0] !== s.part[1])) continue;
         if (s.kind === 'mem') seen[`mem:${s.name}`] = fingerprint(s.note.full);
         else { const d = plan.docs.find(x => x.name === s.name); if (d) seen[`doc:${s.name}`] = fingerprint(d.text); }
       }
       saveSeen();
     } catch (e) {
       result.error = e;
+      result.checked.failed++;
+      for (const s of batch) failedNames.add(s.name);
       rec.log(`体检第 ${i + 1}/${plan.batches.length} 批出错：` + e.stack);
-      // 第一批就没调用成功：记忆至少按字面查一遍重复
-      if (i === 0 && memDir && !result.memory.length && !result.removed.length) literalMemory();
-      break;
     }
   }
-  rec.log(`体检：看了 ${plan.notes.length} 份记忆、${plan.docs.length} 份文档，调用模型 ${plan.calls} 次；问用户 ${result.questions.length} 个冲突、${result.memory.length} 个记忆问题、${result.docs.length} 个文档问题；删掉 ${result.removed.length} 份已在树里的记忆`);
+  // 一批都没调用成功：记忆至少按字面查一遍重复
+  if (memDir && plan.calls && result.checked.failed === plan.calls) literalMemory();
+  rec.log(`体检：看了 ${plan.notes.length} 份记忆、${plan.docs.length} 份文档，调用模型 ${plan.calls} 次（出错 ${result.checked.failed} 次）；问用户 ${result.questions.length} 个冲突、${result.memory.length} 个记忆问题、${result.docs.length} 个文档问题；删掉 ${result.removed.length} 份已在树里的记忆`);
   return result;
 }
 

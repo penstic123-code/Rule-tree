@@ -301,7 +301,8 @@
       .concat([{ label: T('v.aiFindings'), checked: cfg.aiFindings !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { aiFindings: cfg.aiFindings === false } }) },
         { label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },
         { label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); render(); } },
-        { label: T('ctx.menu'), run: () => openContext(uri) }]));
+        { label: T('ctx.menu'), run: () => openContext(uri) },
+        { label: T('v.checkupReport'), run: () => post({ type: 'checkupReport' }) }]));
   }
 
   // 拖动分隔条调整树的高度（详情占剩下的）

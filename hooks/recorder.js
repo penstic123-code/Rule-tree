@@ -275,7 +275,7 @@ function killTree(child) {
 }
 
 // 调用 claude。Windows 要经过 shell（claude 是 .cmd）；posix 直接按参数启动，免得路径里的 $、引号被 shell 解释
-function runModel(prompt) {
+function runModel(prompt, timeoutMs = TIMEOUT_MS) {
   return new Promise(resolve => {
     const win = process.platform === 'win32';
     const [file, ...args] = win ? [CLAUDE] : splitCommand(CLAUDE);
@@ -300,7 +300,7 @@ function runModel(prompt) {
       // 不等管道关闭：万一还有孙进程攥着管道，也不能把记录员挂住
       for (const s of [child.stdout, child.stderr, child.stdin]) try { s.destroy(); } catch {}
       finish({ timedOut: true });
-    }, TIMEOUT_MS);
+    }, timeoutMs);
   });
 }
 
@@ -308,9 +308,10 @@ function runModel(prompt) {
 const fail = (message, k, ...a) => Object.assign(new Error(message), { t: { k, a } });
 
 // 调用模型，返回它输出的 JSON 对象
-async function askJson(prompt) {
-  const res = await runModel(prompt);
-  if (res.timedOut) throw fail(`调用模型超时（${Math.round(TIMEOUT_MS / 1000)} 秒没有返回）`, 'rec.err.timeout', Math.round(TIMEOUT_MS / 1000));
+// timeoutMs：等多久（体检一批内容多，等得久些）
+async function askJson(prompt, { timeoutMs = TIMEOUT_MS } = {}) {
+  const res = await runModel(prompt, timeoutMs);
+  if (res.timedOut) throw fail(`调用模型超时（${Math.round(timeoutMs / 1000)} 秒没有返回）`, 'rec.err.timeout', Math.round(timeoutMs / 1000));
   if (res.error) throw fail(`调用模型失败：${res.error.message}`, 'rec.err.spawn', res.error.message);
   if (res.status !== 0) {
     const out = (res.stderr || res.stdout || '').trim().slice(0, 200);
