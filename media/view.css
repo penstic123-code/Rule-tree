@@ -219,6 +219,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .menu button { display: flex; align-items: center; width: 100%; gap: var(--sp-2); border: 0; background: none; padding: 5px var(--sp-2); border-radius: var(--r-ctl); text-align: left; font-size: 13px; }
 .menu button:hover, .menu button:focus-visible { background: var(--vscode-menu-selectionBackground, var(--c-hover)); color: var(--vscode-menu-selectionForeground, inherit); }
 .menu button.danger { color: var(--danger); }
+.menu .sub { margin-left: auto; display: inline-flex; opacity: .7; }
 .menu .tick { width: 12px; display: inline-flex; color: var(--c-text); }
 /* 状态菜单：「完成」的符号本身就是勾，不再用勾标当前项；当前项加粗、垫一层淡底（高对比度主题再加一圈边） */
 .menu.st-menu { min-width: 136px; }

@@ -54,7 +54,7 @@
     // 侧栏
     'v.noTree': '当前工作区里没有找到需求树文件（<code>需求树.md</code> 或 <code>*.tree.md</code>）。', 'v.create': '新建需求树',
     'x.askDisable': name => `在「${name}」停用需求树？会去掉 hook 和编译出的规则文件，AI 不再按需求树加载规则，记录员也不再记。需求树.md 和改动记录留着，以后在命令面板运行「需求树：在本项目启用」就恢复。`, 'x.disable': '停用', 'x.disabled': '需求树已停用。需求树.md 还在，想恢复就运行「需求树：在本项目启用」。', 'x.notEnabled': '这个项目没有启用需求树。', 'v.disable': '在本项目停用需求树…',
-    'v.recEvery': n => `每 ${n} 轮记一次`, 'v.codeMap': '生成代码地图', 'v.principles': '写入动手原则',
+    'v.recEvery': n => `每 ${n} 轮记一次`, 'v.grpRecorder': '记录员', 'v.grpAi': '给 AI 的内容', 'v.grpView': '显示', 'v.askUnsure': '拿不准时问我', 'v.questions': '拿不准的事…', 'v.codeMap': '生成代码地图', 'v.principles': '写入动手原则',
     'v.doneRow': n => `✓ 已完成 ${n} 个`, 'v.hideDoneRow': '收起已完成', 'v.hideDone': '收起已完成的需求',
     'v.orderStatus': '排序：按状态（进行中在上）', 'v.orderRecent': '排序：按最近改动', 'v.orderTree': '排序：按树里的顺序',
     'v.recTip': '记录员每轮回复结束后整理一次', 'v.recPaused': '记录员已暂停',
@@ -253,7 +253,7 @@
     'ctx.loads': n => ` · loaded ${n} times`, 'ctx.agents': n => ` · used by ${n} agents`, 'ctx.menu': 'Context usage…',
     'v.noTree': 'No requirement tree in this workspace (<code>需求树.md</code> or <code>*.tree.md</code>).', 'v.create': 'Create a requirement tree',
     'x.askDisable': name => `Disable RuleTree in "${name}"? This removes its hooks and compiled rule files, so the AI no longer loads rules from the tree and the recorder stops. 需求树.md and the change log stay; run "RuleTree: Enable in this project" to turn it back on.`, 'x.disable': 'Disable', 'x.disabled': 'RuleTree is disabled. The tree file is still there; run "RuleTree: Enable in this project" to turn it back on.', 'x.notEnabled': "RuleTree isn't enabled in this project.", 'v.disable': 'Disable RuleTree in this project…',
-    'v.recEvery': n => `Record every ${n} turns`, 'v.codeMap': 'Build the code map', 'v.principles': 'Include working principles',
+    'v.recEvery': n => `Record every ${n} turns`, 'v.grpRecorder': 'Recorder', 'v.grpAi': 'What the AI gets', 'v.grpView': 'View', 'v.askUnsure': 'Ask me when unsure', 'v.questions': 'Open questions…', 'v.codeMap': 'Build the code map', 'v.principles': 'Include working principles',
     'v.doneRow': n => `✓ ${n} done`, 'v.hideDoneRow': 'Hide done', 'v.hideDone': 'Collapse finished requirements',
     'v.orderStatus': 'Sort by status (in progress first)', 'v.orderRecent': 'Sort by recent changes', 'v.orderTree': 'Sort as in the tree',
     'v.recTip': 'The recorder tidies up after each AI reply', 'v.recPaused': 'Recorder paused',

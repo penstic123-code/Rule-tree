@@ -160,9 +160,9 @@ test('state.json：多个进程同时读改写，一条都不丢', async () => {
 test('config.json：只认 recorder 一个开关，面板传来别的键（如旧的 confirm）不写', () => {
   const dir = project();
   const tree = path.join(dir, '需求树.md');
-  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'turn', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
+  assert.deepStrictEqual(store.readConfig(tree), { recorder: 'turn', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true, askUnsure: true });
   store.writeConfig(tree, { recorder: 'off', confirm: true, junk: 1 });
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8')), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true, askUnsure: true });
 });
 
 test('state.lock 被崩溃的进程留下：很快判定失效，写状态不报错', () => {
@@ -610,6 +610,23 @@ test('hook：Stop 不写会话状态文件（避免和下一轮的 UserPromptSub
   assert.match(calls[1].input, /用户：就按你说的/);
 });
 
+test('hook：AI 干活时用户连说几句，上次记录之后的每一句都交给记录员（以前只给最后 2 句，前面的漏记）', async () => {
+  const dir = project();
+  const s = sid();
+  const log = path.join(dir, 'fake.log');
+  const env = { REQTREE_CLAUDE_CMD: `"${process.execPath}" "${FAKE}"`, FAKE_LOG: log };
+  const waitRecorder = async n => { for (let i = 0; i < 100 && !(fs.existsSync(log) && fs.readFileSync(log, 'utf8').trim().split('\n').length >= n); i++) await new Promise(r => setTimeout(r, 100)); };
+  hook(dir, { hook_event_name: 'UserPromptSubmit', session_id: s, prompt: '首页要先放一张总图' }, env);
+  hook(dir, { hook_event_name: 'Stop', session_id: s, last_assistant_message: '好的' }, env);
+  await waitRecorder(1);
+  for (const p of ['图太少文字太多', '图上不要用行话', '实验要写清想知道什么', '快点']) hook(dir, { hook_event_name: 'UserPromptSubmit', session_id: s, prompt: p }, env);
+  hook(dir, { hook_event_name: 'Stop', session_id: s, last_assistant_message: '改好了' }, env);
+  await waitRecorder(2);
+  const input = fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse)[1].input;
+  for (const p of ['图太少文字太多', '图上不要用行话', '实验要写清想知道什么']) assert.match(input, new RegExp(`还没记过[\\s\\S]*${p}`), `漏了：${p}`);
+  assert.match(input, /只作上下文[\s\S]*首页要先放一张总图/, '上一次记过的只作上下文');
+});
+
 test('check：只读，不写配置', () => {
   const dir = project();
   const res = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'reqtree.js'), 'check', path.join(dir, '需求树.md')], { encoding: 'utf8' });
@@ -719,7 +736,7 @@ test('插件：确认模式的消息（accept/reject/moveUp/acceptAll/rejectAll�
     for (const type of ['accept', 'reject', 'moveUp', 'acceptAll', 'rejectAll']) await panel.handle({ type, uri, line, expect: TREE.split('\n')[line] });
     assert.strictEqual(fs.readFileSync(tree, 'utf8'), TREE, '这些消息不该再改树');
     await panel.handle({ type: 'setConfig', uri, patch: { confirm: true, recorder: 'off' } });
-    assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true });
+    assert.deepStrictEqual(store.readConfig(tree), { recorder: 'off', sweepEvery: 8, aiFindings: true, principles: true, recordEvery: 1, codeMap: true, askUnsure: true });
     assert.ok(!('confirm' in JSON.parse(fs.readFileSync(store.metaFile(tree, 'config.json'), 'utf8'))));
     // 面板拿到行号后，树的上方被插了一行：按原文找回来
     const raw = TREE.split('\n')[1];

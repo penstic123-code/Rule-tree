@@ -141,7 +141,8 @@ const stateLock = treePath => metaFile(treePath, 'state.lock');
 // aiFindings：AI 在回复里说出的、以后还用得上的做法和坑也记成规则（开头标「（AI 发现）」），默认开
 // principles：总目录里写「动手原则」（遇到 bug 先找根因、写新东西前先看项目里有没有），默认开
 // recordEvery：每几轮交给记录员一次（1 = 每轮；N 轮攒起来一起记，省调用）；codeMap：生成代码地图
-const DEFAULT_CONFIG = { recorder: 'turn', recordEvery: 1, sweepEvery: 8, aiFindings: true, principles: true, codeMap: true };
+// askUnsure：记录员、体检拿不准的也问用户（先按最可能的做法写进去，用户改选再换），默认开
+const DEFAULT_CONFIG = { recorder: 'turn', recordEvery: 1, sweepEvery: 8, aiFindings: true, principles: true, codeMap: true, askUnsure: true };
 const pickConfig = c => Object.fromEntries(Object.keys(DEFAULT_CONFIG).map(k => [k, c[k] === undefined ? DEFAULT_CONFIG[k] : c[k]]));
 const rawConfig = treePath => readJson(metaFile(treePath, 'config.json'), null);
 const readConfig = treePath => pickConfig(rawConfig(treePath) || {});

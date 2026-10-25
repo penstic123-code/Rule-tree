@@ -80,6 +80,8 @@ function realPath(p) {
 }
 
 // 叫 readSession，别和 store.readState（.reqtree/state.json）混
+const KEEP_TURNS = 20;
+
 function readSession(file) {
   const s = store.readJson(file, null) || {};
   // 旧版本写的状态文件缺字段，不能假设格式
@@ -218,9 +220,8 @@ function main(input, trace) {
     }
     if (input.prompt) {
       const start = Date.now();
-      // 留最近几轮给记录员：每 N 轮记一次时要留 N 轮
-      const keep = Math.max(2, Math.min(20, Number(store.readConfig(treePath).recordEvery) || 1));
-      st.turns = [...st.turns, { user: input.prompt, ai: '', start }].slice(-keep);
+      // 上次记录员之后用户说的每一句都要交给它：AI 干活时用户插的话也走这里，一轮可能攒好几句，所以多留一些
+      st.turns = [...st.turns, { user: input.prompt, ai: '', start }].slice(-KEEP_TURNS);
       st.recent = [...st.recent, { user: input.prompt.slice(0, RECENT_CLIP), start }].slice(-RECENT_MAX);
     }
     // 编译失败时，原生规则文件可能是旧的。面板上有红色提示，但不开面板的人看不到：
@@ -345,8 +346,12 @@ function main(input, trace) {
       trace.pending = count;
     } else {
       if (pending) try { fs.unlinkSync(pendingFile); } catch {}
-      const batch = Math.min(count, turns.length);
-      startRecorder({ treePath, turns: turns.slice(-Math.max(batch, 2)), batch, transcriptPath: input.transcript_path, touched, unmapped, focus, ...(sweep ? { sweep } : {}), ...(memory.length ? { memory } : {}) });
+      // 上次交给记录员之后的每一句（.rec 只有 Stop 写，不和 UserPromptSubmit 抢文件）
+      const recFile = stateFile(treePath, input.session_id, '.rec');
+      const doneAt = (store.readJson(recFile, null) || {}).at || 0;
+      const batch = Math.max(1, turns.filter(t => t.start > doneAt).length);
+      if (turn) store.writeJson(recFile, { at: turn.start });
+      startRecorder({ treePath, turns: turns.slice(-(batch + 1)), batch, transcriptPath: input.transcript_path, touched, unmapped, focus, ...(sweep ? { sweep } : {}), ...(memory.length ? { memory } : {}) });
     }
     if (touched.length) try { store.touch(treePath, touched); } catch (e) { trace.touchError = e.message; }
     store.trimActivity(treePath);

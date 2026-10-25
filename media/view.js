@@ -324,22 +324,24 @@
     const cfg = data.files.find(f => f.uri === uri)?.config || {};
     // 记录频率：每轮 / 每 3 轮（攒起来一起记）/ 暂停。设置只在这里改（写进项目的 .reqtree/config.json，hook 读那里）
     const every = Number(cfg.recordEvery) || 1, off = cfg.recorder === 'off';
+    const flag = (key, label) => ({ label, checked: cfg[key] !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { [key]: cfg[key] === false } }) });
+    // 开关多了一级放不下：按管什么分成三组二级菜单，常用的报告和停用留在第一级
     D.showMenu(anchor, [
-      [1, T('v.recTurn'), !off && every === 1],
-      [3, T('v.recEvery', 3), !off && every === 3],
-      [0, T('v.recOff'), off],
-    ].map(([n, label, on]) => ({ label, checked: on, radio: true, data: { v: String(n) }, run: () => post({ type: 'setConfig', uri, patch: n ? { recorder: 'turn', recordEvery: n } : { recorder: 'off' } }) }))
+      { label: T('v.grpRecorder'), sub: [
+        ...[[1, T('v.recTurn'), !off && every === 1], [3, T('v.recEvery', 3), !off && every === 3], [0, T('v.recOff'), off]]
+          .map(([n, label, on]) => ({ label, checked: on, radio: true, data: { v: String(n) }, run: () => post({ type: 'setConfig', uri, patch: n ? { recorder: 'turn', recordEvery: n } : { recorder: 'off' } }) })),
+        flag('aiFindings', T('v.aiFindings')),
+        flag('askUnsure', T('v.askUnsure')),
+        { label: T('v.questions'), run: () => post({ type: 'questions' }) }] },
+      { label: T('v.grpAi'), sub: [flag('codeMap', T('v.codeMap')), flag('principles', T('v.principles')), { label: T('ctx.menu'), run: () => openContext(uri) }] },
       // 跟随 AI 默认开着，开关放在设置里（以前在顶栏占一个大按钮，用户觉得没必要）
-      .concat([{ label: T('v.aiFindings'), checked: cfg.aiFindings !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { aiFindings: cfg.aiFindings === false } }) },
-        { label: T('v.codeMap'), checked: cfg.codeMap !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { codeMap: cfg.codeMap === false } }) },
-        { label: T('v.principles'), checked: cfg.principles !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { principles: cfg.principles === false } }) },
+      { label: T('v.grpView'), sub: [
         { label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },
         { label: T('showIds'), checked: showIds, toggle: true, run: () => { showIds = !showIds; persist(); render(); } },
         { label: T('v.hideDone'), checked: hideDone, toggle: true, run: () => { hideDone = !hideDone; persist(); render(); } },
-        ...[['status', T('v.orderStatus')], ['recent', T('v.orderRecent')], ['tree', T('v.orderTree')]].map(([v, label]) => ({ label, checked: order === v, radio: true, run: () => { order = v; persist(); render(); } })),
-        { label: T('ctx.menu'), run: () => openContext(uri) },
-        { label: T('v.checkupReport'), run: () => post({ type: 'checkupReport' }) },
-        { label: T('v.disable'), run: () => post({ type: 'disable' }) }]));
+        ...[['status', T('v.orderStatus')], ['recent', T('v.orderRecent')], ['tree', T('v.orderTree')]].map(([v, label]) => ({ label, checked: order === v, radio: true, run: () => { order = v; persist(); render(); } }))] },
+      { label: T('v.checkupReport'), run: () => post({ type: 'checkupReport' }) },
+      { label: T('v.disable'), run: () => post({ type: 'disable' }) }]);
   }
 
   // 拖动分隔条调整树的高度（详情占剩下的）

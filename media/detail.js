@@ -421,7 +421,7 @@
     if (a && a.hasAttribute('aria-expanded')) a.setAttribute('aria-expanded', 'false');
     if (refocus && a && a.isConnected) a.focus();
   }
-  // items: [{ label, danger, run }]；opts：{ align: 'left' 左对齐（默认右对齐），label: 菜单的可访问名称，cls: 菜单多加的 class }
+  // items: [{ label, danger, run }]；有 sub 的是二级菜单：点它换成那一组，最上面一项「‹ 名字」回上一级。opts：{ align: 'left' 左对齐（默认右对齐），label: 菜单的可访问名称，cls: 菜单多加的 class }
   function showMenu(anchor, items, opts = {}) {
     closeMenu();
     const m = document.createElement('div');
@@ -433,7 +433,7 @@
     m.innerHTML = items.map((it, i) => {
       const radio = 'checked' in it;
       const attrs = Object.entries(it.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
-      return `<button role="${radio ? (it.toggle ? 'menuitemcheckbox' : 'menuitemradio') : 'menuitem'}"${radio ? ` aria-checked="${!!it.checked}"` : ''} data-i="${i}"${attrs}${it.danger ? ' class="danger"' : ''}>${radio ? `<span class="tick">${it.checked ? icon('check', 12) : ''}</span>` : ''}${it.html || esc(it.label)}</button>`;
+      return `<button role="${radio ? (it.toggle ? 'menuitemcheckbox' : 'menuitemradio') : 'menuitem'}"${radio ? ` aria-checked="${!!it.checked}"` : ''}${it.sub ? ' aria-haspopup="menu"' : ''} data-i="${i}"${attrs}${it.danger ? ' class="danger"' : ''}>${radio ? `<span class="tick">${it.checked ? icon('check', 12) : ''}</span>` : ''}${it.html || esc(it.label)}${it.sub ? `<span class="sub">${icon('chev', 12)}</span>` : ''}</button>`;
     }).join('');
     document.body.appendChild(m);
     placeMenu(m, anchor, opts.align);
@@ -441,8 +441,10 @@
       const b = ev.target.closest('button');
       ev.stopPropagation();
       if (!b) return;
+      const it = items[+b.dataset.i];
+      if (it.sub) { showMenu(anchor, [{ label: '‹ ' + it.label, run: () => showMenu(anchor, items, opts) }, ...it.sub], opts); return; }
       closeMenu(true);
-      items[+b.dataset.i].run();
+      it.run();
     });
     // 方向键在菜单里上下移动（到头了绕回来），Home / End 到第一项、最后一项；Tab 关菜单回到按钮
     m.addEventListener('keydown', ev => {

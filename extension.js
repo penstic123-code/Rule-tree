@@ -559,6 +559,7 @@ class Panel {
       case 'openMap': return this.openMap();
       case 'checkup': return this.checkupCommand();
       case 'checkupReport': return this.reportCommand();
+      case 'questions': return this.questionsCommand();
       case 'create': return create(this);
       case 'disable': return vscode.commands.executeCommand('reqtree.disable');
       case 'openDoc': {

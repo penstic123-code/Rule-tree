@@ -22,16 +22,18 @@ const STALE_OPEN_MAX = 3;
 const newId = () => 'q' + store.newChangeId();
 
 // 直接改还是问：记录员、体检的每个判断都走这里，别处不再各自定（以前散在六处，说法一处一个样）。
-// 用户定下的（2026-10-25「为什么老问我」）：只有默认做法要改掉、删掉一条「决定：」才问，问的时候先不动它；
-// 别的（管哪个范围、取代还是补充、哪边新）都按最可能的做法直接改，可以撤销，不问。
-// 拿不准的（q.unsure 模型说没把握、q.partial 内容没看全）选「不动」那个选项，也不问。
+// 要改掉、删掉一条「决定：」的总是问，问的时候先不动它。
+// 拿不准的（q.confirm 记录员拿不准、按最可能的做法写了；q.unsure 体检没把握，选「不动」）只在 askUnsure 开着时问（项目设置，默认开）：默认做法照样先写进去，用户改选再换，不挡着干活。
+// 别的（模型有把握的）直接改，可以撤销，不问；q.partial 内容没看全的不动、不问。
 // 🔨 久未动的问题不走这里：做完没有只有用户知道，staleQuestions 直接开着问。
 // 返回 { ask, default }
-function decide(q, text) {
+function decide(q, text, { askUnsure = false } = {}) {
   const keep = q.options.findIndex(o => !o.ops.length);
   if (changesDecision(text, q.options[q.default].ops)) return { ask: true, default: keep >= 0 ? keep : q.default };
-  if ((q.unsure || q.partial) && keep >= 0) return { ask: false, default: keep };
-  return { ask: false, default: q.default };
+  // 没看全是长度限制，问用户也帮不上：不动、不问
+  if (q.partial && keep >= 0) return { ask: false, default: keep };
+  if (q.unsure && keep >= 0) return { ask: !!askUnsure, default: keep };
+  return { ask: !!askUnsure && !!q.confirm, default: q.default };
 }
 // 这些改动里有没有改掉、删掉、在下级推翻一条「决定：」
 function changesDecision(text, ops) {

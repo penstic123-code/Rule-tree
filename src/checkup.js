@@ -605,7 +605,7 @@ const log = msg => { try { require('../hooks/recorder').log(msg); } catch {} };
 // 一点都没做成（规则早就在树里或早被改掉了）时不问（没事可做），记成关掉，下次不再提；要改「决定：」的照样开着问。
 // 返回 { question 开着的问题, auto 自动处理的问题（没做成时为 null）, applied }
 async function settle(treePath, q0, { write, read }) {
-  const d = Q.decide(q0, (read || (p => fs.readFileSync(p, 'utf8')))(treePath));
+  const d = Q.decide(q0, (read || (p => fs.readFileSync(p, 'utf8')))(treePath), { askUnsure: store.readConfig(treePath).askUnsure });
   const q = { ...q0, default: d.default };
   const opt = q.options[q.default] || { ops: [] };
   let changeId = null, applied = [];

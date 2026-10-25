@@ -244,6 +244,14 @@ const ICON_CHECK = `
     .map(b => b.outerHTML.slice(0, 80));`;
 
 // Node 20 要加 --experimental-websocket 才有全局 WebSocket
+// 设置菜单分了二级：在第一级和每个二级菜单里找文字符合的那一项（找到就停在那一级）；MENU_ALL 列出所有项的文字
+const MENU_PICK = `((test) => { const btns = () => [...document.querySelectorAll('.menu button')];
+  let b = btns().find(x => test(x.textContent)); if (b) return b;
+  const subs = btns().map((x, i) => (x.getAttribute('aria-haspopup') ? i : -1)).filter(i => i >= 0);
+  for (const i of subs) { btns()[i].click(); b = btns().find(x => test(x.textContent)); if (b) return b; btns()[0].click(); } })`;
+const MENU_ALL = `(() => { const btns = () => [...document.querySelectorAll('.menu button')];
+  const out = btns().map(x => x.textContent); const subs = btns().map((x, i) => (x.getAttribute('aria-haspopup') ? i : -1)).filter(i => i >= 0);
+  for (const i of subs) { btns()[i].click(); out.push(...btns().slice(1).map(x => x.textContent)); btns()[0].click(); } return out; })()`;
 const skip = (!BROWSER && '没有找到 Edge 或 Chrome') || (typeof WebSocket === 'undefined' && '这个 Node 没有全局 WebSocket（Node 20 要加 --experimental-websocket）');
 
 for (const theme of ['dark', 'light']) {
@@ -322,8 +330,9 @@ for (const theme of ['dark', 'light']) {
           document.querySelector('.row[data-key$="#C2"] .twisty').click();
           const rowsAfter = document.querySelectorAll('.row').length;
           document.querySelector('.gear[data-act="settings"]').click();
+          const labels = ${MENU_ALL};
+          ${MENU_PICK}(t => t === '记录员').click();
           const items = [...document.querySelectorAll('.menu button[data-v]')].map(x => x.getAttribute('aria-checked'));
-          const labels = [...document.querySelectorAll('.menu button')].map(x => x.textContent);
           document.querySelectorAll('.menu button[data-v]')[2].click();
           const cfg = window.__posted.filter(m => m.type === 'setConfig').pop();
           return { posted: window.__posted.map(m => m.type), all: window.__posted, sel, rowsAfter, aiCollapsed: !!document.querySelector('.row[data-key$="#C2"] .chip.ai svg.ico-ai'), items, labels, cfg };`);
@@ -1023,7 +1032,7 @@ test('跟随 AI（侧栏）：默认开着，开关在齿轮菜单里；自动�
   // 侧栏矮一点，树滚得动；C2 先折叠，C2.3 藏在里面
   const opts = { selId: 'G1', height: 330, state: { collapsed: [U('C2')], detailHeight: 120 } };
   // 打开齿轮菜单，找到「跟随 AI」那一项
-  const FOLLOW_ITEM = `(document.querySelector('.statusbar [data-act="settings"]').click(), [...document.querySelectorAll('.menu button')].find(x => x.textContent.includes('跟随 AI')))`;
+  const FOLLOW_ITEM = `(document.querySelector('.statusbar [data-act="settings"]').click(), ${MENU_PICK}(t => t.includes('跟随 AI')))`;
   const inView = id => `(() => { const row = document.querySelector('.row[data-key$="#${id}"]'); if (!row) return false; const r = row.getBoundingClientRect(), t = document.querySelector('.tree').getBoundingClientRect(); return r.top >= t.top - 1 && r.bottom <= t.bottom + 1; })()`;
   for (const reduced of [false, true]) {
     const b = await openPage2(`polish-follow-${reduced ? 'reduced' : 'smooth'}.html`, opts, 300, { reduced });
@@ -1214,7 +1223,7 @@ test('编号默认不显示：标题悬停提示里有编号，⋯ 菜单能复�
       out.menu = [...document.querySelectorAll('.menu button')].map(x => x.textContent);
       document.querySelector('.dp [data-act="more"]').click();
       document.querySelector('.gear[data-act="settings"]').click();
-      const t = [...document.querySelectorAll('.menu button')].find(x => x.textContent.includes('显示编号'));
+      const t = ${MENU_PICK}(t => t.includes('显示编号'));
       out.role = t.getAttribute('role') + ':' + t.getAttribute('aria-checked');
       t.click();
       out.after = count(); out.saved = window.__state.showIds;
@@ -1298,7 +1307,7 @@ test('上下文用量：⚙ 和导图 ⋯ 里能打开；会话可以切；常�
     try {
       const r = await b.eval(`${CONTRAST}
         document.querySelector('.gear[data-act="settings"]').click();
-        [...document.querySelectorAll('.menu button')].find(x => x.textContent.includes('上下文用量')).click();
+        ${MENU_PICK}(t => t.includes('上下文用量')).click();
         const box = document.querySelector('.ctx');
         const rows = () => [...box.querySelectorAll('.ctx-row')].map(r => ({ kind: r.classList.contains('ctx-resident') ? 'r' : 'd', name: r.querySelector('.ctx-main > :first-child').textContent, chars: +r.querySelector('.ctx-chars').textContent.replace(/[^0-9]/g, ''), why: r.querySelector('.ctx-why').textContent }));
         const out = { dialog: box.getAttribute('role'), options: [...box.querySelectorAll('select option')].map(o => o.textContent),
@@ -1314,7 +1323,7 @@ test('上下文用量：⚙ 和导图 ⋯ 里能打开；会话可以切；常�
         out.after = { open: !!document.querySelector('.ctx-ov'), title: document.querySelector('.dp .sh-title strong').textContent };
         // Esc 关闭（不影响别的）
         document.querySelector('.gear[data-act="settings"]').click();
-        [...document.querySelectorAll('.menu button')].find(x => x.textContent.includes('上下文用量')).click();
+        ${MENU_PICK}(t => t.includes('上下文用量')).click();
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         out.esc = !document.querySelector('.ctx-ov');
         out.errors = window.__errors;
@@ -1395,8 +1404,8 @@ test('英文界面：侧栏、详情、导图、菜单、上下文用量里都�
         // 菜单和上下文用量也查
         const opener = document.querySelector('.gear[data-act="settings"]') || document.querySelector('[data-act="mapMore"]');
         opener.click();
-        out.menu = [...document.querySelectorAll('.menu button')].map(x => x.textContent);
-        [...document.querySelectorAll('.menu button')].find(x => /Context usage/.test(x.textContent)).click();
+        out.menu = ${MENU_ALL};
+        ${MENU_PICK}(t => /Context usage/.test(t)).click();
         out.ctx = document.querySelector('.ctx-nums').textContent.replace(/\\s+/g, ' ').trim();
         { ${SCAN} out.withCtx = bad; }
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

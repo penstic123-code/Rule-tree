@@ -170,7 +170,8 @@ function pickQuestions(raw, { text, before = [], ops = [], ctx, allowed = ALLOWE
 function recordQuestions(treePath, questions, source = '记录员') {
   let applied = [], queued = 0, skipped = [], asked = 0;
   for (const q0 of questions) {
-    const d = Q.decide(q0, fs.readFileSync(treePath, 'utf8'));
+    // 记录员给的问题除了要改「决定：」的，都是它拿不准的（见 buildPrompt 第 4 条）
+    const d = Q.decide({ ...q0, confirm: true }, fs.readFileSync(treePath, 'utf8'), { askUnsure: store.readConfig(treePath).askUnsure });
     const q = { ...q0, default: d.default };
     const id = Q.newId();
     const ops = q.options[q.default].ops;
@@ -220,11 +221,14 @@ function isTrivial(msg) {
 
 // notes：这一轮 AI 写进自动记忆的笔记 [{ file, text }]（hook 从 PostToolUse 记下的，见 job.memory）
 // focus：这个会话正在做的需求（最近改过它的文件、或用户点名过的，新的在前）。用户的话默认是对它说的
-// batch：每 N 轮记一次时，这次交来的轮数（大于 1 时前面几轮也还没记过，和最新一轮一样都要看）
-function buildPrompt(tree, turns, touched, unmapped, notes = [], aiFindings = false, focus = [], batch = 1) {
+// batch：这次交来的、还没记过的句数（最后 batch 句：AI 干活时用户插的话、每 N 轮记一次攒下的都算），再前面的只作上下文
+// askUnsure：拿不准的放进 questions 问用户（先按最可能的做法写进去）；关着时直接按最可能的改、不问
+function buildPrompt(tree, turns, touched, unmapped, notes = [], aiFindings = false, focus = [], batch = 1, askUnsure = false) {
   const latest = turns[turns.length - 1];
-  const earlier = turns.slice(0, -1).map(t => `用户：${t.user}\nAI：${t.ai}`);
-  const earlierTag = batch > 1 ? '之前几轮（还没记过，和最新一轮一样都要看）' : '更早的对话（只作上下文）';
+  const fmt = t => `用户：${t.user}${t.ai ? `\nAI：${t.ai}` : ''}`;
+  const fresh = Math.max(1, Math.min(batch, turns.length));
+  const blocks = [['更早的对话（只作上下文，已经记过）', turns.slice(0, -fresh)], ['之后用户又说的话（还没记过，和最新一轮一样都要看；AI 干活时用户插的话也在这里）', turns.slice(-fresh, -1)]]
+    .filter(([, ts]) => ts.length).map(([tag, ts]) => `\n<${tag}>\n${ts.map(fmt).join('\n---\n')}\n</${tag}>\n`).join('');
   const noteBlock = notes.length ? `\n<这一轮 AI 写进它自己的自动记忆的笔记>\n${notes.map(n => `文件 ${n.file}：\n${n.text}`).join('\n---\n')}\n</这一轮 AI 写进它自己的自动记忆的笔记>\n` : '';
   const noteTask = notes.length ? `
 5. 自动记忆只该记和项目内容无关的事（用户本人的情况、工具和电脑环境、私人信息、外部资源在哪）。上面某份笔记整份都是这个项目的需求或规则时：先确保需求树里有（已有同一件事就不加；没有就照第 1 条加或改写），再输出 {"op":"memory_absorb","file":"文件名"} 删掉这份笔记。笔记里混着和项目无关的内容，或者拿不准的，不动它。` : '';
@@ -233,7 +237,7 @@ function buildPrompt(tree, turns, touched, unmapped, notes = [], aiFindings = fa
 <需求树>
 ${tree}
 </需求树>
-${earlier.length ? `\n<${earlierTag}>\n${earlier.join('\n---\n')}\n</${earlierTag}>\n` : ''}
+${blocks}
 <最新一轮>
 用户：${latest.user}
 AI：${latest.ai}
@@ -262,12 +266,14 @@ ${focus.length ? `\n这个会话正在做的需求（新的在前）：${focus.j
      没有「正在做的需求」时，按规则说的内容挂在管辖范围最小的节点上。
    - 子需求要在本范围内推翻上级的规则时，用 override_rule（node 是子需求，from 是上级 ID，text 是上级原文，new 是新内容）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
-   - 用户在几种做法之间拍板（技术方案、架构、结构、取舍），记成以「决定：」开头的规则，一句话写清选了什么、为什么。例：「决定：系统之间用 EventBus 传事件，不互相直接调用（方便单独测试每个系统）」。AI 提的方案，用户明确同意了也算。对话里没说原因就只写选了什么，不要编原因。
+   - 用户在几种做法之间拍板（技术方案、架构、结构、取舍），记成以「决定：」开头的规则，一句话写清选了什么、为什么。例：「决定：系统之间用 EventBus 传事件，不互相直接调用（方便单独测试每个系统）」。AI 提的方案，用户明确同意了也算。用户在几个候选里选定一个（名字、标题、对外的文案、配色、「选第 1 个」），也是决定，写清选了哪个原文。对话里没说原因就只写选了什么，不要编原因。
+   - 用户对产出的批评和改进意见，以后同类产出都适用的（「图太少、文字太多」「读者看不懂这个词」「不要写空话」），也是长期要求，挂在管这类产出的需求上。
 ${aiFindings ? `   - AI 在这一轮回复里明确说出的、以后改这块还用得上的做法或坑（例：「qa.mjs 必须传绝对路径，相对路径会静默得到空结果」「这个接口要先登录再调」），用户没有反对的，也记成规则，挂在对应需求上，规则开头写「（AI 发现）」。只记确定的、能照着做的；这一轮的进展、猜测、一次性的修复步骤不记。
 ` : ''}2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，也不问。
 3. 没归属的文件如果明显属于某个需求，用 add_files 给出 glob（如 DataScience/ch02-*.html）；拿不准就不给。
-4. 拿不准时不要问，按最可能的做法直接写进 ops：管哪个范围拿不准就挂在当前需求上；取代还是补充拿不准就以用户最新的话为准；做完没有拿不准就不改。改动都能撤销，用户不想被问。
-   只有一种情况问：用户的新说法和一条以「决定：」开头的规则对不上，却没明说要改掉它（明说了就直接改）。这时这条改动不写进 ops，在 questions 里问：text 是一句简短的问题，options 是 2–3 种做法（label 几个字，ops 是这种做法完整的改动；「先不改」那项 ops 为空），default 是「先不改」那项的序号（从 0 起）。${noteTask}
+${askUnsure ? `4. 有把握的直接写进 ops。拿不准的（是不是长期要求、挂在哪个需求、取代还是补充旧规则、做完了没有）不写进 ops，放进 questions：default 是最可能的那种做法（会先照它写进去，不耽误干活），再给 1–2 种别的做法让用户改选（挂到别的需求；或者「不记」，ops 为空）。每轮最多问 ${MAX_QUESTIONS} 件，明显的事别问。
+   另外，` : `4. 拿不准时不要问，按最可能的做法直接写进 ops：管哪个范围拿不准就挂在当前需求上；取代还是补充拿不准就以用户最新的话为准；做完没有拿不准就不改。改动都能撤销，用户不想被问。
+   只有一种情况问：`}用户的新说法和一条以「决定：」开头的规则对不上，却没明说要改掉它（明说了就直接改）。这时这条改动不写进 ops，在 questions 里问（这种总是问）：text 是一句简短的问题，options 是 2–3 种做法（label 几个字，ops 是这种做法完整的改动；「先不改」那项 ops 为空），default 是「先不改」那项的序号（从 0 起）。${noteTask}
 
 只输出 JSON，不要任何别的文字；没有改动就输出 {"ops":[]}：
 {"ops":[{"op":"replace_rule","node":"ID","old":"树里原文","text":"新内容"},{"op":"add_rule","node":"ID","key":"可选","text":"...","file":"这条规则管的一个文件"},{"op":"remove_rule","node":"ID","text":"原文"},{"op":"override_rule","node":"子需求ID","from":"上级ID","text":"上级原文","new":"新内容"},{"op":"add_node","parent":"ID","id":"新ID","title":"..."},{"op":"set_status","node":"ID","status":"done 或 question"},{"op":"add_files","node":"ID","globs":["..."]}],
@@ -473,7 +479,7 @@ async function main(jobPath) {
     if (turns.length && config.recorder !== 'off' && (!isTrivial(latest) || notes.length || ((job.batch || 1) > 1 && turns.some(t => !isTrivial(t.user))))) {
       const lines = text.split(/\r?\n/).length;
       const tree = lines > BIG_TREE_LINES ? outline(text, [...new Set([...touched, ...(job.focus || [])])]) : text;
-      const out = await askJson(buildPrompt(tree, turns, touched, unmapped, notes, config.aiFindings !== false, job.focus || [], job.batch || 1));
+      const out = await askJson(buildPrompt(tree, turns, touched, unmapped, notes, config.aiFindings !== false, job.focus || [], job.batch || 1, config.askUnsure !== false));
       if (!Array.isArray(out.ops) && !Array.isArray(out.questions)) throw fail('模型返回的 JSON 里没有 ops', 'rec.err.noOps');
       // memory_absorb 只认这一轮写过的笔记；换成删整份记忆（先备份，可撤销）
       const own = new Map(notes.map(n => [n.file, n]));

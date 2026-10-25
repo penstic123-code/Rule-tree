@@ -250,6 +250,7 @@ test('状态：明确做完 → 完成；待定 → ❓；拿不准是否做完 
   assert.match(read(tree), /### C1\.1 第1章 ✅/);
   assert.match(read(tree), /### C1\.5 第5章 ❓/);
   const p2 = project();
+  store.writeConfig(p2.tree, { askUnsure: false });
   const doneQ = { text: '「第1章」看起来做完了，标成完成？', options: [{ label: '完成', ops: [{ op: 'set_status', node: 'C1.1', status: 'done' }] }, { label: '还没', ops: [] }], default: 1 };
   const { status } = runRecorder(p2.dir, { ops: [], questions: [doneQ] }, { turns: [{ user: '第1章的练习写好了', ai: '练习部分完成了' }] });
   assert.ok(status.ok);
@@ -259,8 +260,9 @@ test('状态：明确做完 → 完成；待定 → ❓；拿不准是否做完 
   assert.deepStrictEqual(status.parts.map(p => p.k), ['rec.none']);
 });
 
-test('不问范围：没碰到「决定：」的问题（只管这一章还是全项目）按默认做法直接改，不开着问，可以撤销', () => {
+test('关掉「拿不准时问我」：没碰到「决定：」的问题（只管这一章还是全项目）按默认做法直接改，不开着问，可以撤销', () => {
   const { dir, tree } = project(TREE.replace('决定：', ''));
+  store.writeConfig(tree, { askUnsure: false });
   const q = { text: '「例子配插图」只管第1章，还是全项目？', options: [
     { label: '只第1章', ops: [{ op: 'add_rule', node: 'C1.1', text: '例子配插图' }] },
     { label: '全项目', ops: [{ op: 'add_rule', node: 'P', text: '例子配插图' }] }], default: 0 };
@@ -275,6 +277,21 @@ test('不问范围：没碰到「决定：」的问题（只管这一章还是�
   assert.ok(!read(tree).includes('例子配插图'));
 });
 
+test('拿不准时问我（默认开）：最可能的做法先写进去，问题开着；改选别的就换过来', async () => {
+  const { dir, tree } = project(TREE.replace('决定：', ''));
+  const q = { text: '「例子配插图」只管第1章，还是全项目？', options: [
+    { label: '只第1章', ops: [{ op: 'add_rule', node: 'C1.1', text: '例子配插图' }] },
+    { label: '全项目', ops: [{ op: 'add_rule', node: 'P', text: '例子配插图' }] }], default: 0 };
+  const { status } = runRecorder(dir, { ops: [], questions: [q] });
+  assert.ok(status.parts.some(p => p.k === 'rec.asked'));
+  assert.match(read(tree), /- 开场用霍乱\r?\n- 例子配插图/, '先按最可能的写进去');
+  const [open] = Q.openQuestions(tree);
+  await Q.answerQuestion(tree, open.id, 1);
+  assert.match(read(tree), /^- 例子配插图$/m);
+  assert.ok(!/- 开场用霍乱\r?\n- 例子配插图/.test(read(tree)), '改选后第1章那条撤掉');
+  assert.ok(rec.buildPrompt(TREE, [{ user: 'x', ai: 'y' }], [], [], [], false, [], 1, true).includes('放进 questions'));
+});
+
 test('Q.decide：改掉、删掉、在下级推翻「决定：」才问，问的时候默认不动；模型没把握或没看全的选「不动」；别的直接改', () => {
   const text = '# P x\n- 决定：用 EventBus\n- 段落短\n\n## C1 课\n- 手账风\n';
   const opts = ops => [{ label: 'a', ops }, { label: '不动', ops: [] }];
@@ -285,6 +302,9 @@ test('Q.decide：改掉、删掉、在下级推翻「决定：」才问，问的
   assert.deepStrictEqual(d([{ op: 'replace_rule', node: 'P', old: '段落短', text: '段落更短' }]), { ask: false, default: 0 });
   assert.deepStrictEqual(d([{ op: 'add_rule', node: 'C1', text: '决定：配色用暖色' }]), { ask: false, default: 0 }, '新加一条决定不算改');
   assert.deepStrictEqual(d([{ op: 'remove_rule', node: 'C1', text: '手账风' }], { unsure: true }), { ask: false, default: 1 });
+  assert.deepStrictEqual(Q.decide({ options: opts([{ op: 'remove_rule', node: 'C1', text: '手账风' }]), default: 0, unsure: true }, text, { askUnsure: true }), { ask: true, default: 1 });
+  assert.deepStrictEqual(Q.decide({ options: opts([{ op: 'add_rule', node: 'C1', text: '配图' }]), default: 0, confirm: true }, text, { askUnsure: true }), { ask: true, default: 0 });
+  assert.deepStrictEqual(Q.decide({ options: opts([{ op: 'add_rule', node: 'C1', text: '配图' }]), default: 0, confirm: true }, text), { ask: false, default: 0 });
   assert.deepStrictEqual(d([{ op: 'memory_remove', file: 'a.md' }], { partial: true }), { ask: false, default: 1 });
 });
 
