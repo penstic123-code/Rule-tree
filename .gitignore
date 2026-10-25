@@ -7,3 +7,7 @@ _review/
 早安汇总.md
 推广/
 设计-需求树与记忆.md
+
+# README 配图的渲染中间产物（源码在 docs/images/src/*.src.js，node mk.js 生成）
+docs/images/src/*.html
+docs/images/src/out/

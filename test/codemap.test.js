@@ -66,9 +66,24 @@ test('Node 模块：对外的是 module.exports 的键，别的函数不列；�
   assert.deepStrictEqual(js.members.exports, ['decide', 'readAll']);
   assert.deepStrictEqual(js.globals, []);
   C.refresh(path.join(dir, '需求树.md'), { targets: { claude: true } });
-  const map = fs.readFileSync(path.join(dir, '.claude', 'rules', 'reqtree', 'map-L1.md'), 'utf8');
+  const map = fs.readFileSync(path.join(dir, '.reqtree', 'map', 'L1.md'), 'utf8');
   assert.match(map, /`lib\/q\.js`（被 1 个文件用） 对外：decide、readAll\n/);
   assert.ok(!/helper|FAKE|fake/.test(map), map);
+});
+
+test('Node 文件：exports.a = … 也算对外；用 require 却没有导出的是直接运行的脚本，不列对外', () => {
+  assert.deepStrictEqual(C.readJs("exports.run = () => {};\nmodule.exports.stop = function () {};\n").members.exports, ['run', 'stop']);
+  assert.deepStrictEqual(C.readJs("function main() {}\nmodule.exports = main;\n").members.exports, ['main']);
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'n-'));
+  write(dir, {
+    'hooks/hook.js': "const fs = require('fs');\nconst lib = require('../lib/q');\nfunction stateFile() {}\nfunction main() { lib.go(); }\n",
+    'lib/q.js': "function go() {}\nmodule.exports = { go };\n",
+    '需求树.md': '# P x\n\n## H1 钩子\n> 文件：hooks/**, lib/**\n- 吞掉异常\n',
+  });
+  assert.strictEqual(C.readJs(fs.readFileSync(path.join(dir, 'hooks/hook.js'), 'utf8')).script, true);
+  C.refresh(path.join(dir, '需求树.md'), { targets: { claude: true } });
+  const map = fs.readFileSync(path.join(dir, '.reqtree', 'map', 'H1.md'), 'utf8');
+  assert.ok(!/stateFile/.test(map), map);
 });
 
 test('建图：单例、class_name、场景挂的脚本都算引用；Godot 的 addons 不看', () => {
@@ -100,30 +115,31 @@ test('网页：每门课各有一个 window.ILLUS，算到同一门课的那个�
   assert.deepStrictEqual(users('b/js/common.js'), ['b/ch01.html'], '只有脚本里的调用算');
 });
 
-test('重建地图：每个需求一份（同样的 paths），写了外部依赖和信号；编译不删地图；没用了的地图删掉；总目录写上查名字的命令', () => {
+test('重建地图：每个需求一份写在 .reqtree/map/（不自动加载），写了外部依赖和信号；编译不删地图；没用了的地图删掉；总目录指路、写上查名字的命令', () => {
   const { dir, tree } = godot();
   compile(tree, { targets: { claude: true } });
   const r = C.refresh(tree, { targets: { claude: true } });
   assert.deepStrictEqual(r.nodes.sort(), ['G1', 'S1'], '按文件类型横切的 X1 不出地图');
-  const rules = path.join(dir, '.claude', 'rules', 'reqtree');
-  const g1 = fs.readFileSync(path.join(rules, 'map-G1.md'), 'utf8');
-  assert.match(g1, /^---\npaths:\n  - "game\/gameplay\/\*\*"\n---/);
+  const rules = path.join(dir, '.claude', 'rules', 'reqtree'), maps = path.join(dir, '.reqtree', 'map');
+  const g1 = fs.readFileSync(path.join(maps, 'G1.md'), 'utf8');
+  assert.match(g1, /适用文件：`game\/gameplay\/\*\*`/);
+  assert.ok(!fs.readdirSync(rules).some(n => /^(map-|_map)/.test(n)), '不放进按路径自动加载的规则文件夹');
   assert.match(g1, /`game\/gameplay\/shop\.gd`（被 1 个文件用） 一家店。对外：Shop、buy/);
   assert.match(g1, /这块用到的外部模块：[\s\S]*`game\/systems\/economy\.gd`（这块有 2 个文件用） 钱和账本。对外：Economy\.add_money/);
   assert.match(g1, /监听的信号：EventBus\.day_started/);
   assert.match(g1, /codemap\.js who 名字/);
-  const glob = fs.readFileSync(path.join(rules, '_map.md'), 'utf8');
+  const glob = fs.readFileSync(path.join(maps, '_map.md'), 'utf8');
   assert.match(glob, /自动加载的单例（全局可用，按使用多少排）：(Economy、EventBus|EventBus、Economy)$/m);
-  assert.match(fs.readFileSync(path.join(rules, '_index.md'), 'utf8'), /codemap\.js who 名字/, '第一次建完重新编译了总目录');
+  assert.match(fs.readFileSync(path.join(rules, '_index.md'), 'utf8'), /\.reqtree\/map\/<需求编号>\.md[\s\S]*codemap\.js who 名字/, '第一次建完重新编译了总目录，指路到地图');
   // 编译不删地图；内容没变不重写
   compile(tree, { targets: { claude: true } });
-  assert.ok(fs.existsSync(path.join(rules, 'map-G1.md')));
+  assert.ok(fs.existsSync(path.join(maps, 'G1.md')));
   assert.deepStrictEqual(C.refresh(tree, { targets: { claude: true } }).written, []);
   // 需求删掉了，它的地图也删
   fs.writeFileSync(tree, '# P 游戏\n\n## S1 系统\n> 文件：game/systems/**\n');
   const r2 = C.refresh(tree, { targets: { claude: true } });
-  assert.ok(!fs.existsSync(path.join(rules, 'map-G1.md')));
-  assert.ok(r2.removed.some(p => p.endsWith('map-G1.md')));
+  assert.ok(!fs.existsSync(path.join(maps, 'G1.md')));
+  assert.ok(r2.removed.some(p => p.endsWith('G1.md')));
 });
 
 test('查名字：定义在哪、谁在用；信号分成发出和监听；查文件：被谁用', () => {

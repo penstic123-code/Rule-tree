@@ -220,7 +220,9 @@ function setCompileStatus(treePath, ok, message, t = null) {
 function compileUnlocked(treePath, force) {
   try {
     const r = force ? compile(treePath) : ensureCompiled(treePath);
-    setCompileStatus(treePath, true, '');
+    // 规则文件写了，但有一部分没更新（Codex 的 AGENTS.md 托管块不完整）：也算失败，面板和 hook 会提醒
+    if (r && r.errors && r.errors.length) setCompileStatus(treePath, false, r.errors.join('；'));
+    else setCompileStatus(treePath, true, '');
     return r;
   } catch (e) {
     setCompileStatus(treePath, false, e.message, e.t || null);
@@ -369,7 +371,7 @@ function writeThen(treePath, update, write, after) {
   return Promise.resolve(write(treePath, update)).then(after);
 }
 
-// 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你' | '体检' | '初始化'。
+// 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你' | '体检' | '初始化' | '整理'。
 // id：这条改动记录用的编号（问题要记下默认做法是哪条改动，之后好撤销）；不给就新起一个。
 // 返回生效的改动（数组），数组上另挂 skipped：没做成的改动和原因（见 parser.applyOps）
 // 改记忆文件、文档的操作（memory_*，见 src/memory.js；doc_*，见 src/docs.js）不改树，和树的改动记成同一条。

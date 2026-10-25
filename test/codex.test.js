@@ -17,6 +17,7 @@ const codex = require('../src/targets/codex');
 const inst = require('../src/targets/codex-install');
 const { compile, ensureCompiled, targetsOf } = require('../src/compile');
 const { parse } = require('../src/parser');
+const store = require('../src/store');
 
 const ROOT = path.join(__dirname, '..');
 const HOOK = path.join(ROOT, 'hooks', 'codex-hook.js');
@@ -231,6 +232,11 @@ test('apply_patch 补丁里的文件、命令行里的路径、写文件命令',
   assert.ok(codex.isWriteCommand(`[System.IO.File]::WriteAllText($p, $c)`));
   assert.ok(codex.isWriteCommand(`sed -i 's/a/b/' x.html`));
   assert.ok(!codex.isWriteCommand(`Get-Content -Raw 'a.html' | Select-String '<p>x</p>'`), 'HTML 里的 > 不算写');
+  assert.ok(!codex.isWriteCommand(`Select-String "rm" a.js`), '引号里的 rm 是要找的词');
+  assert.ok(!codex.isWriteCommand(`grep tee x.html`));
+  assert.ok(codex.isWriteCommand(`Get-Content a.txt | Out-File b.txt`));
+  assert.ok(codex.isWriteCommand(`powershell -NoProfile -Command "Set-Content -Path a.html -Value x"`));
+  assert.ok(codex.isWriteCommand(`cd web && rm old.html`));
 });
 
 test('unitsForFiles：上级范围包住下级时两份都给；别的需求的不给', () => {
@@ -339,4 +345,36 @@ test('记录员：没有根据的 add_files 丢掉（已覆盖的文件、用户
   // 多个 glob 只留有根据的
   assert.deepStrictEqual(filterAddFiles([{ op: 'add_files', node: 'C9', globs: ['notes/*.md', 'misc/*.txt'] }], { root, unmapped: ['notes/a.md'] }),
     [{ op: 'add_files', node: 'C9', globs: ['notes/*.md'] }]);
+});
+
+test('编译失败的提醒（hook.js 给的）Codex 也收到；托管块不完整算编译失败', () => {
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'cf-'));
+  fs.writeFileSync(path.join(dir, '需求树.md'), '# P x\n- 全局规则\n');
+  fs.mkdirSync(path.join(dir, '.reqtree'));
+  fs.writeFileSync(path.join(dir, '.reqtree', 'codex.json'), '{}');
+  fs.writeFileSync(path.join(dir, 'AGENTS.md'), `# 我的\n${codex.BEGIN}\n旧的\n`);
+  const tree = path.join(dir, '需求树.md');
+  store.compileTree(tree, { force: true });
+  assert.strictEqual(store.readCompileStatus(tree).ok, false);
+  assert.match(store.readCompileStatus(tree).message, /不完整/);
+  const out = runHook({ hook_event_name: 'UserPromptSubmit', session_id: 'cf1', cwd: dir, prompt: '改一下首页' });
+  assert.match(out.hookSpecificOutput.additionalContext, /需求树编译失败/);
+});
+
+test('只装了 Codex 的项目：挂的文档改了也重编（行号、目录不过时）', () => {
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'cd-'));
+  fs.mkdirSync(path.join(dir, 'c'));
+  fs.writeFileSync(path.join(dir, 'c', 'rules.md'), '# 课\n用途：课的规则\n');
+  fs.writeFileSync(path.join(dir, '需求树.md'), '# P x\n\n## C1 课\n> 文件：c/**\n> 文档：c/rules.md\n- 每章配图\n');
+  fs.mkdirSync(path.join(dir, '.reqtree'));
+  fs.writeFileSync(path.join(dir, '.reqtree', 'codex.json'), '{}');
+  const tree = path.join(dir, '需求树.md');
+  assert.deepStrictEqual(targetsOf(dir), { claude: false, codex: true });
+  compile(tree);
+  assert.strictEqual(ensureCompiled(tree), null);
+  const later = new Date(Date.now() + 60000);
+  fs.writeFileSync(path.join(dir, 'c', 'rules.md'), '# 课\n用途：课的规则（改过）\n');
+  fs.utimesSync(path.join(dir, 'c', 'rules.md'), later, later);
+  assert.ok(ensureCompiled(tree), '文档改过要重编');
+  assert.match(fs.readFileSync(path.join(dir, '.reqtree', 'rules', 'C1.md'), 'utf8'), /改过/);
 });

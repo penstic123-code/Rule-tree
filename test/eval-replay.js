@@ -291,12 +291,14 @@ ${arm}-${run} 超过上限 $${cap}，停在第 ${m.n} 条`); break; }
         const c = courseById(m.course) || courseById(sessionCourse[m.session]);
         const touched = c ? [c.id] : [];
         const view = tree.split('\n').length > 200 ? outline(tree, touched) : tree;
-        const t = await call('haiku', recorder.buildPrompt(view, turns, touched, []), `B-play-${arm}`);
+        // 和真实的记录员一样：这门课是「正在做的需求」，模型给的规则管哪些文件交给 placeByFile 核对（0.19 起）
+        const t = await call('haiku', recorder.buildPrompt(view, turns, touched, [], [], false, touched), `B-play-${arm}`);
         const j = looseJson(t);
         if (!j || !Array.isArray(j.ops)) entry.fail = true;
         else {
           let ops = j.ops.filter(o => o && ALLOWED_OPS.has(o.op));
           ops = recorder.filterAddFiles(ops, { root: parse(tree), unmapped: [], user: m.user });
+          ops = recorder.placeByFile(ops, { root: parse(tree), focus: touched });
           const r = applyOps(tree, ops);
           tree = r.text;
           entry.ops = r.applied.map(a => { const { undo, ...x } = a; return x; });

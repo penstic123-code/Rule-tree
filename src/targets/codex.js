@@ -19,7 +19,7 @@ const Docs = require('../docs');
 const RULES_DIR = path.join('.reqtree', 'rules');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 .reqtree/rules/_index.md 里；输出格式变了就加 1（同 compile.js 的 FORMAT）
-const FORMAT = '<!-- reqtree:codex-format 7 -->';
+const FORMAT = '<!-- reqtree:codex-format 9 -->';
 const BEGIN = '<!-- reqtree:begin -->';
 const END = '<!-- reqtree:end -->';
 // 安装过 Codex 目标的标记，也存记录员的模型设置（用户可以手改）
@@ -81,11 +81,10 @@ function renderBlock(root, treeName, us, docLine = () => '', opts = {}) {
     `本项目的需求和规则统一记在 ${treeName}：标题是需求，结尾 ✅完成 🔨进行中 ⏳待做 ❓待定；标题下的列表项是规则。这一段由需求树自动生成，不要手改；规则要改就改 ${treeName}。`,
   ];
   if (doing.length) lines.push(`进行中：${doing.join('、')}。`);
-  lines.push('用户提出的长期要求由后台记录员在每轮结束后写进需求树，你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。');
-  lines.push('项目的长期要求和规则只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 AGENTS.md，免得同一条规则记两处。');
-  lines.push('规则里以「决定：」开头的，是用户拍板定下的做法和理由。不要自己推翻；觉得该改，先问用户。');
-  if (opts.principles !== false) lines.push(require('../compile').PRINCIPLES);
-  if (opts.who) lines.push(`改代码前先读代码地图：\`.reqtree/map/<需求ID>.md\` 是那个需求的文件里已经有的代码和依赖，\`.reqtree/map/_map.md\` 是全项目的公共模块。${opts.who}`);
+  const { guideLines, PRINCIPLES } = require('../compile');
+  lines.push(...guideLines('AGENTS.md'));
+  if (opts.principles !== false) lines.push(PRINCIPLES);
+  if (opts.who) lines.push(require('../compile').MAP_LINE + opts.who);
   const rootDocs = root.children.filter(isRoot).map(docLine).filter(Boolean);
   if (glob.length || rootDocs.length) {
     lines.push('', '### 全局规则', '', ...rootDocs.map(l => `- ${l}`));
@@ -161,7 +160,7 @@ function enabled(projectDir) {
 
 // ---------- 编译 ----------
 
-// 返回 { written: [], removed: [], dir, agents, warnings: [] }；written/removed 里的名字带 codex: 前缀，和 Claude 的区分
+// 返回 { written: [], removed: [], dir, agents, warnings: [], errors: [] }（errors：托管块不完整、AGENTS.md 没更新）；written/removed 里的名字带 codex: 前缀，和 Claude 的区分
 function compile(treePath) {
   const projectDir = path.dirname(treePath);
   const treeName = path.basename(treePath);
@@ -172,8 +171,26 @@ function compile(treePath) {
   const files = new Map([['_index.md', `${MARK}\n${FORMAT}\n需求树规则（Codex）。索引在项目根的 AGENTS.md 托管块里。\n`]]);
   for (const u of us) files.set(`${u.id}.md`, renderUnit(u, treeName, docLine));
 
+  const written = [], removed = [], warnings = [], errors = [];
+  writeRuleFiles(dir, files, written, removed);
+  // git worktree 里没有 .reqtree/（不进 git），AGENTS.md 的索引在那里指向的规则文件不存在：每个 worktree 抄一份（同 Claude 的 compile.writeRules）
+  for (const wt of require('../common').worktreesOf(projectDir)) try { writeRuleFiles(path.join(wt, RULES_DIR), files, [], []); } catch {}
+
+  const agents = agentsFile(projectDir);
+  let before = '';
+  try { before = fs.readFileSync(agents, 'utf8'); } catch {}
+  const block = renderBlock(root, treeName, us, docLine, require('../compile').indexOpts(projectDir));
+  const found = findBlock(before);
+  // 块不完整时 AGENTS.md 没更新，Codex 读到的是旧规则：算编译失败（errors），面板和下一句话的提醒都会说；体积大只是提醒
+  if (found && found.broken) errors.push(`${path.basename(agents)} 里需求树的部分不完整（有开始标记 ${BEGIN}，没有结束标记 ${END}），没有更新它；补上结束标记或删掉开始标记后再编译`);
+  const after = upsertBlock(before, block);
+  if (after !== before) { fs.writeFileSync(agents, after); written.push('codex:' + path.basename(agents)); }
+  if (Buffer.byteLength(block) > BLOCK_WARN_BYTES) warnings.push(`AGENTS.md 里需求树的部分有 ${Buffer.byteLength(block)} 字节，Codex 默认只读 AGENTS.md 合计 32 KiB，全局规则太多会被截掉`);
+  return { written, removed, dir, agents, warnings: [...errors, ...warnings], errors };
+}
+
+function writeRuleFiles(dir, files, written, removed) {
   fs.mkdirSync(dir, { recursive: true });
-  const written = [], removed = [], warnings = [];
   for (const [name, text] of files) {
     const p = path.join(dir, name);
     let old = null;
@@ -185,17 +202,6 @@ function compile(treePath) {
     const p = path.join(dir, name);
     if (fs.readFileSync(p, 'utf8').includes(MARK)) { fs.unlinkSync(p); removed.push('codex:' + name); }
   }
-
-  const agents = agentsFile(projectDir);
-  let before = '';
-  try { before = fs.readFileSync(agents, 'utf8'); } catch {}
-  const block = renderBlock(root, treeName, us, docLine, require('../compile').indexOpts(projectDir));
-  const found = findBlock(before);
-  if (found && found.broken) warnings.push(`${path.basename(agents)} 里需求树的部分不完整（有开始标记 ${BEGIN}，没有结束标记 ${END}），没有更新它；补上结束标记或删掉开始标记后再编译`);
-  const after = upsertBlock(before, block);
-  if (after !== before) { fs.writeFileSync(agents, after); written.push('codex:' + path.basename(agents)); }
-  if (Buffer.byteLength(block) > BLOCK_WARN_BYTES) warnings.push(`AGENTS.md 里需求树的部分有 ${Buffer.byteLength(block)} 字节，Codex 默认只读 AGENTS.md 合计 32 KiB，全局规则太多会被截掉`);
-  return { written, removed, dir, agents, warnings };
 }
 
 const stampPath = projectDir => path.join(projectDir, RULES_DIR, '_index.md');
@@ -235,14 +241,16 @@ function shellPaths(command) {
 }
 
 // 命令像不像在写文件。Codex 在 Windows 上常用 PowerShell 改文件（Set-Content、WriteAllText），不走 apply_patch，
-// 只认 apply_patch 会漏掉大部分改动。只看动词，不看 > 号（HTML 片段里到处是 >）
-const WRITE_CMD = /\b(Set-Content|Add-Content|Out-File|WriteAll(?:Text|Bytes|Lines)|New-Item|Copy-Item|Move-Item|Rename-Item|Remove-Item|sed\s+-i|tee|cp|mv|rm|touch)\b|open\([^)]*,\s*['"][wa]/i;
+// 只认 apply_patch 会漏掉大部分改动。只看动词，不看 > 号（HTML 片段里到处是 >）。
+// 动词要在命令的位置（开头、; | & ( 之后、powershell -Command 引号里），不然 `grep tee x.html`、`Select-String "rm" a.js` 这种只读的也算写
+const CMD_AT = String.raw`(?:^|[;&|({\n]|\$\(|\bpowershell(?:\.exe)?\s+(?:-\w+\s+)*?-c(?:ommand)?\s+["']?)\s*`;
+const WRITE_CMD = new RegExp(`${CMD_AT}(?:Set-Content|Add-Content|Out-File|New-Item|Copy-Item|Move-Item|Rename-Item|Remove-Item|sed\\s+(?:-\\w+\\s+)*-i|tee|cp|mv|rm|touch)\\b|\\bWriteAll(?:Text|Bytes|Lines)\\b|open\\([^)]*,\\s*['"][wa]`, 'i');
 const isWriteCommand = command => WRITE_CMD.test(String(command || ''));
 
-// 绝对或相对路径 → 相对项目根、用 / 分隔；不在项目里返回 null
+// 绝对或相对路径 → 相对项目根、用 / 分隔；不在项目里返回 null。在这个项目的 git worktree 里的，按 worktree 的根算
 function relTo(projectDir, cwd, p) {
   const abs = path.resolve(cwd || projectDir, String(p).replace(/^['"]|['"]$/g, ''));
-  const rel = path.relative(projectDir, abs).split(path.sep).join('/');
+  const rel = require('../common').projectRel(projectDir, abs);
   return !rel || rel.startsWith('..') || path.isAbsolute(rel) ? null : rel;
 }
 

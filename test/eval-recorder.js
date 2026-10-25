@@ -4,7 +4,7 @@
 // 会花少量额度，所以不在 node --test 里，手动运行：node test/eval-recorder.js
 const { spawn } = require('child_process');
 const os = require('os');
-const { buildPrompt, buildSweepPrompt, SWEEP_OPS } = require('../hooks/recorder');
+const { buildPrompt, buildSweepPrompt, SWEEP_OPS, placeByFile } = require('../hooks/recorder');
 const { applyOps, parse, findById, walk } = require('../src/parser');
 
 const CLAUDE = process.env.REQTREE_CLAUDE_CMD || 'claude -p --model haiku --strict-mcp-config --no-session-persistence --setting-sources user';
@@ -21,6 +21,24 @@ const TREE = `# P 课程项目
 > 文件：DataScience/ch01-*.html
 - 开场用霍乱的故事
 `;
+
+const GAME_TREE = `# P 小猪进城记
+- 注释用中文
+
+## G1 画面与光影 🔨
+> 文件：game/shaders/**
+- 光照只有一个太阳
+
+## G2 剧情与台词
+> 文件：game/dialogue/**
+- 台词口语化
+
+## G3 店铺
+> 文件：game/shops/**
+- 每家店有自己的招牌色
+`;
+// 代码地图记下的「名字 → 定义它的文件」（公共模块 Tuning 不在里面，见 codemap.refresh）
+const GAME_OWNERS = { ShopHours: 'game/shops/shop_hours.gd' };
 
 const rulesOf = (text, id) => findById(parse(text), id).rules;
 const count = text => [...text.matchAll(/^\s*-\s/gm)].length;
@@ -92,6 +110,24 @@ const CASES = [
     const where = [...walk(parse(t))].find(n => n.rules.some(x => /结论/.test(x.text)));
     return where ? `挂到了 ${where.id}` : '没记下来';
   }, [], ['C2.1']],
+  // 0.19：规则按它管的文件挂。正在调画面时顺口说的台词写法，该挂到管台词文件的需求上（猪猪进城记的真实情况）
+  ['正在调画面：说台词写法挂到台词的需求', 'NPC 台词一句不超过 24 个字', '好的', (ops, t) => {
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /24/.test(x.text)));
+    return !where ? '没记下来' : where.id === 'G2' ? null : `挂到了 ${where.id}`;
+  }, [], ['G1'], { tree: GAME_TREE }],
+  ['正在调画面：画面的话还挂画面', '天空的渐变再柔和一点，以后都这样', '好的，天空渐变调柔和了', (ops, t) => {
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /渐变|柔和/.test(x.text)));
+    return !where ? '没记下来' : where.id === 'G1' ? null : `挂到了 ${where.id}`;
+  }, [], ['G1'], { tree: GAME_TREE }],
+  // 0.20：规则只提到代码里的名字、没说哪块文件时，按代码地图查到的定义文件挂
+  ['正在写台词：只提到 ShopHours 的挂到店铺', '营业时间一律从 ShopHours 取，别在别处自己算', '好的', (ops, t) => {
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /ShopHours/.test(x.text)));
+    return !where ? '没记下来' : where.id === 'G3' ? null : `挂到了 ${where.id}`;
+  }, [], ['G2'], { tree: GAME_TREE, owners: GAME_OWNERS }],
+  ['正在写台词：公共模块 Tuning 的规则不挂到某一块', '玩法数值都从 Tuning 读，不要写死在代码里', '好的', (ops, t) => {
+    const where = [...walk(parse(t))].find(n => n.rules.some(x => /Tuning/.test(x.text)));
+    return !where ? '没记下来' : ['G2', 'G3'].includes(where.id) ? `挂到了 ${where.id}` : null;
+  }, [], ['G2'], { tree: GAME_TREE, owners: GAME_OWNERS }],
 ];
 
 function ask(prompt) {
@@ -124,16 +160,19 @@ const SWEEP_CASES = [
   const runs = Number(process.argv[2]) || 1;
   // 第二个参数：只跑名字里带这几个字的用例（省额度）
   const only = process.argv[3] || '';
-  const one = (name, prompt, check, allowed) => Array.from({ length: runs }, async () => {
+  // game：另一棵树（按规则管的文件核对挂哪，和记录员一样走 placeByFile）
+  const one = (name, prompt, check, allowed, game = null, focus = []) => Array.from({ length: runs }, async () => {
     let ops = await ask(prompt);
     if (!ops) return { name, ok: false, why: '模型没返回 JSON' };
     if (allowed) ops = ops.filter(o => allowed.has(o.op));
-    const { text } = applyOps(TREE, ops);
+    const base = game ? game.tree : TREE;
+    ops = placeByFile(ops, { root: parse(base), focus, owners: game ? game.owners || null : null });
+    const { text } = applyOps(base, ops);
     const why = check(ops, text);
     return { name, ok: !why, why, ops };
   });
   const results = await Promise.all([
-    ...CASES.filter(c => !only || c[0].includes(only)).flatMap(([name, user, ai, check, touched = [], focus = []]) => one(name, buildPrompt(TREE, [{ user, ai }], touched, [], [], false, focus), check)),
+    ...CASES.filter(c => !only || c[0].includes(only)).flatMap(([name, user, ai, check, touched = [], focus = [], game = null]) => one(name, buildPrompt(game ? game.tree : TREE, [{ user, ai }], touched, [], [], false, focus), check, null, game, focus)),
     ...SWEEP_CASES.filter(c => !only || c[0].includes(only)).flatMap(([name, msgs, check]) => one(name, buildSweepPrompt(TREE, msgs), check, SWEEP_OPS)),
   ]);
   let pass = 0;

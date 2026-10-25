@@ -30,7 +30,8 @@ function names(cats) {
   return [...out];
 }
 
-// 模型给的分组 [{ node, groups: [{ name, rules: [树里原文] }] }] → 写进 categories.json。
+// 模型给的分组 [{ node, groups: [{ name, rules: [规则序号] }] }] → 写进 categories.json。序号是 promptTask 列出的、这个需求里第几条（从 1 起）；
+// 也认树里原文。2026-10-25：原来让模型抄原文，小猪进城记 285 条规则光输出就超过 300 秒，体检超时
 // 需求要在树里、规则够多；规则文字对不上的跳过；分类名太长截掉。模型这次分了的需求整个换掉，没分的保留原来的；
 // 树里已经没有的需求顺手删掉。返回分了组的需求 ID
 function save(treePath, text, list) {
@@ -47,7 +48,7 @@ function save(treePath, text, list) {
       if (!g || typeof g.name !== 'string' || !g.name.trim() || !Array.isArray(g.rules)) continue;
       const name = [...g.name.replace(/[\r\n]+/g, ' ').trim()].slice(0, MAX_NAME).join('');
       for (const r of g.rules) {
-        const k = typeof r === 'string' && norm(r);
+        const k = Number.isInteger(r) ? node.rules[r - 1] && norm(node.rules[r - 1].text) : typeof r === 'string' && norm(r);
         if (k && own.has(k) && !map[k]) map[k] = name;
       }
     }
@@ -61,13 +62,15 @@ function save(treePath, text, list) {
   return done;
 }
 
-// 体检提示词里的这一段：哪些需求要分组、已有的分类名
-function promptTask(text, cats) {
-  const big = [...walk(parse(text))].filter(n => n.id && n.rules.length >= MIN_RULES).map(n => n.id);
+// 体检提示词里的这一段：哪些需求要分组、已有的分类名。only：只给这几个需求分（规则变了的；没分过组的也算）
+function promptTask(text, cats, only = null) {
+  const big = [...walk(parse(text))].filter(n => n.id && n.rules.length >= MIN_RULES && (!only || only.has(n.id) || !(cats && cats[n.id])));
   if (!big.length) return '';
   const used = names(cats);
+  const clip = s => { const a = [...s]; return a.length > 60 ? a.slice(0, 60).join('') + '…' : s; };
   return `
-另外给规则多的需求（${big.join('、')}）的规则分组，在面板上分类显示，不改规则本身。每个需求分 2–${MAX_GROUPS} 组，组名 2–4 个字，说清这组管什么（例：画风、写作、互动、练习、工作流、技术），用需求树的语言；同一个意思在全项目用同一个组名${used.length ? `，已有的组名尽量沿用：${used.join('、')}` : ''}。每条规则都放进一组，rules 里写树里的原文（不含 [键]）。写进 categories。
+另外给规则多的需求的规则分组，在面板上分类显示，不改规则本身。每个需求分 2–${MAX_GROUPS} 组，组名 2–4 个字，说清这组管什么（例：画风、写作、互动、练习、工作流、技术），用需求树的语言；同一个意思在全项目用同一个组名${used.length ? `，已有的组名尽量沿用：${used.join('、')}` : ''}。每条规则都放进一组，rules 里只写下面的序号，不抄原文。写进 categories。
+${big.map(n => `${n.id}：${n.rules.map((r, i) => `${i + 1}. ${clip(r.text)}`).join('  ')}`).join('\n')}
 `;
 }
 

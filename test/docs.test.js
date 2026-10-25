@@ -217,10 +217,11 @@ test('体检的参考：进行中的需求、最近改过文件的需求（按�
   const { dir, tree } = project();
   fs.writeFileSync(tree, '# P x\n\n## C1 第一课 🔨\n> 文件：c/**\n- 每章配图\n\n## D1 第二课\n> 文件：d/**\n');
   store.appendActivity(tree, { node: 'R9', file: 'c/ch01.html', time: Date.now() });
+  store.appendActivity(tree, { node: 'D1', file: 'd/old.html', time: Date.now() - 20 * 864e5 });
   store.applyChange(tree, [{ op: 'add_rule', node: 'D1', text: '例子用本地的' }], { source: '记录员' });
   const ctx = contextBlock(tree, fs.readFileSync(tree, 'utf8'));
   assert.match(ctx, /标着进行中的需求：C1 第一课/);
-  assert.match(ctx, /改过文件的需求（新的在前）：C1（\d{4}-\d\d-\d\d）/, '旧编号 R9 按文件算成 C1');
+  assert.match(ctx, /改过文件的需求（新的在前）：C1（\d{4}-\d\d-\d\d）\n/, '旧编号 R9 按文件算成 C1；20 天前改的 D1 不算');
   assert.match(ctx, /- \d{4}-\d\d-\d\d D1「例子用本地的」/);
   const p = buildCheckPrompt(fs.readFileSync(tree, 'utf8'), '', '', '', '', true, ctx);
   assert.match(p, /<时间和正在做的事[^>]*>\n标着进行中的需求/);

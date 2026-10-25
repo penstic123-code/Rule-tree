@@ -3,9 +3,9 @@
 // 设计见 docs/design-info-architecture.md 第五节。用正则读结构（不装 tree-sitter、不调用模型）：
 // aider 的 repo map 和 graphify 都不支持 GDScript，而 Godot 项目正是最需要这张图的。
 //
-// 输出（每份有字数上限，内容没变不重写，免得触发「文件已变更」通知）：
-//   Claude：.claude/rules/reqtree/map-<ID>.md（和需求同样的 paths，原生按需加载）、_map.md（全局，每次加载）
-//   Codex：.reqtree/map/<ID>.md、_map.md（AGENTS.md 的托管块里告诉 AI 去读）
+// 输出（每份有字数上限，内容没变不重写）：.reqtree/map/<ID>.md、_map.md（全项目）。不自动送进 AI 的上下文，
+//   总目录（Claude 的 _index.md、Codex 的 AGENTS.md 托管块）里一句话告诉 AI 在哪，想知道时再读（compile.MAP_LINE）。
+//   算出的依赖关系另有用处：整理时划需求、体检查挂错和过时的名字、记录员按名字挂规则（placement、words、owners）
 // 命令行：node src/codemap.js map <项目目录>       重建
 //         node src/codemap.js who <名字或文件> [目录]  某个名字在哪定义、谁在用；某个文件被谁用
 const fs = require('fs');
@@ -120,6 +120,14 @@ function readJs(text) {
   }
   const me = code.match(/module\.exports\s*=\s*\{/);
   if (me) out.members.exports = objectKeys(objectBody(code, me.index + me[0].length - 1) || '');
+  else {
+    // exports.a = …、module.exports.a = …、module.exports = 某个名字
+    const one = code.match(/module\.exports\s*=\s*([A-Za-z_$][\w$]*)\s*;?\s*$/m);
+    const each = [...code.matchAll(/(?:\bmodule\.)?\bexports\.([A-Za-z_$][\w$]*)\s*=/g)].map(m => m[1]);
+    if (one || each.length) out.members.exports = [...new Set([...(one ? [one[1]] : []), ...each])];
+  }
+  // 用 require 的 Node 文件没有 module.exports：是直接运行的脚本（hook、测试），没有对外的名字
+  out.script = !out.members.exports && /\brequire\s*\(/.test(code) && !/^\s*(import|export)\s/m.test(code);
   return out;
 }
 function findObject(text, name) {
@@ -190,7 +198,9 @@ const ADAPTERS = [
 
 // ---------- 建图 ----------
 // 返回 { files: Map<rel, info>, refs: Map<rel, Set<引用它的 rel>>, memberUse: Map<rel, Map<成员, 用到的文件数>>, defUse: Map<名字, 文件数>, autoloads }
-function build(projectDir) {
+// allWords：words 里再收脚本、配置、数据文件里的名字（体检查过时规则用；重建地图用不着，省得多读几千个数据文件）
+const WORD_FILES = /\.(sh|bash|ps1|bat|cmd|cfg|ini|json|toml|ya?ml|tres|env|mk)$|(^|\/)(Makefile|Dockerfile)$/i;
+function build(projectDir, { allWords = false } = {}) {
   const list = listFiles(projectDir);
   const files = new Map();
   // Godot：res:// 指 project.godot 所在的文件夹；自动加载的单例按名字全局可用
@@ -267,11 +277,14 @@ function build(projectDir) {
     return [...t.matchAll(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map(m => m[1]).join('\n');
   };
   const refs = new Map(), memberUse = new Map(), defUse = new Map();
+  // 代码里出现过的名字（4 个字符以上）：体检查规则里提到的类名、函数名还在不在（src/rulecheck.js）
+  const words = new Set();
   const addRef = (to, from) => { if (to === from) return; if (!refs.has(to)) refs.set(to, new Set()); refs.get(to).add(from); };
   for (const [rel, info] of files) {
     for (const p of info.paths) { const t = exists(p); if (t) addRef(t, rel); }
     const code = codeOf(rel);
     if (!code) continue;
+    for (const m of code.matchAll(/[A-Za-z_][\w]{3,}/g)) words.add(m[0]);
     const usedHere = new Set();
     // 名字前面不能是点或字母（ctx.stroke 里的 stroke 不算）；带一层成员（EventBus.job_finished、DS.toast）
     for (const m of code.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?(\s*\()?/g)) {
@@ -295,7 +308,57 @@ function build(projectDir) {
       if (u && u !== rel && looseNames(rel) && (top(u) === top(rel) || !top(u))) { addRef(u, rel); defUse.set(head, (defUse.get(head) || 0) + 1); }
     }
   }
-  return { files, refs, memberUse, defUse, autoloads };
+  // 名字 → 定义它的文件（只要全项目唯一的：单例、class_name、window.X 只有一处定义的，和上面认的独特函数名）
+  const owners = new Map(uniqueOwner);
+  for (const [name, list] of globalOwners) if (list.length === 1) owners.set(name, list[0]);
+  // 体检查「规则里的名字还在不在」时（allWords），脚本、配置、数据文件里的名字也算：
+  // 2026-10-25 「--affected 需要 TEST_TIMEOUT=7200」被当成过时删了，这个变量其实在 tools/test.sh 里用着
+  if (allWords) {
+    for (const rel of listFiles(projectDir, { any: true }).filter(f => WORD_FILES.test(f))) {
+      try {
+        const p = path.join(projectDir, rel);
+        if (fs.statSync(p).size > MAX_FILE_BYTES) continue;
+        for (const m of fs.readFileSync(p, 'utf8').matchAll(/[A-Za-z_][\w]{3,}/g)) words.add(m[0]);
+      } catch {}
+    }
+  }
+  return { files, refs, memberUse, defUse, autoloads, words, owners };
+}
+
+// 被 3 个以上文件用的代码文件，各被哪些需求的文件用。按需求树里「按内容分」的需求算（根、按文件类型横切的不算），
+// 一个文件归范围覆盖它的最深的需求。返回 [{ file, node 它现在归哪个需求（没有为 null）, users 被几个文件用,
+//   by [[顶层需求 ID, 文件数]]（多的在前）, shared 被 3 个以上顶层需求的文件用（公共模块）, misplaced 挂错的去处 }]。
+// 挂错：不是公共模块，用它的文件八成以上在另一个顶层需求里（至少 3 个），它自己却不归那个需求。
+// 公共模块（Tuning、EventBus 这类谁都用）不判挂错：依赖关系只说明谁调用谁，说明不了它属于哪件事（2026-10-25 用户定）
+const MIN_USERS = 3, MISPLACED_SHARE = 0.8;
+const HELPER = /(^|\/)(tests?|__tests__|specs?|tools?|scripts?|benchmarks?|examples?)\/|(^|\/)test_[^/]*$|[._-](test|spec)\.[^/]+$|_test\.[^/]+$/i;
+function placement(g, root) {
+  const { walk, globToRegExp } = require('./parser');
+  const { scopeOf, autoLoads } = require('./compile');
+  const { isRoot } = require('./common');
+  const nodes = [...walk(root)].filter(n => !isRoot(n) && n.id && autoLoads(n))
+    .map(n => ({ n, res: scopeOf(n).map(globToRegExp), cross: scopeOf(n).every(s => s.startsWith('*')) })).filter(x => !x.cross);
+  const memo = new Map();
+  const ownerOf = f => {
+    if (!memo.has(f)) memo.set(f, nodes.filter(x => x.res.some(re => re.test(f))).map(x => x.n).sort((a, b) => b.level - a.level)[0] || null);
+    return memo.get(f);
+  };
+  const topOf = n => { while (n && n.parent && !isRoot(n.parent)) n = n.parent; return n && !isRoot(n) ? n : null; };
+  const out = [];
+  for (const [file, users] of g.refs) {
+    if (users.size < MIN_USERS || HELPER.test(file)) continue;
+    const by = new Map();
+    // 测试、工具脚本只是辅助，跟着它服务的那件事走，不算「用它的那一块」（不去掉的话，被测得多的模块全成了「该归开发工具」）
+    for (const u of users) { const t = !HELPER.test(u) && topOf(ownerOf(u)); if (t) by.set(t.id, (by.get(t.id) || 0) + 1); }
+    const list = [...by].sort((a, b) => b[1] - a[1]);
+    const own = ownerOf(file), ownTop = topOf(own);
+    const counted = list.reduce((s, [, c]) => s + c, 0);
+    const shared = list.length >= 3;
+    const [topId, n] = list[0] || [];
+    const misplaced = !shared && n >= MIN_USERS && n / counted >= MISPLACED_SHARE && (!ownTop || ownTop.id !== topId) ? topId : null;
+    out.push({ file, node: own ? own.id : null, users: users.size, by: list, shared, misplaced });
+  }
+  return out.sort((a, b) => b.users - a.users);
 }
 
 // 一个文件对外的名字，按用得多的排（单例和 window.X 显示成「名字.成员」）
@@ -313,7 +376,7 @@ function exportsOf(g, rel, n = 6) {
   // module.exports = { … }：对外的就是这些键，文件里别的函数是内部的，不列
   const exp = info.members.exports || [];
   if (exp.length) names.push(...exp.slice().sort(byUse));
-  else {
+  else if (!info.script) {
     const inMembers = new Set(Object.values(info.members).flat());
     const plain = info.defs.filter(d => d.pub && !info.globals.includes(d.name) && !inMembers.has(d.name)).sort((a, b) => byUse(a.name, b.name));
     names.push(...plain.map(d => (d.kind === 'signal' ? `信号 ${d.name}` : d.name)));
@@ -432,21 +495,19 @@ function refresh(treePath, { targets } = {}) {
   const root = parse(fs.readFileSync(treePath, 'utf8'));
   const g = build(projectDir);
   const maps = new Map(); // id → { text, scope }
-  const shownBy = new Map();
   const allScopes = [];
+  // 按文件类型横切的需求（*/js/**、*/ch*.html 这种，每个 glob 都以 * 开头）不出地图：它横跨各块内容，
+  // 列出来是别的课、别的模块的东西，混在一起反而误导；这些文件在各自内容需求的地图里
+  const cross = n => scopeOf(n).every(s => s.startsWith('*'));
   for (const n of walk(root)) {
-    if (!n.id || !n.files.length || !autoLoads(n)) continue;
+    if (!n.id || !n.files.length || !autoLoads(n) || cross(n)) continue;
+    allScopes.push(scopeOf(n).map(globToRegExp));
+    // 只给最下一层（没有自己写了文件范围的子需求）出地图：上级和下级各一份的话，改一个文件两三份一起送到。
+    // 2026-10-25 猪猪进城记分细之后，改一个文件收到的地图从约 2400 字涨到 4000–5500 字，比分细省下的规则还多
+    if (walk(n).some(c => c !== n && c.files.length && !cross(c))) continue;
     const scope = scopeOf(n);
-    // 按文件类型横切的需求（*/js/**、*/ch*.html 这种，每个 glob 都以 * 开头）不出地图：它横跨各块内容，
-    // 列出来是别的课、别的模块的东西，混在一起反而误导；这些文件在各自内容需求的地图里
-    if (scope.every(s => s.startsWith('*'))) continue;
-    allScopes.push(scope.map(globToRegExp));
-    // 上级地图列过的文件不再列
-    const shown = new Set();
-    for (const p of pathOf(n).slice(0, -1)) for (const f of shownBy.get(p.id) || []) shown.add(f);
-    const r = renderNode(g, n, scope, shown);
+    const r = renderNode(g, n, scope);
     if (!r) continue;
-    shownBy.set(n.id, r.files);
     const where = pathOf(n).map(x => `${x.id} ${x.title}`).join(' → ');
     maps.set(n.id, { scope, body: `## 代码地图：${where}\n动手前先看这块已经有什么，能复用就复用，别重写一份；改被很多文件用的模块要小心牵动面。${whoHint()}\n\n${r.text}` });
   }
@@ -454,29 +515,32 @@ function refresh(treePath, { targets } = {}) {
   const globalText = renderGlobal(g, covered, { hubs: maps.size === 0 });
   const foot = `\n\n（代码地图由 ${treeName} 的需求树插件按代码自动生成，代码改了会自动更新，不要手改。）\n`;
   const written = [], removed = [];
-  const keepClaude = new Set(), keepCodex = new Set();
-  if (tg.claude) {
-    const dir = path.join(projectDir, '.claude', 'rules', 'reqtree');
-    for (const [id, m] of maps) {
-      const name = `map-${id}.md`;
-      keepClaude.add(name);
-      writeIfChanged(path.join(dir, name), ['---', 'paths:', ...m.scope.map(s => `  - ${JSON.stringify(s)}`), '---', MAP_MARK, m.body].join('\n') + foot, written);
+  // 地图不自动送进 AI 的上下文：写在 .reqtree/map/，总目录里一句话告诉 AI 在哪，写新功能前想知道再读（compile.MAP_LINE）。
+  // 2026-10-25 实测：整份按路径自动加载时每次多占约 4000 字，AI 并没有因此少搜、少重写（docs/test-log.md 第十六节）。
+  // Claude 和 Codex 用同一份；git worktree 里没有 .reqtree/，各抄一份（和规则一样，见 compile.writeRules）
+  if (tg.claude || tg.codex) {
+    const files = new Map();
+    for (const [id, m] of maps) files.set(`${id}.md`, `${MAP_MARK}\n适用文件：${m.scope.map(s => '`' + s + '`').join('、')}\n${m.body}${foot}`);
+    if (globalText) files.set('_map.md', `${MAP_MARK}\n## 代码地图：全项目\n${whoHint()}\n\n${globalText}${foot}`);
+    const { worktreesOf } = require('./common');
+    for (const base of [projectDir, ...worktreesOf(projectDir)]) {
+      const dir = path.join(base, '.reqtree', 'map');
+      for (const [name, text] of files) writeIfChanged(path.join(dir, name), text, base === projectDir ? written : []);
+      removeStale(dir, new Set(files.keys()), base === projectDir ? removed : [], n => n.endsWith('.md'));
+      // 0.19 以前自动加载的那份（.claude/rules/reqtree/map-*.md、_map.md）删掉
+      removeStale(path.join(base, '.claude', 'rules', 'reqtree'), new Set(), base === projectDir ? removed : [], n => /^(map-.+|_map)\.md$/.test(n));
     }
-    if (globalText) { keepClaude.add('_map.md'); writeIfChanged(path.join(dir, '_map.md'), `${MAP_MARK}\n## 代码地图：全项目\n${whoHint()}\n\n${globalText}${foot}`, written); }
-    removeStale(dir, keepClaude, removed, n => /^(map-.+|_map)\.md$/.test(n));
-  }
-  if (tg.codex) {
-    const dir = path.join(projectDir, '.reqtree', 'map');
-    for (const [id, m] of maps) { keepCodex.add(`${id}.md`); writeIfChanged(path.join(dir, `${id}.md`), `${MAP_MARK}\n适用文件：${m.scope.map(s => '`' + s + '`').join('、')}\n${m.body}${foot}`, written); }
-    if (globalText) { keepCodex.add('_map.md'); writeIfChanged(path.join(dir, '_map.md'), `${MAP_MARK}\n## 代码地图：全项目\n${whoHint()}\n\n${globalText}${foot}`, written); }
-    removeStale(dir, keepCodex, removed, n => n.endsWith('.md'));
   }
   const ms = Date.now() - t0;
   const first = !lastBuilt(treePath);
   try {
     const st = path.join(projectDir, '.reqtree', 'codemap.json');
     fs.mkdirSync(path.dirname(st), { recursive: true });
-    fs.writeFileSync(st, JSON.stringify({ time: Date.now(), files: g.files.size, nodes: [...maps.keys()], ms, scopes: scopesKey(treePath) }) + '\n');
+    // 名字定义在哪个文件：记录员拿它给只提到名字的规则找管的文件（hooks/recorder.js placeByFile）。公共模块的名字不记：
+    // 「数值都从 Tuning 读」管的是所有用它的代码，不是 tuning.gd 所在的那一块
+    const shared = new Set(placement(g, root).filter(p => p.shared).map(p => p.file));
+    const owners = Object.fromEntries([...g.owners].filter(([, f]) => !shared.has(f)));
+    fs.writeFileSync(st, JSON.stringify({ time: Date.now(), files: g.files.size, nodes: [...maps.keys()], ms, scopes: scopesKey(treePath), owners }) + '\n');
   } catch {}
   // 第一次建：总目录要补上「查名字」的命令，重新编译一次
   if (first) try { require('./store').compileTree(treePath, { force: true, wait: false }); } catch {}
@@ -484,6 +548,11 @@ function refresh(treePath, { targets } = {}) {
 }
 
 // 上次重建是什么时候（没建过返回 0）
+// 上次重建时记下的「名字 → 定义它的文件」（没建过返回 {}）
+function ownersOf(treePath) {
+  try { return JSON.parse(fs.readFileSync(path.join(path.dirname(treePath), '.reqtree', 'codemap.json'), 'utf8')).owners || {}; } catch { return {}; }
+}
+
 function lastBuilt(treePath) {
   try { return JSON.parse(fs.readFileSync(path.join(path.dirname(treePath), '.reqtree', 'codemap.json'), 'utf8')).time || 0; } catch { return 0; }
 }
@@ -544,7 +613,7 @@ function who(projectDir, q, { max = 40 } = {}) {
   return out.join('\n');
 }
 
-module.exports = { listFiles, build, refresh, lastBuilt, scopesChanged, who, whoHint, renderNode, renderGlobal, readGd, readJs, readPy, readHtml, readTscn, objectKeys, MAP_MARK };
+module.exports = { listFiles, build, placement, HELPER, refresh, lastBuilt, ownersOf, scopesChanged, who, whoHint, renderNode, renderGlobal, readGd, readJs, readPy, readHtml, readTscn, objectKeys, MAP_MARK };
 
 if (require.main === module) {
   const [cmd, a, b] = process.argv.slice(2);

@@ -5,7 +5,8 @@
 // - UserPromptSubmit：确保规则是最新编译的；记下用户这句话（给记录员用）；
 //   这句话明确提到了某个需求（标题、编号、第N章）而它的规则这个会话还没送过，就作为 additionalContext 补上
 //   （动手改文件之前的讨论拿不到路径规则）。每个需求每会话只送一次，最多 3 个、约 1500 字，不调用模型
-// - PostToolUse（Edit/Write，后台运行）：记下 AI 改了哪个需求的文件（面板显示"AI 正在改"）
+// - PostToolUse（Edit/Write，后台运行）：记下 AI 改了哪个需求的文件（面板显示"AI 正在改"）；能写成检查的规则查一遍刚写的内容
+//   （src/checks.js），可能违反就提醒 AI（后台 hook 的 additionalContext 在下一次请求模型时送到）
 // - Stop（后台运行）：把这一轮交给记录员
 // - InstructionsLoaded（后台运行）：记下这个会话往上下文里加载了哪个规则文件、多少字（上下文用量表）
 // - 补漏：每 sweepEvery 轮（Stop 时）和上下文压缩前（PreCompact），把这段时间用户的原话再交给记录员对照一遍树，
@@ -283,6 +284,10 @@ function main(input, trace) {
         const fb = fallback(treePath, n, rel, input, trace);
         if (fb) fallbacks.push(fb);
       }
+      // 能写成检查的规则（src/checks.js）：查这次写进去的内容，可能违反就提醒
+      const Checks = require('../src/checks');
+      const warn = Checks.run(treePath, root, rel, Checks.addedText(input.tool_input));
+      if (warn) { fallbacks.push(warn); trace.checks = true; }
     }
     if (fallbacks.length) return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: fallbacks.join('\n\n') } });
     return;

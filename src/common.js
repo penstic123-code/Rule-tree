@@ -52,21 +52,22 @@ function findTreeUp(dir) {
   }
 }
 
-// 文件在项目里的相对路径（正斜杠）。文件在这个项目的某个 worktree 里时，按那个 worktree 的根算，需求的文件范围才对得上
-function projectRel(treeDir, file) {
+// dir 在这个项目的哪份检出里：某个 worktree 的根，或者项目本身（treeDir）
+function checkoutOf(treeDir, dir) {
   const { samePath } = require('./store');
-  for (let d = path.dirname(file); ;) {
+  for (let d = path.resolve(dir); ;) {
     if (fs.existsSync(path.join(d, '.git'))) {
       const main = worktreeMain(d);
-      if (main && samePath(main, treeDir)) return path.relative(d, file).split(path.sep).join('/');
-      break;
+      return main && samePath(main, treeDir) ? d : treeDir;
     }
     const up = path.dirname(d);
-    if (up === d) break;
+    if (up === d) return treeDir;
     d = up;
   }
-  return path.relative(treeDir, file).split(path.sep).join('/');
 }
+
+// 文件在项目里的相对路径（正斜杠）。文件在这个项目的某个 worktree 里时，按那个 worktree 的根算，需求的文件范围才对得上
+const projectRel = (treeDir, file) => path.relative(checkoutOf(treeDir, path.dirname(file)), file).split(path.sep).join('/');
 
 // 往临时目录里的日志追加一行（超过 512 KB 就换一份）。日志写不进去不能影响正事
 function appendTmpLog(name, line) {
@@ -78,4 +79,4 @@ function appendTmpLog(name, line) {
   } catch {}
 }
 
-module.exports = { tmpDir, isRoot, EDIT_TOOLS, findTreeUp, worktreeMain, worktreesOf, projectRel, appendTmpLog };
+module.exports = { tmpDir, isRoot, EDIT_TOOLS, findTreeUp, worktreeMain, worktreesOf, checkoutOf, projectRel, appendTmpLog };

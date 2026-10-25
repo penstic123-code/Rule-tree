@@ -20,12 +20,22 @@ const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 _index.md 里。编译的输出或说明文字变了就加 1：ensureCompiled 只比时间，
 // 旧版本生成的文件可能比树还新，不看版本的话升级后会一直留着过时的说明（比如「标 🆕，等用户确认」）
-const FORMAT = '<!-- reqtree:format 12 -->';
+const FORMAT = '<!-- reqtree:format 14 -->';
 
 // 节点的生效范围：自己的 files，或最近上级的；都没有返回 null（全局）
 function scopeOf(node) {
   for (let n = node; n && n.parent; n = n.parent) if (n.files.length) return n.files;
   return null;
+}
+
+// upper 的规则在 lower 的文件上是不是一定也加载：upper 是全局的，或者 lower 的每个 glob 都落在 upper 某个「文件夹/**」里
+function covers(upper, lower) {
+  const up = scopeOf(upper);
+  if (!up) return true;
+  const low = scopeOf(lower);
+  if (!low) return false;
+  const dirs = up.map(g => (g.match(/^([^*?{}[\]]*)\*\*$/) || [])[1]).filter(d => d !== undefined);
+  return low.every(g => dirs.some(d => g.startsWith(d)));
 }
 
 const { isRoot } = require('./common');
@@ -67,6 +77,19 @@ const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛�
 // 0.18.0 曾把 ponytail 原文（英文约 3200 字）编成只在代码文件上加载的规则：一半和这里重复，
 // 而且新建第一个代码文件时它跟着写文件的结果才到（已经写完了）。2026-10-25 用户定：缺的几条并进 ③，不再单独加载
 
+// 总目录里 Claude 和 Codex 都要说的几句，只写这一份（以前两边各写一份，Codex 那边漏了「按后写的为准」）。
+// entry：每次全文加载的入口文档（CLAUDE.md / AGENTS.md）
+const guideLines = entry => [
+  '用户提出的长期要求由后台记录员在每轮结束后直接写进需求树（用户可以在面板上撤销），你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。',
+  `项目的需求和规则（包括某门课、某块内容怎么做、开几个 agent）只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 ${entry}，免得同一条规则记两处。自动记忆只记和项目内容无关的事：用户本人的情况、工具和电脑环境（本机的坑、命令注意事项）、私人信息（服务器、账号）、外部资源在哪。`,
+  '需求树、文档、自动记忆说法不同时，不要问用户，按后写的那边把另一边改过来，再告诉用户改了什么（需求树每条规则什么时候、谁改的，记在 .reqtree/changes.jsonl；文档看 git log 或修改时间）；查不出先后的按需求树。',
+  '同一个文件属于几个需求时（比如既属于某门课，又属于「写作」这类按文件类型划分的需求），几份规则都要照做；说法冲突时以文件范围更窄的那份为准。',
+  '规则里以「决定：」开头的，是用户拍板定下的做法和理由。不要自己推翻；觉得该改，先问用户。',
+];
+
+// 代码地图不自动加载，只在总目录里指路（Claude 和 Codex 共用这一句，见 src/codemap.js）
+const MAP_LINE = '每块代码已有哪些文件和对外的函数、类，写在 `.reqtree/map/<需求编号>.md`（全项目的公共模块在 `_map.md`），写新功能前想知道就读。';
+
 // 全局说明：告诉 AI 这套东西怎么用。不写 paths，每次都加载，保持很短。
 // opts.principles：写不写动手原则；opts.who：查名字的命令说明（代码地图生成过才有）
 function compileIndex(root, treeName, opts = {}) {
@@ -77,13 +100,9 @@ function compileIndex(root, treeName, opts = {}) {
     `## 需求树（${treeName}）`,
     `本项目的需求和规则统一记在 ${treeName}：标题是需求，结尾 ✅完成 🔨进行中 ⏳待做 ❓待定；标题下的列表项是规则。各需求的规则会在你改到对应文件时自动加载。`,
     doing.length ? `进行中：${doing.join('、')}。` : '',
-    '用户提出的长期要求由后台记录员在每轮结束后直接写进需求树（用户可以在面板上撤销），你不用自己记；用户明确说"记下来"时可以直接改需求树。某个需求做完了，把它的状态改成 ✅。',
-    '项目的需求和规则（包括某门课、某块内容怎么做、开几个 agent）只记在需求树里（后台记录员负责），不要再写进记忆（memory）或 CLAUDE.md，免得同一条规则记两处。自动记忆只记和项目内容无关的事：用户本人的情况、工具和电脑环境（本机的坑、命令注意事项）、私人信息（服务器、账号）、外部资源在哪。',
-    '需求树、文档、自动记忆说法不同时，不要问用户，按后写的那边把另一边改过来，再告诉用户改了什么（需求树每条规则什么时候、谁改的，记在 .reqtree/changes.jsonl；文档看 git log 或修改时间）；查不出先后的按需求树。',
-    '同一个文件属于几个需求时（比如既属于某门课，又属于「写作」这类按文件类型划分的需求），几份规则都要照做；说法冲突时以文件范围更窄的那份为准。',
-    '规则里以「决定：」开头的，是用户拍板定下的做法和理由。不要自己推翻；觉得该改，先问用户。',
+    ...guideLines('CLAUDE.md'),
     opts.principles === false ? '' : PRINCIPLES,
-    opts.who ? `改代码前先看代码地图（改到对应文件时自动加载）：这块已经有哪些文件、对外的函数和类、依赖的公共模块。${opts.who}` : '',
+    opts.who ? MAP_LINE + opts.who : '',
   ].filter(Boolean).join('\n') + '\n';
 }
 
@@ -104,25 +123,30 @@ function claudeInstalled(projectDir) {
   }
   return false;
 }
+// 用户在这个项目停用了（reqtree disable 写的标记，init 删掉）：什么都不编。不然插件下一次刷新又把刚删掉的规则编回去
+const DISABLED = path.join('.reqtree', 'disabled');
 function targetsOf(projectDir) {
+  if (fs.existsSync(path.join(projectDir, DISABLED))) return { claude: false, codex: false };
   const cx = codex.enabled(projectDir);
   return { claude: !cx || claudeInstalled(projectDir), codex: cx };
 }
 
 // 生成全部规则文件；内容没变的不重写（免得触发无谓的"文件已变更"通知）；删掉已经不存在的节点的文件。
 // opts.targets = { claude, codex } 可以指定编译目标，不给就自动判断（targetsOf）。
-// 返回 { written: [], removed: [], dir, targets, warnings }；Codex 的文件名带 codex: 前缀
+// 返回 { written: [], removed: [], dir, targets, warnings, errors }（errors：有一部分没写成，也在 warnings 里）；Codex 的文件名带 codex: 前缀
 function compile(treePath, opts = {}) {
   const projectDir = path.dirname(treePath);
   const targets = opts.targets || targetsOf(projectDir);
   const res = targets.claude ? compileClaude(treePath) : { written: [], removed: [], dir: null };
   res.targets = Object.keys(targets).filter(k => targets[k]);
   res.warnings = [];
+  res.errors = [];
   if (targets.codex) {
     const c = codex.compile(treePath);
     res.written.push(...c.written);
     res.removed.push(...c.removed);
     res.warnings.push(...c.warnings);
+    res.errors.push(...c.errors);
     if (!res.dir) res.dir = c.dir;
   }
   return res;
@@ -171,6 +195,7 @@ function writeRules(dir, files) {
 function ensureCompiled(treePath) {
   const projectDir = path.dirname(treePath);
   const targets = targetsOf(projectDir);
+  if (!targets.claude && !targets.codex) return null;
   const stamp = path.join(projectDir, OUT_DIR, '_index.md');
   const fresh = s => fs.statSync(s).mtimeMs >= fs.statSync(treePath).mtimeMs && fs.readFileSync(s, 'utf8').includes(FORMAT);
   const wtStamps = () => worktreesOf(projectDir).map(w => path.join(w, OUT_DIR, '_index.md'));
@@ -179,9 +204,11 @@ function ensureCompiled(treePath) {
     try { return !fresh(stamp) || wtStamps().some(s => { try { return !fresh(s); } catch { return true; } }); }
     catch { return true; }
   };
-  // 挂的文档改过：规则里写的目录和行号可能过时了，也要重编
+  // 挂的文档改过：规则里写的目录和行号可能过时了，也要重编。比的是这次要编的目标的时间戳（只装了 Codex 的项目没有 Claude 的）
   const docsStale = () => {
-    try { return Docs.docsMtime(treePath) > fs.statSync(stamp).mtimeMs; } catch { return false; }
+    const stamps = [...(targets.claude ? [stamp] : []), ...(targets.codex ? [path.join(projectDir, codex.RULES_DIR, '_index.md')] : [])];
+    const docs = Docs.docsMtime(treePath);
+    return stamps.some(s => { try { return docs > fs.statSync(s).mtimeMs; } catch { return false; } });
   };
   if (!(targets.claude && claudeStale()) && !(targets.codex && codex.stale(treePath)) && !docsStale()) return null;
   const r = compile(treePath, { targets });
@@ -192,4 +219,4 @@ function ensureCompiled(treePath) {
   return r;
 }
 
-module.exports = { compile, ensureCompiled, scopeOf, autoLoads, targetsOf, indexOpts, PRINCIPLES };
+module.exports = { compile, ensureCompiled, compileNode, compileIndex, scopeOf, covers, autoLoads, targetsOf, indexOpts, guideLines, PRINCIPLES, MAP_LINE, DISABLED, OUT_DIR };

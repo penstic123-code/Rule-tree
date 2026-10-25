@@ -265,3 +265,76 @@ test('初始化的材料：每份说明文档给用途和主要标题（不只�
   const p = Init.plan(dir, g, { nodes: [{ id: 'R1', title: '游戏', children: [{ id: 'R1.1', title: '城市', files: ['game/world/**'] }, { id: 'R1.2', title: '界面', files: ['game/ui/**'] }] }] });
   assert.deepStrictEqual(p.nodes[0].files, ['game/world/**', 'game/ui/**']);
 });
+
+// ---------- 重新整理：先定结构，再把规则原文挂上去 ----------
+const BIG = ['店里摆冷柜就卖冷饮', '店名不重名', '盲道连续', '红绿灯设在主干路', '公园入口对斑马线', '窗户最多三种', '桥墩落在水里', '吊灯每 1.8 米一盏', '店员台词不超过 24 字', '门洞净宽 1.2 米', '入园口宽 2.5 米', '区块号统一算'];
+const GAME = { 'game/world/street/a.gd': '', 'game/world/park/b.gd': '', 'game/shops/s.gd': '', 'game/shops/talk.json': '', 'docs/city.md': '# 城市\n', 'docs/old.md': '# 旧\n' };
+const bigTree = () => `# P 小猪\n这是说明。\n- 用中文\n\n## R1 城市 🔨\n> 文件：game/**\n> 文档：docs/city.md, docs/old.md\n${BIG.map(r => `- ${r}`).join('\n')}\n`;
+
+test('该整理的迹象：某个需求挂了十几条规则，或者有规则却永远送不到；健康的树不整理', () => {
+  assert.deepStrictEqual(Init.needsReorganize(bigTree()).map(w => w.k), ['many']);
+  assert.deepStrictEqual(Init.needsReorganize('# P x\n\n## K1 组件库\n- 组件按功能分\n').map(w => w.k), ['nofiles']);
+  assert.deepStrictEqual(Init.needsReorganize('# P x\n- 全局\n\n## R1 城市\n> 文件：game/**\n- 一条\n'), []);
+});
+
+test('重新整理：多层子需求（文件落在上级范围里）、沿用原编号、规则原文挂过去、没分到的回原处、文档不丢、顶上的标题说明不变；一条改动可撤销', async () => {
+  const dir = project(GAME);
+  const treePath = path.join(dir, '需求树.md');
+  fs.writeFileSync(treePath, bigTree());
+  const before = fs.readFileSync(treePath, 'utf8');
+  let prompt = '';
+  const ask = async p => {
+    prompt = p;
+    return {
+      project: '别的名字', nodes: [
+        { id: 'R1', title: '城市', files: ['game/world/**'], children: [
+          { id: 'R1.1', title: '街道', files: ['game/world/street/**', 'game/shops/**'], children: [
+            { id: 'R1.1.1', title: '盲道', children: [{ id: 'R1.1.1.1', title: '更细', children: [{ id: 'R1.1.1.1.1', title: '最细', children: [{ id: 'X', title: '太深了' }] }] }] }] },
+          { id: 'R1.2', title: '公园', files: ['game/world/park/**'] }] },
+        { id: 'R2', title: '店铺', files: ['game/shops/**'], docs: ['docs/city.md#没有这一节'], children: [{ id: 'R2.1', title: '店员', files: ['game/shops/talk.json'] }] },
+      ],
+      // 编号：1 是根上的「用中文」，2 起是 R1 的 BIG
+      rules: [{ i: 2, node: 'R2' }, { i: 4, node: 'R1.1.1' }, { i: 6, node: 'R1.2' }, { i: 10, node: 'R2.1' }, { i: 13, node: '' }, { i: 3, node: '不存在' }],
+    };
+  };
+  const r = await Init.reorganize(treePath, { ask });
+  assert.strictEqual(r.ai, true);
+  assert.match(prompt, /现在的需求树/);
+  assert.match(prompt, /（现在在 R1）店里摆冷柜就卖冷饮/);
+  const text = fs.readFileSync(treePath, 'utf8');
+  const root = parse(text);
+  assert.match(text, /^# P 小猪\n这是说明。\n/, '顶上的标题和说明原样留着');
+  assert.deepStrictEqual(findById(root, 'R1.1').files, ['game/world/street/**'], '上级范围外的 game/shops/** 去掉');
+  assert.ok(findById(root, 'R1.1.1.1.1'), '五层可以');
+  assert.ok(!findById(root, 'X') && !text.includes('太深了'), '超过五层的不要');
+  assert.deepStrictEqual(findById(root, 'R1.1.1').rules.map(x => x.text), ['盲道连续']);
+  assert.deepStrictEqual(findById(root, 'R2.1').rules.map(x => x.text), ['店员台词不超过 24 字']);
+  assert.deepStrictEqual(root.children[0].rules.map(x => x.text), ['用中文', '区块号统一算']);
+  // 没分到的（含分到不存在需求的）回到原来的 R1
+  assert.ok(findById(root, 'R1').rules.some(x => x.text === '店名不重名'));
+  assert.strictEqual([...require('../src/parser').walk(root)].reduce((s, n) => s + n.rules.length, 0), 13, '一条不少');
+  // 原来挂的文档都还挂着
+  const docs = [...require('../src/parser').walk(root)].flatMap(n => n.docs.map(d => d.split('#')[0]));
+  assert.ok(docs.includes('docs/city.md') && docs.includes('docs/old.md'), JSON.stringify(docs));
+  assert.strictEqual(findById(root, 'R1').status, 'doing', '没给状态的沿用原来的');
+  const change = store.readChanges(treePath).find(c => c.id === r.changeId);
+  assert.strictEqual(change.source, '整理');
+  assert.ok(store.undoChange(treePath, r.changeId));
+  assert.strictEqual(fs.readFileSync(treePath, 'utf8'), before);
+});
+
+test('体检看到树长歪了：先自动整理一次（只一次，撤销了也不再自动做）；健康的树不整理', async () => {
+  const { runCheckup } = require('../src/checkup');
+  const dir = project(GAME);
+  const treePath = path.join(dir, '需求树.md');
+  fs.writeFileSync(treePath, bigTree());
+  let reorgs = 0;
+  const reorgAsk = async () => { reorgs++; return { nodes: [{ id: 'R1', title: '城市', files: ['game/world/**'] }, { id: 'R2', title: '店铺', files: ['game/shops/**'] }], rules: [{ i: 1, node: 'R2' }] }; };
+  const ask = async () => ({ questions: [] });
+  const r = await runCheckup(treePath, { ask, reorgAsk, memory: false, parts: { docs: false } });
+  assert.strictEqual(reorgs, 1);
+  assert.ok(r.reorganized);
+  assert.ok(store.undoChange(treePath, r.reorganized.changeId));
+  await runCheckup(treePath, { ask, reorgAsk, memory: false, parts: { docs: false } });
+  assert.strictEqual(reorgs, 1, '自动只整理一次');
+});

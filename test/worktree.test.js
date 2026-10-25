@@ -95,3 +95,18 @@ test('hook：会话直接在 worktree 里启动，也找得到主仓库的树', 
   hook({ cwd: wt, session_id: 's-wt-2', hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: path.join(wt, 'game', 'world', 'a.gd') } });
   assert.deepStrictEqual(store.readActivity(tree, 60000).filter(e => e.session === 's-wt-2').map(e => e.node), ['R1']);
 });
+
+test('Codex 在 worktree 里：文件按 worktree 的根对上需求，送规则、记活动；规则文件也抄进 worktree', () => {
+  const codex = require('../src/targets/codex');
+  const { main, tree } = repo();
+  const wt = addWorktree(main, 'cx');
+  fs.writeFileSync(path.join(wt, 'game', 'world', 'street.gd'), '');
+  fs.writeFileSync(path.join(main, '.reqtree', 'codex.json'), '{}');
+  store.compileTree(tree, { force: true });
+  assert.ok(fs.existsSync(path.join(wt, '.reqtree', 'rules', 'R1.md')), 'worktree 里也有规则文件');
+  assert.strictEqual(codex.relTo(main, wt, 'game/world/street.gd'), 'game/world/street.gd');
+  const res = spawnSync(process.execPath, [path.join(__dirname, '..', 'hooks', 'codex-hook.js')], { encoding: 'utf8',
+    input: JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'wt-cx', cwd: wt, tool_name: 'apply_patch', tool_input: { command: '*** Begin Patch\n*** Update File: game/world/street.gd\n*** End Patch' } }) });
+  assert.match(JSON.parse(res.stdout).hookSpecificOutput.additionalContext, /街道两边种树/);
+  assert.ok(store.readActivity(tree, 60000).some(e => e.file === 'game/world/street.gd' && e.node === 'R1'));
+});

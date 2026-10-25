@@ -61,6 +61,47 @@ function filterAddFiles(ops, { root, unmapped = [], user = '', dropped } = {}) {
   return out;
 }
 
+// 新规则挂得对不对，按它管的文件核对（模型在 add_rule 里写的 file）：挂的需求的范围覆盖不到那个文件，AI 改那个文件时就收不到这条——
+// 改挂到范围覆盖它的需求上：和「正在做的需求」在一条上下级链上的优先，再挑层级最深（最具体）的。没有需求覆盖得到那个路径，照模型的挂。
+// 模型看不到项目的文件清单，路径是照「> 文件：」的写法写的，所以只拿它去对需求的文件范围，不要求文件真的存在。
+// 回放实验里通用的写作要求被挂到当时在做的课下面（docs/test-log.md 第十节），这里在代码里拦。
+// owners：代码地图记下的「名字 → 定义它的文件」（codemap.ownersOf，公共模块的名字不在里面）。规则里提到的代码名字只对得上一个文件时，
+// 按那个文件挂，不用模型猜的路径（模型看不到文件清单）：「营业时间只从 ShopHours 读」管的是 shop_hours.gd 那一块
+function placeByFile(ops, { root, focus = [], owners = null }) {
+  const { scopeOf, autoLoads } = require('../src/compile');
+  const { pathOf, globToRegExp } = require('../src/parser');
+  const { isRoot } = require('../src/common');
+  const near = new Set(focus.map(id => findById(root, id)).filter(Boolean).flatMap(n => [n, ...pathOf(n)]));
+  const byName = text => {
+    if (!owners) return null;
+    const hit = [...new Set(require('../src/rulecheck').codeNames(text).map(n => owners[n]).filter(Boolean))];
+    return hit.length === 1 ? hit[0] : null;
+  };
+  return ops.map(o => {
+    if (o.op === 'add_rule') { const f = byName(o.text); if (f) o = { ...o, file: f }; }
+    if (o.op !== 'add_rule' || typeof o.file !== 'string') return o;
+    const { file, ...op } = o;
+    const f = file.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+    const node = findById(root, op.node);
+    if (!node || isRoot(node) || !f || f.startsWith('/') || f.includes('..')) return op;
+    const reaches = n => autoLoads(n) && (isRoot(n) || scopeOf(n).some(g => globToRegExp(g).test(f)));
+    if (reaches(node)) {
+      // 挂对了一支，但用户正在做的是它下面更具体的需求、那个文件也归它：挂到正在做的那个上（「正在做第1章时说的话默认挂第1章」）
+      const down = focus.map(id => findById(root, id)).find(n => n && n !== node && pathOf(n).includes(node) && reaches(n));
+      if (!down) return op;
+      log(`按管的文件改挂：「${op.text}」管 ${f}，正在做的 ${down.id} 在 ${node.id} 下面，挂到 ${down.id}`);
+      return { ...op, node: down.id };
+    }
+    // 按内容分的需求优先于按文件类型横切的（「代码规范」**/*.gd 什么 .gd 都覆盖，说的却不是这一块）
+    const cross = n => scopeOf(n).every(g => g.startsWith('*'));
+    const cands = [...require('../src/parser').walk(root)].filter(n => !isRoot(n) && reaches(n))
+      .sort((a, b) => (near.has(b) - near.has(a)) || (cross(a) - cross(b)) || b.level - a.level);
+    if (!cands.length) return op;
+    log(`按管的文件改挂：「${op.text}」管 ${f}，${node.id} 的范围覆盖不到，挂到 ${cands[0].id}`);
+    return { ...op, node: cands[0].id };
+  });
+}
+
 // 模型给的一组改动：只留允许的操作，换行压成空格，没根据的 add_files 去掉
 const allowedOp = allowed => o => o && typeof o === 'object' && allowed.has(o.op);
 function cleanOps(list, ctx, allowed = ALLOWED_OPS) {
@@ -214,7 +255,8 @@ ${focus.length ? `\n这个会话正在做的需求（新的在前）：${focus.j
      例：旧「像素风探险地图」，新「改成2D横版像素游戏」→ replace_rule；
          P 里旧「手账风全课通用」，新「手账风只属于第一篇」→ 缩小范围：remove_rule P 那条，在第一篇 add_rule；
          P 里旧「每章互动不超过4个」，新「第5章互动可以多一点」→ 只第5章例外：在第5章 override_rule。
-   - **挂在哪**：用户正在做某个需求时说的话，默认就是对这个需求说的——挂在上面「正在做的需求」里最贴切的那个（通常是第一个），哪怕措辞听起来像通用的（"小标题写概念名""互动别太多"）。用户在说哪一章、哪个模块，就挂在那一章、那个模块上。
+   - **挂在哪**：想一想 AI 以后改哪些文件时要守这条，挂在文件范围覆盖这些文件的最小需求上，并在这条 add_rule 里写 file：这条规则管的一个文件的路径（照需求树「> 文件：」的写法写一个具体文件，例：game/dialogue/npc.json；和具体文件无关的做事方式不写）。
+     用户正在做某个需求时说的话，规则管的正是这一块的文件，就挂在上面「正在做的需求」里最贴切的那个（通常是第一个），哪怕措辞听起来像通用的（"小标题写概念名""互动别太多"）；管的是另一类文件（比如调画面光影时顺口说的台词写法），挂到管那类文件的需求上。用户在说哪一章、哪个模块，就挂在那一章、那个模块上。
      只有这几种才往上挂：用户明说范围更大（"以后所有课""全项目""每门课都""每次"）→ 挂到覆盖这个范围的节点；说的是和内容无关的做事方式，也就是怎么写、怎么检查、怎么和 AI 配合，而且没提到这一块的具体内容（"交流用中文""先给结论""反馈含糊先问清""写完先自己检查一遍再交""改完跑一遍测试"）→ 挂最顶上那个需求。这类话常常是在做某一块时顺口说的，照样挂最顶上（真实对话回放里，15 条通用要求有 9–12 条被挂到了当时在做的课下面）。
      拿不准是只管当前需求还是更大范围：挂在当前需求上，不要问（挂在哪用户在面板上一眼能看到，挂窄了随手能改）。最顶上那个需求只放明确对整个项目都成立的规则，宁少勿多。
      没有「正在做的需求」时，按规则说的内容挂在管辖范围最小的节点上。
@@ -228,7 +270,7 @@ ${aiFindings ? `   - AI 在这一轮回复里明确说出的、以后改这块�
    只有一种情况问：用户的新说法和一条以「决定：」开头的规则对不上，却没明说要改掉它（明说了就直接改）。这时这条改动不写进 ops，在 questions 里问：text 是一句简短的问题，options 是 2–3 种做法（label 几个字，ops 是这种做法完整的改动；「先不改」那项 ops 为空），default 是「先不改」那项的序号（从 0 起）。${noteTask}
 
 只输出 JSON，不要任何别的文字；没有改动就输出 {"ops":[]}：
-{"ops":[{"op":"replace_rule","node":"ID","old":"树里原文","text":"新内容"},{"op":"add_rule","node":"ID","key":"可选","text":"..."},{"op":"remove_rule","node":"ID","text":"原文"},{"op":"override_rule","node":"子需求ID","from":"上级ID","text":"上级原文","new":"新内容"},{"op":"add_node","parent":"ID","id":"新ID","title":"..."},{"op":"set_status","node":"ID","status":"done 或 question"},{"op":"add_files","node":"ID","globs":["..."]}],
+{"ops":[{"op":"replace_rule","node":"ID","old":"树里原文","text":"新内容"},{"op":"add_rule","node":"ID","key":"可选","text":"...","file":"这条规则管的一个文件"},{"op":"remove_rule","node":"ID","text":"原文"},{"op":"override_rule","node":"子需求ID","from":"上级ID","text":"上级原文","new":"新内容"},{"op":"add_node","parent":"ID","id":"新ID","title":"..."},{"op":"set_status","node":"ID","status":"done 或 question"},{"op":"add_files","node":"ID","globs":["..."]}],
  "questions":[{"text":"「这两个系统直接调用就行」和「决定：系统之间用 EventBus 传事件」对不上，要改掉这条决定吗？","options":[{"label":"先不改","ops":[]},{"label":"改成直接调用","ops":[{"op":"replace_rule","node":"G1","old":"决定：系统之间用 EventBus 传事件","text":"决定：这两个系统直接调用"}]}],"default":0}]}`;
 }
 
@@ -444,7 +486,8 @@ async function main(jobPath) {
         } else rest.push(o);
       }
       const ctx = { root, unmapped, user: latest, dropped: skipped };
-      const picked = pickQuestions(out.questions, { text, before: ops, ops: cleanOps(rest, ctx), ctx: { root, unmapped, user: latest } });
+      const mine = placeByFile(cleanOps(rest, ctx), { root, focus: job.focus || [], owners: require('../src/codemap').ownersOf(job.treePath) });
+      const picked = pickQuestions(out.questions, { text, before: ops, ops: mine, ctx: { root, unmapped, user: latest } });
       ops.push(...picked.ops);
       questions = picked.questions;
     }
@@ -528,5 +571,5 @@ if (require.main === module) {
 }
 module.exports = {
   lastTurns, isTrivial, buildPrompt, buildSweepPrompt, SWEEP_OPS, ALLOWED_OPS, describe, describeParts, splitCommand, filterAddFiles,
-  cleanOps, pickQuestions, recordQuestions, askJson, fail, log, BIG_TREE_LINES,
+  cleanOps, pickQuestions, recordQuestions, askJson, fail, log, BIG_TREE_LINES, placeByFile,
 };

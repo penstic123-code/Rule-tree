@@ -1,0 +1,5 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/lxgwwenkai-regular.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap">
+<style>html,body{margin:0;background:#fbf6ea}#stage{display:block}svg{display:block}</style>
+<script>window.LANG="en"</script><script src="rough.js"></script><script src="lib.js"></script><script src="use-common.js"></script><script src="chart-common.js"></script></head><body><div id="stage"></div>

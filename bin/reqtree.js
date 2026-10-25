@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { parse, walk, findById, pathOf, effectiveRules, check, STATUS_EMOJI } = require('../src/parser');
 const store = require('../src/store');
-const { autoLoads } = require('../src/compile');
+const { autoLoads, DISABLED } = require('../src/compile');
 const { isStale, STALE_DAYS } = require('../src/viewmodel');
 
 // 只跟踪编辑类工具，不跟踪 Bash：每次 hook 要启动一个 node（这台机器约 0.2 秒），而 AI 改文件绝大多数走 Edit/Write
@@ -97,19 +97,38 @@ function hasHooks(dir) {
   });
 }
 
+// 从一份 settings 里去掉需求树的 hook（别的 hook 原样留着），返回有没有改
+function stripOurs(s) {
+  if (!s || !s.hooks || typeof s.hooks !== 'object') return false;
+  let changed = false;
+  for (const ev of Object.keys(s.hooks)) {
+    if (!Array.isArray(s.hooks[ev])) continue;
+    const next = s.hooks[ev].map(g => ({ ...g, hooks: (g.hooks || []).filter(h => !isOurs(h)) })).filter(g => g.hooks.length);
+    if (JSON.stringify(next) !== JSON.stringify(s.hooks[ev])) changed = true;
+    if (next.length) s.hooks[ev] = next; else delete s.hooks[ev];
+  }
+  if (!Object.keys(s.hooks).length) delete s.hooks;
+  return changed;
+}
+
+// 这个项目启用了需求树没有：装了 Claude Code 的 hook，或者装了 Codex（插件据此决定弹不弹「启用？」、能不能停用）
+const enabledIn = dir => hasHooks(dir) || require('../src/targets/codex').enabled(dir);
+
 // 写 Claude Code 的 hook。先删掉旧的需求树 hook 再按当前版本写入
 // （旧版本 --track-bash 写的 "…|Bash" matcher 也随之换成 EDIT_MATCHER）
 function installClaude(dir, { runtime, log }) {
   const command = hookCommand(path.join(runtime, 'hooks', 'hook.js'));
+  // 共享的 settings.json 里已经有需求树的 hook（别人装的、旧版本装的）：去掉，只留 settings.local.json 这一份，不然每个事件触发两次
+  const shared = path.join(dir, '.claude', 'settings.json');
+  const sh = readSettings(shared, null);
+  if (stripOurs(sh)) {
+    fs.writeFileSync(shared, JSON.stringify(sh, null, 2) + '\n');
+    log(`✓ 去掉了 ${shared} 里重复的需求树 hook`);
+  }
   const settingsPath = path.join(dir, '.claude', 'settings.local.json');
   const settings = readSettings(settingsPath, {});
+  stripOurs(settings);
   settings.hooks = settings.hooks || {};
-  for (const event of Object.keys(settings.hooks)) {
-    settings.hooks[event] = settings.hooks[event]
-      .map(g => ({ ...g, hooks: (g.hooks || []).filter(h => !isOurs(h)) }))
-      .filter(g => g.hooks.length);
-    if (!settings.hooks[event].length) delete settings.hooks[event];
-  }
   // 记录活动和启动记录员都放后台（async），不让 AI 等；UserPromptSubmit 要在 AI 开工前把规则编译好，所以同步。
   // PreCompact：上下文压缩前把最近的原话交给记录员补漏（见 hooks/hook.js takeSweep）。
   // InstructionsLoaded（Claude Code 2.1.69 起）：加载 CLAUDE.md、.claude/rules 时触发，记给上下文用量表；不设 matcher，所有加载原因都记
@@ -155,6 +174,7 @@ function init(dir, { tool = 'claude', log = console.log } = {}) {
     runtime = installRuntime();
     log(`✓ hook 程序已复制到 ${runtime}（版本 ${VERSION}）`);
   }
+  try { fs.unlinkSync(path.join(dir, DISABLED)); } catch {}
   install(dir, { runtime, log });
 
   const gi = path.join(dir, '.gitignore');
@@ -209,6 +229,8 @@ const USAGE = `用法：
   reqtree check <文件> --fix    体检：合并重复规则，冲突、该提到上级的有把握就直接改，拿不准的不动，只有要改掉「决定：」才问你（都能撤销）
                                 （要调用模型；加 --no-model 不调用）；也按分工整理 Claude Code 自动记忆（--no-memory 不查）；还查挂的文档和 CLAUDE.md、AGENTS.md：
                                 和树重复的从文档里删掉、该进树的搬进树（只查上次之后改过的，--full 全部重查）
+  reqtree reorganize <文件>     用 AI 重新整理需求树：先按要做的事定好需求和子需求，再把现有规则原文挂上去（一条改动，可撤销）
+  reqtree health <文件> [--json] 信息架构评分：结构、改一个文件送到多少规则和字、范围重叠、代码挂错、记录员和体检被撤销多少（不调用模型）
   reqtree map   <文件>          重建代码地图（每个需求这块已有的代码、依赖的公共模块）
   reqtree who   <文件> <名字>   某个函数、类、信号在哪定义、谁在用（也可以是文件路径：被谁用）
   reqtree questions <文件>      列出等你回答的问题
@@ -224,9 +246,13 @@ function printQuestion(q) {
   });
 }
 
+// 初始化、整理出的需求一共几个（各层都算）
+const countNodes = list => (list || []).reduce((k, n) => k + 1 + countNodes(n.children), 0);
+
 async function checkFix(file, { model, memoryOn = true, full = false }) {
   const { runCheckup } = require('../src/checkup');
   const r = await runCheckup(file, { model, memory: memoryOn ? undefined : false, full });
+  if (r.reorganized) console.log(`需求树长歪了，先用 AI 重新整理了结构：现在 ${countNodes(r.reorganized.nodes)} 个需求，规则原文没改（可以撤销）`);
   if (r.checked && r.checked.calls) console.log(`看了 ${r.checked.notes} 份记忆、${r.checked.docs} 份文档（上次体检后没改过的跳过；--full 全部重查），调用模型 ${r.checked.calls} 次`);
   for (const o of r.merged) console.log(`合并重复规则：删掉 ${o.node} 的「${o.text}」（留后写的那条）`);
   for (const o of r.removed) console.log(`删掉记忆 ${o.file}：内容已经在需求树或 CLAUDE.md 里（备份在 .reqtree/memory-backup/，可以撤销）`);
@@ -244,6 +270,10 @@ async function checkFix(file, { model, memoryOn = true, full = false }) {
     console.log(`文档里还留着 ${r.docDup.length} 处规则，需求树里已经有了（在表格里、带子项，或只是长句里的半句，没有自动删；留着不影响）：${[...byDoc].map(([f, n]) => `${f} ${n} 处`).join('、')}`);
   }
   for (const d of r.toDoc) console.log(`记忆 ${d.file} 像是 ${d.node} 的经验或进度，建议挪进${d.docs.length ? ` ${d.docs[0]}` : '它的文档'}`);
+  const T = require('../media/strings').make('zh');
+  if (r.docClash && r.docClash.length) console.log(T('q.docClash', r.docClash));
+  if (r.checks && r.checks.saved.length) console.log(T('q.checksSaved', r.checks.saved.length, r.checks.total));
+  if (r.health) console.log(['信息架构：', ...require('../src/health').summaryLines(r.health, T).map(l => `  ${l}`)].join('\n'));
   const asked = [...r.stale, ...r.scope, ...r.structure, ...r.memory, ...r.questions, ...r.docs];
   for (const q of asked) printQuestion(q);
   if (r.error) console.error(`查冲突时调用模型出错：${r.error.message}`);
@@ -267,7 +297,7 @@ if (require.main === module) {
     if (!tree || !require('../src/init').templateShaped(fs.readFileSync(tree, 'utf8').replace(/\r\n/g, '\n'))) process.exit(0);
     console.log('正在用 AI 读项目、按要做的事生成需求（一两分钟；按 Ctrl+C 跳过，树保持按文件夹分的样子）…');
     require('../src/init').initProject(path.resolve(dir)).then(r => {
-      if (r.ai) console.log(`✓ 已按要做的事生成 ${r.nodes.length} 个需求（不满意可以在面板「最近改动」里撤销）`);
+      if (r.ai) console.log(`✓ 已按要做的事生成 ${countNodes(r.nodes)} 个需求（不满意可以在面板「最近改动」里撤销）`);
       else if (!r.skipped) console.log(`AI 初始化没成功（${r.error ? r.error.message : '未知原因'}），需求树保持按文件夹分的样子；在 VS Code 里打开项目时插件会再试`);
       process.exit(0);
     }, e => { console.error(e.message); process.exit(0); });
@@ -302,6 +332,25 @@ if (require.main === module) {
     return;
   }
 
+  if (cmd === 'reorganize') {
+    console.log('正在用 AI 重新整理需求树（一两分钟）…');
+    require('../src/init').reorganize(path.resolve(file)).then(r => {
+      if (r.ai) console.log(`✓ 整理好了：现在 ${countNodes(r.nodes)} 个需求${r.lostDocs && r.lostDocs.length ? `；这几份文档没地方挂了：${r.lostDocs.join('、')}` : ''}（不满意可以在面板「最近改动」里撤销）`);
+      else console.error(`没整理成（${r.error ? r.error.message : '未知原因'}），需求树没动`);
+      process.exit(r.ai ? 0 : 1);
+    }, e => { console.error(e.message); process.exit(1); });
+    return;
+  }
+  if (cmd === 'health') {
+    // 信息架构评分（不调用模型，src/health.js）；--json 打出全部数字（实测脚本用）
+    const tp = path.resolve(file);
+    let graph = null;
+    try { graph = require('../src/codemap').build(path.dirname(tp)); } catch {}
+    const h = require('../src/health').measure(tp, { graph });
+    if (process.argv.includes('--json')) console.log(JSON.stringify(h, null, 2));
+    else console.log(require('../src/health').summaryLines(h, require('../media/strings').make('zh')).join('\n'));
+    process.exit(0);
+  }
   if (cmd === 'map') {
     const r = require('../src/codemap').refresh(path.resolve(file));
     console.log(`代码地图：看了 ${r.files} 个文件，${r.nodes.length} 个需求有地图（${r.nodes.join('、') || '无'}），写了 ${r.written.length} 份，用时 ${r.ms} ms`);
@@ -359,33 +408,31 @@ function disable(dir) {
   for (const f of ['settings.local.json', 'settings.json']) {
     const p = path.join(dir, '.claude', f);
     const s = readSettings(p, null);
-    if (!s || !s.hooks || typeof s.hooks !== 'object') continue;
-    let changed = false;
-    for (const ev of Object.keys(s.hooks)) {
-      if (!Array.isArray(s.hooks[ev])) continue;
-      const next = s.hooks[ev].map(g => ({ ...g, hooks: (g.hooks || []).filter(h => !isOurs(h)) })).filter(g => g.hooks.length);
-      if (JSON.stringify(next) !== JSON.stringify(s.hooks[ev])) changed = true;
-      if (next.length) s.hooks[ev] = next; else delete s.hooks[ev];
-    }
-    if (!changed) continue;
-    if (!Object.keys(s.hooks).length) delete s.hooks;
+    if (!stripOurs(s)) continue;
     fs.writeFileSync(p, JSON.stringify(s, null, 2) + '\n');
     done.push(`.claude/${f}`);
   }
   try { require('../src/targets/codex-install').uninstallCodex(dir); } catch {}
-  const rules = path.join(dir, '.claude', 'rules', 'reqtree');
-  try {
-    for (const n of fs.readdirSync(rules)) {
-      const p = path.join(rules, n);
-      if (/reqtree:(generated|codemap)/.test(fs.readFileSync(p, 'utf8'))) fs.unlinkSync(p);
-    }
-    if (!fs.readdirSync(rules).length) fs.rmdirSync(rules);
-    done.push('.claude/rules/reqtree/');
-  } catch {}
+  // 编译时每个 git worktree 也抄了一份规则（compile.writeRules），一起删
+  for (const root of [dir, ...require('../src/common').worktreesOf(dir)]) {
+    const rules = path.join(root, '.claude', 'rules', 'reqtree');
+    try {
+      for (const n of fs.readdirSync(rules)) {
+        const p = path.join(rules, n);
+        if (/reqtree:(generated|codemap)/.test(fs.readFileSync(p, 'utf8'))) fs.unlinkSync(p);
+      }
+      if (!fs.readdirSync(rules).length) fs.rmdirSync(rules);
+      done.push(path.relative(dir, rules).split(path.sep).join('/') + '/');
+    } catch {}
+  }
+  // 停用标记：插件、命令行之后再编译也不再生成规则（compile.targetsOf），重新 init 时删掉
+  const mark = path.join(dir, DISABLED);
+  fs.mkdirSync(path.dirname(mark), { recursive: true });
+  fs.writeFileSync(mark, new Date().toISOString() + '\n');
   return done;
 }
 
 module.exports = {
-  init, disable, TOOLS, VERSION, hookCommand, isOurs, hasHooks, readSettings, RUNTIME_PARTS,
+  init, disable, TOOLS, VERSION, hookCommand, isOurs, hasHooks, enabledIn, readSettings, RUNTIME_PARTS,
   installRuntime, runtimeDir, runtimeVersion, refreshRuntimeIfOlder, isOlder, parseInitArgs,
 };

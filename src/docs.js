@@ -154,6 +154,22 @@ function docsMtime(treePath) {
   return latest;
 }
 
+// 这份文档最后一次改是什么时候（毫秒）：有没提交的改动、或不在 git 里的按修改时间；提交过、没再改的按最后一次提交的时间
+// （修改时间在 clone、切分支后都会变，不可靠）。两份文档说法矛盾时按后改的为准（体检，见 checkup.js）
+function docTime(projectDir, rel) {
+  const file = resolve(projectDir, rel);
+  if (!file) return 0;
+  let mtime = 0;
+  try { mtime = fs.statSync(file).mtimeMs; } catch { return 0; }
+  const { spawnSync } = require('child_process');
+  const git = args => spawnSync('git', args, { cwd: projectDir, encoding: 'utf8', windowsHide: true, timeout: 10000 });
+  const st = git(['status', '--porcelain', '--', rel]);
+  if (st.status !== 0 || st.stdout.trim()) return mtime;
+  const log = git(['log', '-1', '--format=%ct', '--', rel]);
+  const t = Number((log.stdout || '').trim()) * 1000;
+  return t > 0 ? t : mtime;
+}
+
 // ---------- 从文档里删一行（体检用：和需求树重复的、已经搬进需求树的规则） ----------
 // 只删能找准的整行：去掉列表符号和加粗后，和要删的那句几乎一样（Dice ≥ 0.8），全文只有一处。
 // 标题、表格行、下面还挂着子项的行都不删（删了会把结构弄坏），找不准的也不删，交给报告提醒。
@@ -282,4 +298,4 @@ function undoDoc(treePath, u) {
 
 const isDocOp = o => !!o && typeof o.op === 'string' && o.op.startsWith('doc_');
 
-module.exports = { resolve, exists, isProgramData, purpose, readLine, removeDocText, restoreDoc, writeDoc, putBack, replaceDocText, doDoc, undoDoc, isDocOp, splitRef, sections, findSection, toc, describe, docsMtime, LONG_CHARS };
+module.exports = { resolve, exists, isProgramData, purpose, readLine, docTime, removeDocText, restoreDoc, writeDoc, putBack, replaceDocText, doDoc, undoDoc, isDocOp, splitRef, sections, findSection, toc, describe, docsMtime, LONG_CHARS };

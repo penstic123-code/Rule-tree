@@ -597,7 +597,7 @@ test('插件：久未动的问题按界面语言显示（英文）', async () =>
     await api.prompted; await panel.asking;
     const note = fake.notes.find(n => /touched/.test(n.m));
     assert.ok(note, fake.shown.join('\n'));
-    assert.match(note.m, /^ReqTree: "第1章" hasn't been touched for 5 days\. Is it done\? \(recorded as "Still working on it" for now\)$/);
+    assert.match(note.m, /^RuleTree: "第1章" hasn't been touched for 5 days\. Is it done\? \(recorded as "Still working on it" for now\)$/);
     assert.deepStrictEqual(note.items.map(i => i.title), ['Done', 'Pause (undecided)', 'Still working on it (current)', 'Later']);
     await panel.asking;
     assert.match(read(tree), /### C1\.1 第1章 ✅/);
@@ -623,4 +623,30 @@ test('插件：「需求树：体检」合并重复、调用（假）模型，�
     assert.ok(!read(tree).includes('不超过5个'), '改选「统一用4」');
     assert.ok(fs.existsSync(path.join(dir, '.reqtree', 'checkup-report.md')), '写了报告');
   } finally { delete process.env.FAKE_OUT; fakeVscode.pick = null; dispose(); }
+});
+
+test('记录员按规则管的文件核对挂哪：挂的需求覆盖不到那个文件就改挂（最具体的）；覆盖得到的、哪个需求都覆盖不到的照模型的挂', () => {
+  const tree = `# P 游戏
+- 用中文
+
+## R1 画面
+> 文件：game/shaders/**
+
+## R2 剧情
+> 文件：game/dialogue/**
+
+### R2.1 店里的台词
+> 文件：game/dialogue/shop/**
+`;
+  const { dir } = project(tree);
+  runRecorder(dir, { ops: [
+    { op: 'add_rule', node: 'R1', text: '台词一句不超过 24 字', file: 'game/dialogue/shop/a.json' },
+    { op: 'add_rule', node: 'R1', text: '天空用渐变', file: 'game/shaders/sky.gdshader' },
+    { op: 'add_rule', node: 'R1', text: '阴影偏冷', file: 'game/没有这个.gd' },
+  ] }, { focus: ['R1'], turns: [{ user: '台词一句不超过 24 字；天空用渐变；阴影偏冷', ai: '好' }] });
+  const P = require('../src/parser');
+  const root = P.parse(read(path.join(dir, '需求树.md')));
+  assert.deepStrictEqual(P.findById(root, 'R2.1').rules.map(r => r.text), ['台词一句不超过 24 字'], '最具体的那个');
+  assert.deepStrictEqual(P.findById(root, 'R1').rules.map(r => r.text), ['天空用渐变', '阴影偏冷']);
+  assert.ok(!read(path.join(dir, '.reqtree', 'changes.jsonl')).includes('"file":"game/'), 'file 只用来核对，不进改动记录');
 });

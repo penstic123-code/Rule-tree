@@ -131,14 +131,24 @@ test('编译说明：长期要求只记在树里，不要再写进记忆 / CLAUD
   const tree = path.join(dir, '需求树.md');
   compile(tree, { targets: { claude: true, codex: true } });
   const idx = fs.readFileSync(path.join(dir, '.claude', 'rules', 'reqtree', '_index.md'), 'utf8');
-  assert.match(idx, /reqtree:format 12/);
+  assert.match(idx, /reqtree:format 14/);
   assert.match(idx, /不要再写进记忆（memory）或 CLAUDE\.md/);
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /不要再写进记忆（memory）或 AGENTS\.md/);
   // 旧格式的 _index.md 比树新也要重编
   const p = path.join(dir, '.claude', 'rules', 'reqtree', '_index.md');
-  fs.writeFileSync(p, idx.replace('reqtree:format 12', 'reqtree:format 2').replace(/不要再写进记忆.*\n/, ''));
+  fs.writeFileSync(p, idx.replace('reqtree:format 14', 'reqtree:format 2').replace(/不要再写进记忆.*\n/, ''));
   const later = new Date(Date.now() + 60000);
   fs.utimesSync(p, later, later);
   assert.ok(ensureCompiled(tree));
   assert.match(fs.readFileSync(p, 'utf8'), /不要再写进记忆/);
+});
+
+test('总目录：Codex 和 Claude 说同样的几句（按后写的为准、自动记忆只记和项目无关的事、几个需求都照做）', () => {
+  const dir = project();
+  const tree = path.join(dir, '需求树.md');
+  compile(tree, { targets: { claude: true, codex: true } });
+  const agents = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8');
+  assert.match(agents, /按后写的那边把另一边改过来/);
+  assert.match(agents, /自动记忆只记和项目内容无关的事/);
+  assert.match(agents, /几份规则都要照做/);
 });

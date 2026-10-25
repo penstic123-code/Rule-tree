@@ -73,11 +73,20 @@ test('提示词：只列出规则够多的需求，带上已有的组名；没�
   const { tree } = project();
   Cat.save(tree, TREE, GROUPS);
   const task = Cat.promptTask(TREE, Cat.read(tree));
-  assert.match(task, /（P）/);
+  assert.match(task, /P：1\. 段落不超过 4 行  2\. /, '列出规则和序号，模型只回序号');
   assert.match(task, /写作、插图/);
   assert.match(buildCheckPrompt(TREE, '', '', task), /"categories"/);
   assert.strictEqual(Cat.promptTask('# P 项目\n- 一条\n', {}), '');
   // 需求删了：下次存的时候顺手删掉
   Cat.save(tree, '# P 项目\n- 段落不超过 4 行\n- a1\n- a2\n- a3\n- a4\n- a5\n', [{ node: 'P', groups: [{ name: '写作', rules: ['段落不超过 4 行'] }] }]);
   assert.deepStrictEqual(Object.keys(Cat.read(tree)), ['P']);
+});
+
+test('模型只回序号（不抄原文，规则多时输出才不会长到超时）：按这个需求里第几条对上；越界的跳过', () => {
+  const { tree } = project();
+  assert.deepStrictEqual(Cat.save(tree, TREE, [{ node: 'P', groups: [{ name: '写作', rules: [1, 2, 3] }, { name: '插图', rules: [4, 5, 99] }] }]), ['P']);
+  const cats = Cat.read(tree);
+  assert.strictEqual(Cat.catOf(cats, 'P', '小标题写概念名'), '写作');
+  assert.strictEqual(Cat.catOf(cats, 'P', '插图人物不悬空'), '插图');
+  assert.strictEqual(Cat.catOf(cats, 'P', '互动要能撤销'), null);
 });

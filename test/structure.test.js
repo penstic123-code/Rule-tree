@@ -140,7 +140,7 @@ test('代码地图：列出页面自己的脚本（只被一个页面引用的�
   const tree = path.join(dir, '需求树.md');
   fs.writeFileSync(tree, '# P x\n\n## C2 课\n> 文件：ds/**\n');
   require('../src/codemap').refresh(tree);
-  const map = read(path.join(dir, '.claude', 'rules', 'reqtree', 'map-C2.md'));
+  const map = read(path.join(dir, '.reqtree', 'map', 'C2.md'));
   assert.match(map, /页面自己的脚本（只被一个页面引用，共 2 个），例：ds\/ch01-a\.html → ds\/js\/ch01\.js；ds\/ch02-b\.html → ds\/js\/ch02\.js/);
 });
 
@@ -161,4 +161,15 @@ test('重复：下级文档里和上级文档逐字重复的列表项删掉（�
   assert.strictEqual(read(path.join(dir, 'a/规则.md')), '# A 课\n- A 课专用：每章配三张图\n本文节号沿用原来的 CLAUDE.md 编号方式。\n');
   assert.ok(store.undoChange(treePath, done.changeId));
   assert.match(read(path.join(dir, 'a/规则.md')), /术语先讲后用/);
+});
+
+test('重复：上级的文档在下级的文件上不加载（下级的文件范围不在上级里）时，下级文档里的那一行不删', () => {
+  const dir = project({
+    'a/规则.md': '# A\n- 术语先讲后用，第一次出现时给一句白话解释\n',
+    'b/规则.md': '# B\n- 术语先讲后用，第一次出现时给一句白话解释\n',
+    'a/x.html': '', 'b/x.html': '',
+  });
+  const treePath = path.join(dir, '需求树.md');
+  fs.writeFileSync(treePath, '# P x\n\n## C1 A\n> 文件：a/**\n> 文档：a/规则.md\n\n### C1.1 外面的\n> 文件：b/**\n> 文档：b/规则.md\n');
+  assert.deepStrictEqual(Structure.dupLines(P.parse(read(treePath)), dir), []);
 });

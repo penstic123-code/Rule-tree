@@ -11,19 +11,23 @@ const path = require('path');
 const { parse, walk, applyOps, nextChildId } = require('./parser');
 const Docs = require('./docs');
 const { chapterNumbers, fileChapters } = require('./mention');
+const { covers } = require('./compile');
 
 const ACTIVE_DAYS = 60;
 const MIN_FILES = 3;
 const MAX_DOCS = 3;
+// 备份、副本：不是在用的东西，不建需求、不挂文档、不从里面搬规则（2026-10-25 Vibelearning 的 game-design-course-备份-20261020/ 被挂进了课程）
+const BACKUP = /备份|副本|backup|\bbak\b|\bold\b|archive|\bcopy\b/i;
+const isBackup = p => String(p).split('/').some(seg => BACKUP.test(seg));
 // 不当成「一块内容」的文件夹：工具、素材、构建产物、备份
-const NOT_CONTENT = /^[._]|^(node_modules|tests?|spec|__tests__|docs?|scripts?|tools?|bin|build|dist|out|target|vendor|lib|assets?|img|images?|static|public|fonts?|media|coverage)$|备份|副本|backup|\bbak\b|\bold\b|archive|\bcopy\b/i;
+const NOT_CONTENT = new RegExp(`^[._]|^(node_modules|tests?|spec|__tests__|docs?|scripts?|tools?|bin|build|dist|out|target|vendor|lib|assets?|img|images?|static|public|fonts?|media|coverage)$|${BACKUP.source}`, 'i');
 const NOT_DOCS = /^(readme|changelog|license|licence|contributing|claude|agents)\b/i;
 // 挂哪几份：讲规则、进度、总说明的优先
 const docRank = f => (/规则|规范|rules|guide|brief|progress|进度|章节|chapters|plan|计划/i.test(path.basename(f)) ? 0 : 1);
 
 // 文件夹第一层的说明文档（.md，不含 README 这类）
 const topDocs = (files, folder, treeName, projectDir, cache) => files
-  .filter(f => f.startsWith(folder + '/') && !f.slice(folder.length + 1).includes('/') && /\.md$/i.test(f)
+  .filter(f => f.startsWith(folder + '/') && !f.slice(folder.length + 1).includes('/') && /\.md$/i.test(f) && !isBackup(f)
     && !NOT_DOCS.test(path.basename(f)) && path.basename(f) !== treeName && !Docs.isProgramData(projectDir, f, cache))
   .sort((a, b) => docRank(a) - docRank(b) || a.localeCompare(b));
 
@@ -174,6 +178,8 @@ function dupLines(root, projectDir) {
       const mine = linesOf(ref);
       if (!mine) continue;
       for (let p = n.parent; p; p = p.parent) {
+        // 上级的文档提示要在下级的文件上也加载，删掉下级这一行才不丢（下级自己写了别处的文件范围时不一定）
+        if (p.docs.length && !covers(p, n)) continue;
         for (const up of p.docs) {
           const theirs = linesOf(up);
           if (!theirs || theirs.file === mine.file) continue;
@@ -192,4 +198,4 @@ function dupLines(root, projectDir) {
   return out;
 }
 
-module.exports = { plan, chapterSection, titleOf, dupLines, NOT_CONTENT };
+module.exports = { plan, chapterSection, titleOf, dupLines, NOT_CONTENT, isBackup };

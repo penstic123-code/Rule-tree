@@ -42,8 +42,10 @@ function delegate(payload, projectDir, trace) {
   }
   // 被提到的需求的规则由这里送（和按文件送的规则共用一份「送过了」的记录），hook.js 那边关掉
   if (payload.hook_event_name === 'UserPromptSubmit') env.REQTREE_NO_MENTION = '1';
-  const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(payload), env, windowsHide: true, timeout: 20000 });
+  const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(payload), env, windowsHide: true, timeout: 20000, encoding: 'utf8' });
   if (r.error) trace.delegateError = r.error.message;
+  // hook.js 要告诉 AI 的话（编译失败的提醒）：交回来，跟这边要送的一起送
+  try { return (JSON.parse(r.stdout || '{}').hookSpecificOutput || {}).additionalContext || ''; } catch { return ''; }
 }
 
 const fits = text => Buffer.byteLength(text) <= codex.CONTEXT_LIMIT;
@@ -76,17 +78,18 @@ function main(input, trace) {
   let out = '';
 
   if (event === 'SessionStart') {
-    // AGENTS.md 在会话开始时已经读进去了：记下 AI 看到的那一版，再编译。compact/clear 之后上下文清空，送过的规则要重送
-    const seen = readBlock(projectDir);
+    // AGENTS.md 在会话开始时已经读进去了：记下 AI 看到的那一版（在 git worktree 里是那份检出的），再编译。compact/clear 之后上下文清空，送过的规则要重送
+    const seen = readBlock(require('../src/common').checkoutOf(projectDir, cwd));
     store.compileTree(treePath);
     store.writeJson(sf, { sent: {}, seen: codex.hash(seen) });
     return '';
   }
 
   if (event === 'UserPromptSubmit') {
-    delegate({ ...input, cwd: projectDir }, projectDir, trace); // 编译 + 记下用户原话（通知类的 hook.js 自己会跳过）
+    const note = delegate({ ...input, cwd: projectDir }, projectDir, trace); // 编译 + 记下用户原话（通知类的 hook.js 自己会跳过）
     // 后台通知、子 agent 回报、命令输出不是用户的话：什么都不送
     if (input.prompt && isMachinePrompt(input.prompt)) { trace.machine = true; return ''; }
+    // 托管块是项目根 AGENTS.md 里最新的；会话开始时 AI 读到的那一版记在 seen（在 worktree 里读的是 worktree 那份）
     const block = readBlock(projectDir);
     let global = null;
     if (block && st.seen && codex.hash(block) !== st.seen) {
@@ -120,10 +123,10 @@ function main(input, trace) {
     store.writeJson(sf, st);
     // Codex 的附加上下文超过上限（默认 2500 token ≈ 1 万字节）会被存进文件、只给 AI 一段预览。
     // 全局那段太长时换成一句提示，让 AI 自己重读 AGENTS.md
-    const parts = [global, mention].filter(Boolean);
+    const parts = [note, global, mention].filter(Boolean);
     if (!parts.length) return '';
     if (global && !fits(parts.join('\n\n'))) {
-      parts[0] = `需求树（${treeName}）的全局规则或索引刚更新过，内容较长，请重新读项目根 ${path.basename(codex.agentsFile(projectDir))} 里需求树那一段（会话开始时读到的是旧版）。`;
+      parts[parts.indexOf(global)] = `需求树（${treeName}）的全局规则或索引刚更新过，内容较长，请重新读项目根 ${path.basename(codex.agentsFile(projectDir))} 里需求树那一段（会话开始时读到的是旧版）。`;
       trace.injected.push('global-pointer');
     }
     return context(event, clip(parts.join('\n\n')));
@@ -170,6 +173,12 @@ function main(input, trace) {
       }
       out = context(event, clip(body));
       trace.injected = due.map(u => u.id);
+    }
+    // 能写成检查的规则（src/checks.js）：apply_patch 加进去的行查一遍，可能违反就提醒
+    if (isPatch) {
+      const Checks = require('../src/checks');
+      const warns = [...Checks.patchAdded(ti.command)].map(([p, added]) => { const rel = codex.relTo(projectDir, cwd, p); return rel ? Checks.run(treePath, root, rel, added) : ''; }).filter(Boolean);
+      if (warns.length) { out = context(event, clip([out ? JSON.parse(out).hookSpecificOutput.additionalContext : '', ...warns].filter(Boolean).join('\n\n'))); trace.checks = true; }
     }
     store.writeJson(sf, st);
     return out;

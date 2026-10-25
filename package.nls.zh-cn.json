@@ -1,6 +1,6 @@
 {
-  "displayName": "需求树 ReqTree",
-  "description": "给 AI 编程用的需求树：规则分层继承，按分支取规则，看得见 AI 在改哪条。",
+  "displayName": "需求树 RuleTree",
+  "description": "一套为 AI 编程设计的信息架构：规则、文档、代码地图各归其位，一直替你理好，AI 改哪个文件，就只读哪个文件的规则。",
   "view.container": "需求树",
   "view.panel": "需求树",
   "cmd.create": "需求树：新建",
@@ -14,6 +14,7 @@
   "config.language.en": "英文",
   "cmd.questions": "需求树：待回答的问题",
   "cmd.checkup": "需求树：体检",
+  "cmd.reorganize": "需求树：重新整理（AI）",
   "cmd.checkupReport": "需求树：查看体检报告",
   "config.askQuestions": "你的新说法和一条「决定：」对不上时，先不动那条决定，问你。别的拿不准的按最可能的记下，不问。",
   "config.askQuestions.notify": "弹通知问（不挡操作）",

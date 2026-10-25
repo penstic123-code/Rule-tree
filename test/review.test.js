@@ -170,6 +170,39 @@ test('init：settings.local.json 带 BOM 照样读、权限保留；解析不了
   assert.strictEqual(fs.readFileSync(sp2, 'utf8'), bad);
 });
 
+test('停用：去掉 hook 和规则（连 worktree 里抄的），之后插件、hook 再编译也不生成；重新 init 恢复', () => {
+  const dir = project();
+  bin.init(dir, { log: () => {} });
+  const rules = path.join(dir, '.claude', 'rules', 'reqtree');
+  // 一个 worktree：.git/worktrees/w/gitdir 指回 worktree 根，worktree 根的 .git 是个文件
+  const wt = path.join(dir, '.claude', 'worktrees', 'w');
+  fs.mkdirSync(path.join(dir, '.git', 'worktrees', 'w'), { recursive: true });
+  fs.mkdirSync(wt, { recursive: true });
+  fs.writeFileSync(path.join(dir, '.git', 'worktrees', 'w', 'gitdir'), path.join(wt, '.git'));
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(dir, '.git', 'worktrees', 'w')}\n`);
+  store.compileTree(path.join(dir, '需求树.md'), { force: true });
+  assert.ok(fs.existsSync(path.join(wt, '.claude', 'rules', 'reqtree', '_index.md')));
+  bin.disable(dir);
+  assert.ok(!bin.hasHooks(dir));
+  assert.ok(!fs.existsSync(rules) && !fs.existsSync(path.join(wt, '.claude', 'rules', 'reqtree')));
+  store.compileTree(path.join(dir, '需求树.md'), { force: true });
+  store.compileTree(path.join(dir, '需求树.md'), { wait: false });
+  assert.ok(!fs.existsSync(rules), '停用后编译不再生成规则');
+  bin.init(dir, { log: () => {} });
+  assert.ok(fs.existsSync(path.join(rules, '_index.md')));
+});
+
+test('init：共享的 settings.json 里已有需求树的 hook 时去掉，只留 settings.local.json 一份（不然每个事件触发两次）', () => {
+  const dir = project();
+  fs.mkdirSync(path.join(dir, '.claude'));
+  const shared = path.join(dir, '.claude', 'settings.json');
+  const ours = { type: 'command', command: 'node "/x/.reqtree/runtime/hooks/hook.js"' };
+  fs.writeFileSync(shared, JSON.stringify({ model: 'opus', hooks: { Stop: [{ hooks: [ours, { type: 'command', command: 'echo hi' }] }] } }));
+  bin.init(dir, { log: () => {} });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(shared, 'utf8')), { model: 'opus', hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] } });
+  assert.ok(JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8')).hooks.Stop);
+});
+
 // ---------- 4. AGENTS.md 标记 ----------
 test('AGENTS.md：标记要单独一行；END 只在 BEGIN 后面找；块不完整就不写、给提醒', () => {
   const { BEGIN: B, END: E } = codex;

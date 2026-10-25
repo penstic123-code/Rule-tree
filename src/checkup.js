@@ -18,7 +18,9 @@ const path = require('path');
 const store = require('./store');
 const Q = require('./questions');
 const Docs = require('./docs');
+const RC = require('./rulecheck');
 const { parse, walk, sameMeaning, findById, norm, globToRegExp } = require('./parser');
+const { isRoot } = require('./common');
 
 // 体检的问题里，选项只能做这几种改动
 const CHECK_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'override_rule']);
@@ -44,20 +46,11 @@ function duplicateOps(text) {
       if (r.key || ops.some(o => o.node === n.id && o.text === r.text)) continue;
       for (let p = n.parent; p && p.parent; p = p.parent) {
         const hit = p.rules.find(x => !x.key && sameMeaning(x.text, r.text));
-        if (hit && covers(p, n)) { ops.push({ op: 'remove_rule', node: n.id, text: r.text, why: `${p.id}：${hit.text}` }); break; }
+        if (hit && require('./compile').covers(p, n)) { ops.push({ op: 'remove_rule', node: n.id, text: r.text, why: `${p.id}：${hit.text}` }); break; }
       }
     }
   }
   return ops;
-}
-function covers(upper, lower) {
-  const { scopeOf } = require('./compile');
-  const up = scopeOf(upper);
-  if (!up) return true;
-  const low = scopeOf(lower);
-  if (!low) return false;
-  const dirs = up.map(g => (g.match(/^([^*?{}[\]]*)\*\*$/) || [])[1]).filter(d => d !== undefined);
-  return low.every(g => dirs.some(d => g.startsWith(d)));
 }
 
 const CLAUDE_MD_CHARS = 8000;
@@ -86,9 +79,10 @@ const MEMORY_TASK = `另外逐份看自动记忆，每份在 memory 里写一项
 // 不管哪种项目，规则（以后都要照做的要求）只该在需求树里；文档放参考资料：架构、接口、进度、章节表、决策的来由、踩过的坑
 const DOC_TASK = `另外逐份看文档。分工：规则（以后都要照做的要求）只该写在需求树里；文档只放参考资料（架构、接口、进度、章节表、某个决定的来由、经验）。CLAUDE.md、AGENTS.md 每次都全文加载，最好只留"东西在哪"这类说明。文档里每处写成规则的地方，在 docs 里写一项（只是参考资料的不写）：
 - dup：需求树里已经有同一条（措辞不同也算）。doc 是文档名（照下面每段标题里的写），text 是文档里那一整行的原文（去掉列表符号，能在文档里原样搜到；只是表格里的一格、长句里的半句的不写），node 是树里那条所在的需求 ID。
-- move：需求树里还没有的长期规则。doc、text 同上，node 写该挂的需求 ID（管辖范围最小的那个；管全项目的写顶层需求），rule 是照文档意思写成的一条简短规则。
+- move：需求树里还没有的长期规则。doc、text 同上，node 写该挂的需求 ID（管辖范围最小的那个；挂在某个需求下的文档，只能挂在那个需求或它下面；项目根的 CLAUDE.md、AGENTS.md 里管全项目的写顶层需求），rule 是照文档意思写成的一条简短规则。
 - stale：文档挂在某个需求下（下面每段标题里写着挂在哪），里面的说法和这个需求自己的规则冲突。需求树是最新的，文档要跟着改。text 是文档里要换掉的原文（几个字到一句，能在文档里原样搜到），new 是照规则改好的文字（只替换 text 这一段，格式和语言跟文档一致；text 里和这条规则无关的说法原样留在 new 里，例：原文「不说话，不加戏份」，规则说点击可以说话 → new「点击可以让它说话，不加戏份」），node 是需求 ID，rule 是树里那条原文。全项目的规范文档和某个需求说法不同，是那个需求的例外，不写。
-dup、move 和 stale 会直接处理：规则进树，文档里那一行删掉（用户可以撤销）。所以 text 要是文档里完整的一行（去掉列表符号），只是参考资料、说明来由的句子不要写进来。
+- clash：这一批里的两份文档对同一件事说法互相矛盾（一份只是更具体、或者是有意的例外，不算）。doc、text 是一份的文档名和原文（几个字到一句，能原样搜到），other、otherText 是另一份的；new 是把 text 照 otherText 的说法改好的文字，otherNew 是把 otherText 照 text 的说法改好的文字（都只替换那一段，无关的说法原样留）。程序按两份文档谁后改的定以哪边为准。标着「这次没改过，只拿来和别的文档对比」的文档，只用来查 clash，不要为它写 dup、move、stale。
+dup、move、stale 和 clash 会直接处理：规则进树，文档里那一行删掉、那一段改掉（用户可以撤销）。所以 text 要是文档里完整的一行（去掉列表符号；stale、clash 的可以是一段），只是参考资料、说明来由的句子不要写进来。
 每段文档最多 15 项，拿不准的不写。
 `;
 
@@ -102,8 +96,9 @@ function docText(projectDir, rel) {
 // 要查的文档：[{ name, node }]。挂了的文档 + 项目根的 CLAUDE.md、AGENTS.md
 function docList(root, projectDir) {
   const out = [], seen = new Set(), cache = new Map();
-  // 程序运行时读的 .md 就算挂上了也不看、不改（见 docs.isProgramData）
-  const add = (name, node) => { const k = name.replace(/\\/g, '/'); if (!seen.has(k) && Docs.exists(projectDir, k) && !Docs.isProgramData(projectDir, k, cache)) { seen.add(k); out.push({ name: k, node }); } };
+  // 程序运行时读的 .md、备份文件夹里的旧文档，就算挂上了也不看、不改、不从里面搬规则（见 docs.isProgramData、structure.isBackup）
+  const { isBackup } = require('./structure');
+  const add = (name, node) => { const k = name.replace(/\\/g, '/'); if (!seen.has(k) && !isBackup(k) && Docs.exists(projectDir, k) && !Docs.isProgramData(projectDir, k, cache)) { seen.add(k); out.push({ name: k, node }); } };
   for (const f of ['CLAUDE.md', '.claude/CLAUDE.md', 'AGENTS.md']) add(f, null);
   // 只挂了一节的，体检照样看整份（重复、该搬的规则可能在别的节里）
   for (const n of walk(root)) for (const d of n.docs) add(Docs.splitRef(d).file, n.id);
@@ -157,13 +152,27 @@ function docProblems(text, projectDir, treePath) {
 // 文档、需求、规则对不上的丢掉。删文档的一行先备份，可撤销；找不准那一行就不删（见 docs.removeDocText），只在报告里提醒
 const MAX_DOC_QUESTIONS = 15;
 const oneLine = s => (typeof s === 'string' ? s.replace(/[\r\n]+/g, ' ').trim() : '');
-function docPlan(items, { text, shown, asked, count = 0 }) {
+// refs：只拿来对比的旧文档（这次没改过），只认它和别的文档的矛盾（clash），不从里面找规则
+function docPlan(items, { text, shown, refs = new Set(), asked, count = 0 }) {
   const root = parse(text);
-  const dup = [], questions = [], conflicts = [], stale = [];
+  const dup = [], questions = [], conflicts = [], stale = [], clash = [];
+  const docName = s => oneLine(s).replace(/(（第\s*\d+\s*\/\s*\d+\s*段）|（挂在[^）]*）|（项目根[^）]*）)+$/, '').trim();
   for (const it of Array.isArray(items) ? items : []) {
     if (!it || typeof it !== 'object') continue;
-    const doc = oneLine(it.doc).replace(/(（第\s*\d+\s*\/\s*\d+\s*段）|（挂在[^）]*）|（项目根[^）]*）)+$/, '').trim(), said = oneLine(it.text);
-    const node = typeof it.node === 'string' ? findById(root, it.node.trim()) : null;
+    const doc = docName(it.doc), said = oneLine(it.text);
+    // 两份文档说法矛盾：两边的原文和照对方改好的文字都要有，两份都给模型看过；按谁后改的定（调用方做）
+    if (it.kind === 'clash') {
+      const other = docName(it.other), otherSaid = oneLine(it.otherText), a = oneLine(it.new), b = oneLine(it.otherNew);
+      const seenBy = f => shown.has(f) || refs.has(f);
+      if (seenBy(doc) && seenBy(other) && (shown.has(doc) || shown.has(other)) && doc !== other && said && otherSaid && a && b && a !== said && b !== otherSaid) clash.push({ doc, text: said, new: a, other, otherText: otherSaid, otherNew: b });
+      else log(`体检：模型说的文档矛盾对不上，丢掉：${JSON.stringify(it)}`);
+      continue;
+    }
+    let node = typeof it.node === 'string' ? findById(root, it.node.trim()) : null;
+    // 挂在某个需求下的文档，只在改这个需求的文件时才送到 AI 手上：里面的规则搬进树，只能挂在这个需求或它下面，
+    // 往上挂（尤其挂到最顶上）等于把它变成全局规则（2026-10-25 副本上从课程文档搬了 67 条，有的挂到了根上）
+    const holders = [...walk(root)].filter(n => n.id && n.docs.some(d => Docs.splitRef(d).file.replace(/\\/g, '/') === doc));
+    if (node && it.kind === 'move' && holders.length && !holders.some(h => h === node || require('./parser').pathOf(node).includes(h))) node = holders[holders.length - 1];
     if (!shown.has(doc) || !said || !node) { log(`体检：模型说的文档项对不上，丢掉：${JSON.stringify(it)}`); continue; }
     const del = { op: 'doc_remove', file: doc, text: said };
     if (it.kind === 'dup') { dup.push({ doc, text: said, node: node.id, ops: [del] }); continue; }
@@ -195,7 +204,7 @@ function docPlan(items, { text, shown, asked, count = 0 }) {
     }
     if (q) { asked.add(key); questions.push({ source: '体检', kind: 'doc', memKey: key, doc, docText: said, node: node.id, ...q }); }
   }
-  return { dup, questions, conflicts, stale };
+  return { dup, questions, conflicts, stale, clash };
 }
 
 // ---------- 分批 ----------
@@ -237,12 +246,13 @@ function checkPlan(treePath, { read, parts = {}, full = false, memory } = {}) {
     if (wasSeen(seen, `mem:${m.file}`, body)) continue;
     notes.push({ ...m, full: body });
   }
-  const docs = [];
-  if (parts.docs !== false) for (const d of docList(parse(text), projectDir)) {
+  const root = parse(text);
+  const docs = [], unchanged = [];
+  if (parts.docs !== false) for (const d of docList(root, projectDir)) {
     let body = '';
     try { body = docText(projectDir, d.name); } catch { continue; }
-    if (!body.trim() || wasSeen(seen, `doc:${d.name}`, body)) continue;
-    docs.push({ ...d, text: body });
+    if (!body.trim()) continue;
+    (wasSeen(seen, `doc:${d.name}`, body) ? unchanged : docs).push({ ...d, text: body });
   }
   const segs = [];
   for (const m of notes) {
@@ -250,21 +260,47 @@ function checkPlan(treePath, { read, parts = {}, full = false, memory } = {}) {
     ps.forEach((p, i) => segs.push({ kind: 'mem', name: m.file, note: m, part: ps.length > 1 ? [i + 1, ps.length] : null,
       block: `### ${m.file}${ps.length > 1 ? `（第 ${i + 1}/${ps.length} 段）` : ''}（${m.type ? `类型 ${m.type}，` : ''}更新于 ${m.modified}）\n${p}` }));
   }
+  // 文档之间说法矛盾，模型只比得到同一批里的（2026-10-25 猪猪进城记 45 份文档分 11–17 批，埋的一对矛盾 3 遍都没查出）：
+  // ①按「同一块」（文档挂的需求所在的顶层需求；根上的、CLAUDE.md 算一块）分组，同一组尽量装进同一批；
+  // ②改过的文档带上同一条上下级链上挂的、这次本来跳过的旧文档（每份最多 REFS 份、只取第一段），只拿来对比，不从里面找规则
+  const REFS = 3;
+  const nodeOf = id => (id ? findById(root, id) : null);
+  const chain = id => { const n = nodeOf(id); return n ? require('./parser').pathOf(n).filter(x => !isRoot(x)).map(x => x.id) : []; };
+  const blockOf = id => chain(id)[0] || '';
+  const groups = new Map();
+  const put = (key, seg) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(seg); };
   for (const d of docs) {
     const ps = pieces(d.text);
-    ps.forEach((p, i) => segs.push({ kind: 'doc', name: d.name, part: ps.length > 1 ? [i + 1, ps.length] : null,
+    ps.forEach((p, i) => put(blockOf(d.node), { kind: 'doc', name: d.name, part: ps.length > 1 ? [i + 1, ps.length] : null,
       block: `### ${d.name}${ps.length > 1 ? `（第 ${i + 1}/${ps.length} 段）` : ''}${d.node ? `（挂在 ${d.node}）` : '（项目根，每次全文加载）'}\n${p}` }));
+    if (!d.node) continue;
+    const mine = chain(d.node);
+    const refs = unchanged.filter(u => u.node && (mine.includes(u.node) || chain(u.node).includes(d.node))).slice(0, REFS);
+    for (const u of refs) {
+      const g = groups.get(blockOf(d.node));
+      if (g.some(s => s.name === u.name)) continue;
+      put(blockOf(d.node), { kind: 'ref', name: u.name, block: `### ${u.name}（挂在 ${u.node}；这次没改过，只拿来和别的文档对比）\n${pieces(u.text)[0]}` });
+    }
   }
   const batches = [];
   let cur = [], size = 0;
-  for (const s of segs) {
-    if (cur.length && size + s.block.length > BATCH_CHARS) { batches.push(cur); cur = []; size = 0; }
-    cur.push(s); size += s.block.length;
+  const flush = () => { if (cur.some(s => s.kind !== 'ref')) batches.push(cur); cur = []; size = 0; };
+  for (const group of [segs, ...groups.values()]) {
+    const total = group.reduce((n, s) => n + s.block.length, 0);
+    // 一组整个装得下一批、当前这批又装不下它：另起一批，让同一块的文档待在一起
+    if (cur.length && total <= BATCH_CHARS && size + total > BATCH_CHARS) flush();
+    for (const s of group) {
+      if (cur.length && size + s.block.length > BATCH_CHARS) flush();
+      cur.push(s); size += s.block.length;
+    }
   }
-  if (cur.length) batches.push(cur);
+  if (cur.length) flush();
+  // 规则：上次体检之后一条都没变就不查（不调用模型）；变了只查变了的（见 src/rulecheck.js）
+  const changed = RC.changedRules(text, seen.rules);
+  const rulesDue = parts.rules !== false && changed.length > 0;
   // 冲突和分组：只有一批时和它一起查（少调用一次）；不止一批时单独一次，免得第一批比别的都重、先超时
-  if (parts.rules !== false && batches.length !== 1) batches.unshift([]);
-  return { notes, docs, batches, calls: batches.length, memDir, seen };
+  if (rulesDue && batches.length !== 1) batches.unshift([]);
+  return { notes, docs, batches, calls: batches.length, memDir, seen, rulesDue, changed };
 }
 
 // conflicts：false 时不找规则冲突（分批体检的后几批、或用户没选「规则」）
@@ -278,7 +314,7 @@ function contextBlock(treePath, text) {
   const doing = [...walk(root)].filter(n => n.id && n.status === 'doing').map(n => `${n.id} ${n.title}`);
   if (doing.length) lines.push('标着进行中的需求：' + doing.join('、'));
   let act = [];
-  try { act = store.readActivity(treePath, Date.now() - RECENT_DAYS * 864e5); } catch {}
+  try { act = store.readActivity(treePath, RECENT_DAYS * 864e5); } catch {}
   // 按文件对照现在的树算属于哪个需求（记下的编号可能是重新初始化之前的），取范围最窄的那个
   const { nodesForFile } = require('./parser');
   const owner = new Map();
@@ -299,7 +335,8 @@ function contextBlock(treePath, text) {
   return lines.join('\n');
 }
 
-function buildCheckPrompt(tree, memory = '', claudeMd = '', categoryTask = '', docs = '', conflicts = true, context = '') {
+// ruleTask：一起送到的规则、过时的规则、这次只查哪些（src/rulecheck.js 的 promptTask），只在查冲突的那一批带
+function buildCheckPrompt(tree, memory = '', claudeMd = '', categoryTask = '', docs = '', conflicts = true, context = '', ruleTask = '') {
   return `你是需求树的体检员。下面是一个项目的需求树（Markdown）：标题是需求，开头是 ID；标题下 "- " 开头的是规则，可带 [键]；下级用和上级同一个 [键] 的规则，是有意在本范围内覆盖上级（不算冲突）。
 
 <需求树>
@@ -337,10 +374,10 @@ ${conflicts ? `找出说法互相冲突、要用户拍板的规则：上级和�
 另外找几个兄弟需求里都有的同一条规则（措辞不同也算），写成同样格式的问题：提到它们共同的上级（每处 remove_rule，再在上级 add_rule），或者不动。上级是最顶上的需求时，只有这条对整个项目都成立才提。
 以「决定：」开头的规则是用户拍板定下的：不要提议删掉或改掉它，除非另一条更新的「决定：」推翻了它。
 default 是最可能的那个选项的序号（从 0 起）。sure 默认写 true，会直接按 default 处理（用户可以撤销），不问用户：同一需求里后写的为准，上下级之间下级算例外，提到上级要明显成立才提。判断时参考「时间和正在做的事」：后定下的为准；和正在进行、最近在改的需求有关的那条是现在在用的说法。只有这些都看不出哪边对、也看不出是不是真冲突时才写 false（那就什么都不改）。最多 ${MAX_CHECK_QUESTIONS} 个问题。
-` : `这次不用找规则冲突，questions 输出空数组。
+${ruleTask}` : `这次不用找规则冲突，questions 输出空数组。
 `}${memory ? MEMORY_TASK : ''}${docs ? DOC_TASK : ''}${categoryTask}
 只输出 JSON，不要任何别的文字；没有冲突就输出 {"questions":[]}：
-{"questions":[{"text":"全局写每章互动不超过4个，C1 写不超过5个：","options":[{"label":"C1 用5（本课例外）","ops":[...]},{"label":"统一用4","ops":[...]},{"label":"两条都留着","ops":[]}],"default":0,"sure":false}]${memory ? ',"memory":[{"file":"a.md","kind":"covered","where":"P"},{"file":"b.md","kind":"move","node":"C1","rules":["规则"],"whole":true},{"file":"c.md","kind":"conflict","node":"C2","rule":"树里原文","text":"记忆的说法","newer":"memory","whole":true},{"file":"d.md","kind":"stale","why":"那门课已经删了"},{"file":"e.md","kind":"doc","node":"C1"},{"file":"f.md","kind":"keep"}]' : ''}${docs ? ',"docs":[{"doc":"A/_BRIEF.md","kind":"dup","text":"文档原句","node":"C1"},{"doc":"A/_BRIEF.md","kind":"move","text":"文档原句","node":"C1","rule":"新规则"}]' : ''}${categoryTask ? ',"categories":[{"node":"P","groups":[{"name":"写作","rules":["树里原文"]}]}]' : ''}}`;
+{"questions":[{"text":"全局写每章互动不超过4个，C1 写不超过5个：","options":[{"label":"C1 用5（本课例外）","ops":[...]},{"label":"统一用4","ops":[...]},{"label":"两条都留着","ops":[]}],"default":0,"sure":false}]${conflicts && ruleTask ? RC.OUTPUT_HINT : ''}${memory ? ',"memory":[{"file":"a.md","kind":"covered","where":"P"},{"file":"b.md","kind":"move","node":"C1","rules":["规则"],"whole":true},{"file":"c.md","kind":"conflict","node":"C2","rule":"树里原文","text":"记忆的说法","newer":"memory","whole":true},{"file":"d.md","kind":"stale","why":"那门课已经删了"},{"file":"e.md","kind":"doc","node":"C1"},{"file":"f.md","kind":"keep"}]' : ''}${docs ? ',"docs":[{"doc":"A/_BRIEF.md","kind":"dup","text":"文档原句","node":"C1"},{"doc":"A/_BRIEF.md","kind":"move","text":"文档原句","node":"C1","rule":"新规则"},{"doc":"A/_BRIEF.md","kind":"clash","text":"每章 3 道题","new":"每章 5 道题","other":"docs/style.md","otherText":"每章 5 道题","otherNew":"每章 3 道题"}]' : ''}${categoryTask ? ',"categories":[{"node":"P","groups":[{"name":"写作","rules":[1,3]}]}]' : ''}}`;
 }
 
 const MAX_MEMORY_QUESTIONS = 12;
@@ -601,15 +638,29 @@ async function settle(treePath, q0, { write, read }) {
 //        docs 新加的文档问题, docDup 文档里和树重复、可以删的 [{ doc, text, node }], docMissing 挂了却不存在的文档, docUnlinked 没挂的文档,
 //        docConflicts 文档和树说法不同的 [{ doc, text, node, rule }]（以树为准，不问，只在报告里列）, toDoc 该挪进文档的记忆 [{ file, node, docs }], auto 有把握、直接处理了的（问题记录或 { text, t }，都可以在「最近改动」里撤销）,
 //        checked { notes, docs, calls, failed } 这次看了几份、调用几次模型、几次出错, error 最后一次调用模型出错的说明 }
-async function runCheckup(treePath, { read, write, model = true, ask, memory, parts = {}, full = false, progress } = {}) {
+async function runCheckup(treePath, { read, write, model = true, ask, reorgAsk, memory, parts = {}, full = false, progress } = {}) {
   const rec = require('../hooks/recorder');
   const mem = require('./memory');
   const readText = read || (p => fs.readFileSync(p, 'utf8'));
   const want = { rules: parts.rules !== false, memory: parts.memory !== false && memory !== false, docs: parts.docs !== false };
   const result = { merged: [], stale: [], memory: [], removed: [], scope: [], structure: [], noFiles: [], missing: [], categorized: [], questions: [],
-    docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], docNoToc: [], toDoc: [], auto: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
+    docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], docNoToc: [], toDoc: [], auto: [], reorganized: null, health: null, checks: null, docClash: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
   const projectDir = path.dirname(treePath);
   const asked = new Set(Q.readQuestions(treePath).map(q => q.memKey).filter(Boolean));
+  // 代码地图的图（谁用谁、代码里有哪些名字）：查挂错的代码文件、规则里提到的名字还在不在、信息架构评分。没有代码的项目是空的
+  let graph;
+  const getGraph = () => (graph !== undefined ? graph : (graph = (() => { try { return require('./codemap').build(projectDir, { allWords: true }); } catch (e) { rec.log('代码地图没建成：' + e.message); return null; } })()));
+  const misplacedCount = () => { const g = getGraph(); try { return g ? require('./codemap').placement(g, parse(readText(treePath))).filter(p => p.misplaced).length : 0; } catch { return 0; } };
+
+  // 树长歪了（某个需求挂了一大堆规则、根上规则太多、规则挂在永远送不到的需求上、代码挂错）：先重新整理结构，再接着查（自动只做一次，见 src/init.js）
+  const Init = require('./init');
+  if (model && want.rules && !Init.autoReorganized(treePath) && Init.needsReorganize(readText(treePath), { misplaced: misplacedCount() }).length) {
+    try {
+      const r = await Init.reorganize(treePath, { ask: reorgAsk || ask, auto: true });
+      if (r.ai) result.reorganized = r;
+      else rec.log('体检：重新整理没做成：' + (r.error ? r.error.message : '未知原因'));
+    } catch (e) { rec.log('体检：重新整理出错：' + e.stack); }
+  }
 
   if (want.rules) {
     const dups = duplicateOps(readText(treePath));
@@ -659,7 +710,12 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
     }
   };
   if (memDir && !model) await literalMemory();
-  if (!model) return result;
+  // 信息架构评分（不调用模型，src/health.js）：体检做完的样子，写进报告
+  const withHealth = () => {
+    try { result.health = require('./health').measure(treePath, { text: readText(treePath), graph: getGraph() }); } catch (e) { rec.log('信息架构评分没算成：' + e.stack); }
+    return result;
+  };
+  if (!model) return withHealth();
 
   const plan = checkPlan(treePath, { read: readText, parts: want, full, memory: memDir || false });
   result.checked = { notes: plan.notes.length, docs: plan.docs.length, calls: plan.calls, failed: 0 };
@@ -674,7 +730,10 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   const failedNames = new Set();
   // 几批同时问模型（最多 CHECK_PARALLEL 个），回来的结果按批的顺序一批批处理：写树、写文档不会互相打架，每处改动照样单独记、单独撤销。
   // 冲突和分组只查一次：交给最先开始的一批；它出错了，之后才开始的批接着查
-  let rulesTaken = !want.rules;
+  // 规则一条都没变：不查（plan.rulesDue）
+  let rulesTaken = !want.rules || !plan.rulesDue;
+  let files = null;
+  const projectFiles = () => files || (files = (() => { try { return require('./codemap').listFiles(projectDir, { any: true }); } catch { return []; } })());
   const calls = [];
   const start = i => {
     const batch = plan.batches[i];
@@ -683,9 +742,18 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
     const call = Promise.resolve().then(() => {
       const text = readText(treePath);
       const memSegs = batch.filter(s => s.kind === 'mem'), docSegs = batch.filter(s => s.kind === 'doc');
+      // 查规则的那一批：上次查过的就只看新加、改过的（第一次、全部重查时看全部）
+      let rules = null;
+      if (first) {
+        const focus = plan.seen.rules ? RC.changedRules(text, plan.seen.rules) : null;
+        const only = focus && new Set(focus.map(c => RC.ruleKey(c.node.id, c.rule.text)));
+        const g = getGraph();
+        rules = { focus, pairList: RC.pairs(text, projectFiles(), only), staleList: RC.staleEvidence(text, projectFiles(), only, g && g.files.size ? g.words : null) };
+        rules.cats = Cat.promptTask(text, Cat.read(treePath), focus && new Set(focus.map(c => c.node.id)));
+      }
       const prompt = buildCheckPrompt(text, memSegs.map(s => s.block).join('\n\n'), memSegs.length ? claudeMd : '',
-        first ? Cat.promptTask(text, Cat.read(treePath)) : '', docSegs.map(s => s.block).join('\n\n'), first, context);
-      return Promise.resolve(askModel(prompt)).then(out => ({ out, text, first }));
+        first ? rules.cats : '', batch.filter(s => s.kind === 'doc' || s.kind === 'ref').map(s => s.block).join('\n\n'), first, context, first ? RC.promptTask(rules) : '');
+      return Promise.resolve(askModel(prompt)).then(out => ({ out, text, first, rules }));
     }).catch(e => { if (first) rulesTaken = false; throw e; });
     // 这一批回来了（不管成没成）就开下一批，保持同时跑的个数
     call.then(() => {}, () => {}).then(() => { const n = calls.length; if (n < plan.batches.length) calls[n] = start(n); });
@@ -714,6 +782,22 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
           const st = await settle(treePath, { source: '体检', text: q.text, options: q.options, default: q.default, unsure: !!q.unsure }, { write, read: readText });
           if (st.question) result.questions.push(st.question); else if (st.auto) result.auto.push(st.auto);
         }
+        // 一起送到的两条重复、打架的；确认过时的（程序先找了证据）
+        const more = [...RC.pairJudgments(out && out.pairs, r.rules.pairList), ...RC.staleJudgments(out && out.stale, r.rules.staleList, { text, projectDir })];
+        for (const q of more) {
+          if (asked.has(q.memKey)) continue;
+          asked.add(q.memKey);
+          const st = await settle(treePath, q, { write, read: readText });
+          if (st.question) result.questions.push(st.question); else if (st.auto) result.auto.push(st.auto);
+        }
+        // 能写成检查的规则：核对后存下，AI 改完文件时 hook 查（src/checks.js）。这次只看了变了的规则时，只换掉这些规则的检查
+        try {
+          const focus = r.rules.focus;
+          result.checks = require('./checks').save(treePath, readText(treePath), out && out.checks, { files: projectFiles(), considered: focus ? new Set(focus.map(c => RC.ruleKey(c.node.id, c.rule.text))) : null });
+          if (result.checks.dropped.length) rec.log(`体检：没采用的检查 ${JSON.stringify(result.checks.dropped)}`);
+        } catch (e) { rec.log('检查没存上：' + e.stack); }
+        // 查过的规则记下来（含刚改过的样子），下次没变就不再查
+        seen.rules = RC.ruleKeys(readText(treePath));
       }
       if (memSegs.length && out && Array.isArray(out.memory)) {
         const shown = new Set(memSegs.map(s => s.name));
@@ -736,13 +820,23 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
         }
       }
       if (docSegs.length && out && Array.isArray(out.docs)) {
-        const dp = docPlan(out.docs, { text, shown: new Set(docSegs.map(s => s.name)), asked, count: result.docs.length });
+        const dp = docPlan(out.docs, { text, shown: new Set(docSegs.map(s => s.name)), refs: new Set(batch.filter(s => s.kind === 'ref').map(s => s.name)), asked, count: result.docs.length });
         result.docConflicts.push(...dp.conflicts);
         // 文档跟着需求树改：改不成（原文找不到或不止一处）的留在报告里提醒
         for (const d of dp.stale) {
           const done = await store.applyChange(treePath, d.ops, { source: '体检', write });
           if (done.length) result.auto.push({ text: `${d.doc} 里的「${d.text}」和需求树（${d.node}）不一致，已按需求树改成「${d.new}」`, t: { k: 'q.autoDocStale', a: [d.doc, d.text, d.node, d.new] } });
           else result.docConflicts.push({ doc: d.doc, text: d.text, node: d.node, rule: d.rule });
+        }
+        // 两份文档说法矛盾：按后改的那份改先改的那份（总目录的「按后写的为准」）；分不出先后（一小时以内）或改不成的留在报告里
+        for (const c of dp.clash) {
+          const ta = Docs.docTime(projectDir, c.doc), tb = Docs.docTime(projectDir, c.other);
+          const fix = Math.abs(ta - tb) < 3600e3 ? null : ta > tb
+            ? { doc: c.other, text: c.otherText, new: c.otherNew, by: c.doc }
+            : { doc: c.doc, text: c.text, new: c.new, by: c.other };
+          const done = fix ? await store.applyChange(treePath, [{ op: 'doc_replace', file: fix.doc, text: fix.text, new: fix.new }], { source: '体检', write }) : [];
+          if (done.length) result.auto.push({ text: `${fix.doc} 里的「${fix.text}」和后改的 ${fix.by} 说法不同，已改成「${fix.new}」`, t: { k: 'q.autoDocClash', a: [fix.doc, fix.text, fix.by, fix.new] } });
+          else result.docClash.push(c);
         }
         // 和树重复的：从文档里删掉那一行；找不准、删不了的留在报告里提醒
         for (const d of dp.dup) {
@@ -760,7 +854,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
       }
       // 这一批看完了：记下指纹，下次没改过就不再看（切成几段的，最后一段看完才记）
       for (const s of batch) {
-        if (failedNames.has(s.name) || (s.part && s.part[0] !== s.part[1])) continue;
+        if (s.kind === 'ref' || failedNames.has(s.name) || (s.part && s.part[0] !== s.part[1])) continue;
         if (s.kind === 'mem') seen[`mem:${s.name}`] = fingerprint(s.note.full);
         else {
           // 文档可能刚被体检删掉几行：改之前和改之后的都算看过（用户撤销后变回改之前的样子，也不再看）
@@ -780,6 +874,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   }
   // 一批都没调用成功：记忆至少按字面查一遍重复
   if (memDir && plan.calls && result.checked.failed === plan.calls) await literalMemory();
+  withHealth();
   rec.log(`体检：看了 ${plan.notes.length} 份记忆、${plan.docs.length} 份文档，调用模型 ${plan.calls} 次（出错 ${result.checked.failed} 次）；直接处理 ${result.auto.length} 项；问用户 ${result.questions.length} 个冲突、${result.memory.length} 个记忆问题、${result.docs.length} 个文档问题；删掉 ${result.removed.length} 份已在树里的记忆`);
   return result;
 }

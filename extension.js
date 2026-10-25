@@ -100,7 +100,8 @@ async function writeTree(treePath, update, { save = true } = {}) {
     if (updated === doc.getText()) return;
     const edit = new vscode.WorkspaceEdit();
     edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), updated);
-    await vscode.workspace.applyEdit(edit);
+    // 没改成（文件只读、被别的扩展拦下）就报错：调用方（store.applyChange）不能把这次改动记下来、也不能接着改记忆和文档
+    if (!(await vscode.workspace.applyEdit(edit))) throw new Error(T('x.editFail'));
     if (save) await doc.save();
   } else {
     await store.updateTreeAsync(treePath, update);
@@ -342,6 +343,9 @@ class Panel {
     // 同一棵树的体检正在跑（体检要十几分钟，按钮可能被再点一次）：不再开第二个，两个同时改树会互相打架
     this.checking = this.checking || new Set();
     if (this.checking.has(p)) return;
+    // 编辑器里有没保存的改动：体检删记忆、删文档行是直接改磁盘的，树的改动却只能写进编辑器，你不保存两边就对不上。先保存再体检
+    const doc = openDoc(p);
+    if (doc && doc.isDirty) { vscode.window.showWarningMessage(T('q.saveFirst')); return; }
     this.checking.add(p);
     const run = bar => runCheckup(p, { read: currentText, write: (t, u) => writeTree(t, u, { save: false }), memory, parts, full,
       progress: (i, n) => { if (bar && n > 1) bar.report({ message: `${i}/${n}` }); } });
@@ -356,6 +360,7 @@ class Panel {
     const asked = newQs.length;
     // 结果写成一份报告（通知过几秒就收起，报告随时能再打开）
     const notes = [];
+    if (r.reorganized) notes.push(T('q.reorganized', countNodes(r.reorganized.nodes)));
     if (r.error) notes.push(T('q.checkFail', errText(r.error), r.checked.failed, r.checked.calls));
     if (r.noFiles && r.noFiles.length) notes.push(T('q.noFiles', r.noFiles));
     if (r.missing && r.missing.length) notes.push(T('q.missing', r.missing));
@@ -365,6 +370,7 @@ class Panel {
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
     if (r.docConflicts && r.docConflicts.length) notes.push(T('q.docConflicts', r.docConflicts));
     if (r.docDup && r.docDup.length) notes.push(T('q.docDup', r.docDup));
+    if (r.docClash && r.docClash.length) notes.push(T('q.docClash', r.docClash));
     const auto = r.auto || [];
     const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length);
     const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
@@ -374,7 +380,10 @@ class Panel {
     // 直接处理了的：问题记录写「问的事 → 按哪个做的」，删文档重复的直接写做了什么
     if (auto.length) report.push(T('q.reportAuto', auto.length), '', ...auto.map(a => `- ${qText(a)}${a.options ? ` → ${optLabel(a.options[a.default])}` : ''}`), '');
     if (r.merged.length) report.push(T('q.reportMerged'), '', ...r.merged.map(o => `- ${o.node}：${o.text}`), '');
+    if (r.checks && r.checks.saved.length) report.push(T('q.checksSaved', r.checks.saved.length, r.checks.total), '', ...r.checks.saved.map(c => `- ${c.node}「${c.rule}」：${c.glob} · \`${c.forbid}\``), '');
     if (!asked && !notes.length && !auto.length && !r.merged.length) report.push(T('q.reportNone'), '');
+    // 信息架构评分（src/health.js）：每次体检都写，前后能比
+    if (r.health) report.push(T('h.title'), '', T('h.note'), '', ...require('./src/health').summaryLines(r.health, T).map(l => `- ${l}`), '');
     const reportFile = store.metaFile(p, 'checkup-report.md');
     try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, report.join('\n')); } catch {}
     const buttons = [T('q.report'), ...(asked ? [T('q.answer')] : [])];
@@ -385,6 +394,26 @@ class Panel {
     }, () => {});
     // 不弹通知的设置下，用户刚主动体检、正等着结果：直接打开问题列表
     if (asked && askMode() !== 'notify') await this.questionsCommand();
+    return r;
+  }
+
+  // 命令「需求树：重新整理（AI）」：先定结构、再把现有规则原文挂上去（src/init.js reorganize），一条改动、可撤销
+  async reorganizeCommand() {
+    const trees = findTrees();
+    if (!trees.length) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
+    let p = trees[0];
+    if (trees.length > 1) {
+      const pick = await vscode.window.showQuickPick(trees.map(t => ({ label: vscode.workspace.asRelativePath(t), p: t })), { placeHolder: T('q.whichTree') });
+      if (!pick) return;
+      p = pick.p;
+    }
+    const go = await vscode.window.showInformationMessage(T('x.reorgAsk'), { modal: true }, T('x.reorgGo'));
+    if (go !== T('x.reorgGo')) return;
+    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('x.reorgRunning') },
+      () => require('./src/init').reorganize(p));
+    this.load();
+    if (r.ai) vscode.window.showInformationMessage(T('x.reorgDone', countNodes(r.nodes)));
+    else vscode.window.showWarningMessage(T('x.reorgFail', errText(r.error)));
     return r;
   }
 
@@ -597,12 +626,13 @@ async function aiInit(dir, panel) {
     panel.load();
     if (r.skipped) return r;
     if (!r.ai) { vscode.window.showWarningMessage(T('x.initFail', errText(r.error))); return r; }
-    const count = r.nodes.reduce((k, n) => k + 1 + n.children.length, 0);
-    vscode.window.showInformationMessage(T('x.initDone', count, r.moves.length));
+    vscode.window.showInformationMessage(T('x.initDone', countNodes(r.nodes), r.moves.length));
     await panel.checkupCommand({ tree: r.treePath, parts: { rules: false, docs: true, memory: memoryMode() !== 'treeOnly' } });
     return r;
   } catch (e) { console.error(e); return null; } finally { initRunning.delete(dir); }
 }
+// 初始化、整理出的需求一共几个（各层都算）
+const countNodes = list => (list || []).reduce((k, n) => k + 1 + countNodes(n.children), 0);
 const needsInit = treePath => { try { const t = fs.readFileSync(treePath, 'utf8').replace(/\r\n/g, '\n'); return require('./src/init').templateShaped(t); } catch { return false; } };
 
 // 「新建需求树」= 在这个项目启用：装 hook、用 AI 生成需求树、编译（只建一个模板文件的话，记录员和按需加载都不会工作）
@@ -610,7 +640,7 @@ async function create(panel) {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
   const dir = folder.uri.fsPath;
-  if (!reqtree.hasHooks(dir)) await enableIn(dir, panel);
+  if (!reqtree.enabledIn(dir)) await enableIn(dir, panel);
   const existing = store.findTree(dir);
   if (!existing || needsInit(existing)) await aiInit(dir, panel);
   const tree = store.findTree(dir);
@@ -671,6 +701,7 @@ function activate(context) {
     vscode.commands.registerCommand('reqtree.questions', () => panel.questionsCommand()),
     vscode.commands.registerCommand('reqtree.checkup', () => panel.checkupCommand()),
     vscode.commands.registerCommand('reqtree.checkupReport', () => panel.reportCommand()),
+    vscode.commands.registerCommand('reqtree.reorganize', () => panel.reorganizeCommand()),
   );
   // 改了 reqtree.language：界面马上换语言
   if (vscode.workspace.onDidChangeConfiguration) {
@@ -707,7 +738,7 @@ async function offerEnable(context, panel) {
   const folders = fileFolders();
   for (const f of folders) {
     const dir = f.uri.fsPath;
-    if (reqtree.hasHooks(dir) || (state && state.get(neverKey(dir)))) continue;
+    if (reqtree.enabledIn(dir) || (state && state.get(neverKey(dir)))) continue;
     const where = folders.length > 1 ? (lang() === 'en' ? ` (${path.basename(dir)})` : `（${path.basename(dir)}）`) : '';
     const pick = await vscode.window.showInformationMessage(T('x.askEnable', where), T('x.enable'), T('x.never'));
     if (pick === T('x.enable')) await enableIn(dir, panel);
@@ -718,7 +749,7 @@ async function offerEnable(context, panel) {
 
 // 命令「需求树：在本项目停用」：去掉 hook 和编译出的规则，需求树.md 留着；以后不再弹「启用？」（想用时运行「在本项目启用」）
 async function disableCommand(context, panel) {
-  const folders = fileFolders().filter(f => reqtree.hasHooks(f.uri.fsPath));
+  const folders = fileFolders().filter(f => reqtree.enabledIn(f.uri.fsPath));
   if (!folders.length) { vscode.window.showInformationMessage(T('x.notEnabled')); return; }
   const dir = folders[0].uri.fsPath;
   const ok = await vscode.window.showWarningMessage(T('x.askDisable', path.basename(dir)), { modal: true }, T('x.disable'));

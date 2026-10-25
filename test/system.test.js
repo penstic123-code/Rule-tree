@@ -1166,7 +1166,7 @@ test('插件：界面语言——设置 reqtree.language 优先；auto 时 VS Co
       const uri = panel.trees[0].uri;
       await panel.handle({ type: 'edit', uri, action: 'setStatus', node: 'C2.1', status: 'todo' }); // 本来就是待做：没有改动
       const msg = fake.shown.pop();
-      assert.match(msg, want === 'en' ? /^ReqTree: nothing changed \(the status didn't change\)$/ : /^需求树：没有改动（状态没变）$/, `${setting}/${display}/${d === dir ? '中文树' : '英文树'}`);
+      assert.match(msg, want === 'en' ? /^RuleTree: nothing changed \(the status didn't change\)$/ : /^需求树：没有改动（状态没变）$/, `${setting}/${display}/${d === dir ? '中文树' : '英文树'}`);
       const webview = { options: {}, html: '', cspSource: 'vscode-resource:', asWebviewUri: u => u, onDidReceiveMessage() {}, postMessage() {} };
       panel.resolveWebviewView({ webview, onDidChangeVisibility() {}, visible: true });
       assert.match(webview.html, new RegExp(`<body data-lang="${want}">`));
@@ -1203,4 +1203,18 @@ test('界面语言：记录员状态、锁的错误、升级清理都带结构�
     assert.ok(err.t.k in S.en);
     assert.match(err.message, /需求树被占用/, '命令行和旧版本看的中文 message 还在');
   }
+});
+
+test('插件：需求树有没保存的改动时不体检，先请你保存（体检会直接改记忆和文档，树没保存两边对不上）', async () => {
+  const dir = project();
+  const tree = path.join(dir, '需求树.md');
+  const fake = fakeVscode(dir);
+  fake.docs.push({ uri: fake.vscode.Uri.file(tree), text: TREE + '- 没保存的\n', isDirty: true, getText() { return this.text; }, get lineCount() { return 1; } });
+  const { panel, dispose } = activateWith(fake);
+  try {
+    const r = await panel.runCheck(tree, { rules: true, memory: false, docs: false }, false, false);
+    assert.strictEqual(r, undefined);
+    assert.match(fake.shown.pop(), /先保存/);
+    assert.ok(!fs.existsSync(path.join(dir, '.reqtree', 'checkup-report.md')));
+  } finally { dispose(); }
 });
