@@ -76,7 +76,7 @@ function parse(text) {
     }
     const d = raw.match(DOCS_RE);
     if (d && node !== root) {
-      for (const p of splitGlobs(d[1])) if (!node.docs.includes(p)) node.docs.push(p);
+      for (const p of splitDocs(d[1])) if (!node.docs.includes(p)) node.docs.push(p);
       return;
     }
     const r = raw.match(RULE_RE);
@@ -261,6 +261,15 @@ function writeFiles(lines, node, globs) {
   if (globs.length) lines.splice(node.line + 1, 0, `> 文件：${globs.join(', ')}`);
 }
 
+// 把节点挂的文档换成 docs：删掉原来的文档行，写在文件行之后（没有文件行就紧跟标题）
+function writeDocs(lines, node, docs) {
+  for (let i = bodyEnd(lines, node); i > node.line; i--) if (DOCS_RE.test(lines[i])) lines.splice(i, 1);
+  if (!docs.length) return;
+  let at = node.line + 1;
+  while (at < lines.length && FILES_RE.test(lines[at])) at++;
+  lines.splice(at, 0, `> 文档：${docs.join(', ')}`);
+}
+
 // 标题行里标题文字之前的部分（# 和 ID）。手写的无编号标题用的是自动 ID，行里没有 ID
 const headPrefix = node => (node.autoId ? /^(#{1,6}\s+)(.*)$/ : new RegExp(`^(#{1,6}\\s+${ID_SRC}\\s+)(.*)$`));
 
@@ -323,6 +332,8 @@ function nearRule(node, op) {
 //   {op:'add_node', parent, id?, title}        新需求；没给 id 就自动分配
 //   {op:'add_files', node, globs[]}            加文件对应
 //   {op:'set_files', node, globs[]}            把文件对应整个换掉（面板用）
+//   {op:'add_docs', node, docs[]}              挂文档（路径，可带 #节名）；已经挂了的跳过
+//   {op:'set_docs', node, docs[]}              把挂的文档整个换掉（add_docs 的反操作）
 //   {op:'set_status', node, status|null}       改状态
 //   {op:'rename_node', node, title}            改名（面板用）
 //   {op:'delete_node', node}                   删除需求和它下面的一切（面板用）
@@ -406,6 +417,12 @@ function applyOps(text, ops) {
       if (globs.join('\n') === node.files.join('\n')) { skip('same'); continue; }
       writeFiles(lines, node, globs);
       undo = [{ op: 'set_files', node: node.id, globs: node.files }];
+    } else if (op.op === 'add_docs' || op.op === 'set_docs') {
+      if (!node) { skip('no-node'); continue; }
+      const docs = op.op === 'set_docs' ? [...new Set((op.docs || []).filter(Boolean))] : [...node.docs, ...(op.docs || []).filter(d => d && !node.docs.includes(d))];
+      if (docs.join('\n') === node.docs.join('\n')) { skip('same'); continue; }
+      writeDocs(lines, node, docs);
+      undo = [{ op: 'set_docs', node: node.id, docs: node.docs }];
     } else if (op.op === 'set_status') {
       const status = op.status || null;
       if (!node) { skip('no-node'); continue; }
@@ -558,6 +575,8 @@ function globToRegExp(glob) {
 }
 
 // 「> 文件：」一行拆成几个 glob：按逗号和空白拆，花括号里的逗号不拆（{ch18,ch19}-*.html 是一个 glob）
+// 「> 文档：」行按逗号、顿号分，不按空格：节名里常有空格（a.md#第 1 章）
+const splitDocs = s => s.split(/[,，、]/).map(x => x.trim()).filter(Boolean);
 function splitGlobs(s) {
   const out = [];
   let cur = '', depth = 0;
@@ -605,7 +624,7 @@ function nodeForFile(root, relPath) {
 
 module.exports = {
   STATUS_EMOJI, STATUS_LABEL, parse, walk, findById, pathOf, effectiveRules, check,
-  DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, matchesAny, overrideText, overrideNote, applyOps, outline, relocate, splitGlobs, globToRegExp,
+  DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, matchesAny, overrideText, overrideNote, applyOps, outline, relocate, splitGlobs, splitDocs, DOCS_RE, globToRegExp,
   oneLine, norm, sameMeaning, numbersOf, SKIP_REASON,
   similarity, DUPLICATE, // 测试校准去重门槛用
 };

@@ -238,7 +238,7 @@ async function checkFix(file, { model, memoryOn = true, full = false }) {
   for (const a of r.auto || []) console.log(`直接处理：${a.text}${a.options ? ` → ${a.options[a.default].label}` : ''}（可以撤销）`);
   for (const d of r.docDup) console.log(`文档里和需求树重复、没法自动删的（表格里、带子项或找不准）：${d.doc}「${d.text}」（树里在 ${d.node}）`);
   for (const d of r.toDoc) console.log(`记忆 ${d.file} 像是 ${d.node} 的经验或进度，建议挪进${d.docs.length ? ` ${d.docs[0]}` : '它的文档'}`);
-  const asked = [...r.stale, ...r.scope, ...r.memory, ...r.questions, ...r.docs];
+  const asked = [...r.stale, ...r.scope, ...r.structure, ...r.memory, ...r.questions, ...r.docs];
   for (const q of asked) printQuestion(q);
   if (r.error) console.error(`查冲突时调用模型出错：${r.error.message}`);
   console.log(`合并 ${r.merged.length} 条重复规则，${r.removed.length ? `删掉 ${r.removed.length} 份已在树里的记忆，` : ''}${(r.auto || []).length ? `直接处理 ${r.auto.length} 项，` : ''}新提出 ${asked.length} 个问题${asked.length ? '（在 VS Code 里回答，或者 reqtree answer <文件> <问题ID> <选项序号>）' : ''}`);

@@ -134,4 +134,4 @@ function mentionContext(root, prompt, sent = {}, hash = s => s, opts = {}) {
   return { ids, text: `需求树：用户这句话提到了下面的需求，这是它们现在的规则（改到对应文件时也会自动加载）。\n\n${blocks.join('\n\n')}` };
 }
 
-module.exports = { mentionedNodes, renderNode, mentionContext, chapterNumbers, isMachinePrompt, userText, MAX_CHARS, MAX_NODES };
+module.exports = { mentionedNodes, renderNode, mentionContext, chapterNumbers, fileChapters, isMachinePrompt, userText, MAX_CHARS, MAX_NODES };

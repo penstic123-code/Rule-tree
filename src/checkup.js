@@ -11,6 +11,7 @@
 //    已经写在树里的删掉、是项目规则的搬进树、过时的删掉（删前备份，可撤销）；和树冲突的按后写的为准，判断不了按树
 // 5. 文档（CLAUDE.md、AGENTS.md、需求挂的文档）：和树重复的规则从文档里删掉，该搬进树的搬进去再从文档里删掉（只删找得准的整行，
 //    先备份，可撤销）；挂在某需求下、和它的规则冲突的，按树改文档
+// 5½. 信息架构（src/structure.js，不调用模型）：没有需求的内容文件夹建需求、没挂文档的需求挂上说明文档、按章的子需求挂讲这一章的那一节
 // 6. 不调用模型的提醒：有规则、却永远不会加载的需求（自己和上级都没有文件对应）；文件对应一个文件也匹配不到的需求改成待定
 const fs = require('fs');
 const path = require('path');
@@ -321,7 +322,7 @@ const addsOnly = (said, rule) => EXCEPTION_RE.test(said) || [...said].length < [
 // 模型对每份记忆的判断 → { remove 直接删的改动, questions 要处理的判断（问不问由 Q.decide 定）, toDoc }。文件、需求、规则对不上的丢掉。
 // shown / clipped：给模型看了的、被切成几段的文件。没看到的不判断；没看全的不整份删。
 // asked：处理过的记忆（noteKey），这份记忆没改过就不再碰。count：前几批已经有几个（总数不超过 MAX_MEMORY_QUESTIONS）。
-// toDoc：模型说是某个需求的经验、进度或背景的记忆 [{ file, node }]，只提醒挪进那个需求的文档
+// toDoc：模型说是某个需求的经验、进度或背景的记忆 [{ file, node, docs }]，由 toDocJudgment 搬进那个需求挂的文档
 function memoryPlan(items, { text, dir, projectDir, notes, asked, shown, clipped = new Set(), claudeMd = '', count = 0, ruleTime = () => 0 }) {
   const root = parse(text);
   const byFile = new Map(notes.filter(n => !shown || shown.has(n.file)).map(n => [n.file, n]));
@@ -332,7 +333,10 @@ function memoryPlan(items, { text, dir, projectDir, notes, asked, shown, clipped
     if (!it || typeof it !== 'object' || typeof it.file !== 'string') continue;
     if (it.kind === 'doc') {
       const n = typeof it.node === 'string' && findById(root, it.node.trim());
-      if (n && byFile.has(it.file) && !toDoc.some(d => d.file === it.file)) toDoc.push({ file: it.file, node: n.id, docs: n.docs });
+      // 这个需求自己没挂文档就往上找（「新文风重写」没挂，它的上级 AI 课挂了规则与经验）
+      let holder = n;
+      while (holder && holder.id && !holder.docs.length) holder = holder.parent;
+      if (n && byFile.has(it.file) && !toDoc.some(d => d.file === it.file)) toDoc.push({ file: it.file, node: n.id, docs: holder && holder.id ? holder.docs : [] });
       continue;
     }
     const note = byFile.get(it.file);
@@ -428,6 +432,31 @@ function memoryPlan(items, { text, dir, projectDir, notes, asked, shown, clipped
   return { remove, questions, toDoc };
 }
 
+// 记忆搬进文档：挑这个需求挂的整份文档（进度类优先，其次规则和经验类），原文接在末尾，标明从哪份记忆来
+const docPick = f => (/progress|进度/i.test(f) ? 0 : /经验|规则|rules|notes|笔记/i.test(f) ? 1 : 2);
+function toDocJudgment(d, note, memDir, projectDir) {
+  // 用户本人、外部资源两类本来就该留在记忆里
+  if (!note || !note.body || !note.body.trim() || note.type === 'user' || note.type === 'reference') return null;
+  const docs = (d.docs || []).filter(ref => !Docs.splitRef(ref).section && Docs.exists(projectDir, ref)).sort((a, b) => docPick(a) - docPick(b));
+  if (!docs.length) return null;
+  const target = docs[0];
+  let old = '';
+  try { old = fs.readFileSync(Docs.resolve(projectDir, target), 'utf8'); } catch { return null; }
+  const nl = /\r\n/.test(old) ? '\r\n' : '\n';
+  const head = `## 从自动记忆搬来：${note.description || note.file}${note.modified ? `（${note.modified}）` : ''}`;
+  const text = `${old.replace(/\s*$/, '')}${nl}${nl}${head}${nl}${nl}${note.body.trim().replace(/\r?\n/g, nl)}${nl}`;
+  return {
+    source: '体检', kind: 'memory', memKey: noteKey(note), node: d.node,
+    text: `记忆 ${d.file} 是 ${d.node} 的经验或进度：原文搬到 ${target} 末尾，删掉这份记忆`,
+    t: { k: 'q.memToDoc', a: [d.file, d.node, target] },
+    options: [
+      { label: '搬进文档', t: { k: 'q.optToDoc', a: [] }, ops: [{ op: 'doc_write', file: target, text }, { op: 'memory_remove', dir: memDir, file: d.file, whole: true }] },
+      { label: '留在记忆', t: { k: 'q.optKeepNote', a: [] }, ops: [] },
+    ],
+    default: 0,
+  };
+}
+
 // ---------- 范围：规则到不到得了 AI 手上 ----------
 // 项目里的文件（相对路径，/ 分隔）。跳过依赖、构建产物、缓存这类又大又不会被需求对应的文件夹；
 // 超过 MAX_FILES 个就不判断「匹配不到」（数不全会误报）
@@ -488,7 +517,10 @@ const log = msg => { try { require('../hooks/recorder').log(msg); } catch {} };
 
 // 处理一个判断：问不问、默认选哪个由 Q.decide 定；默认做法直接写进去（记成「体检」的一条改动，可以撤销），再把它记进问题列表。
 // 不问的记成「已自动处理」，下次体检也不会重复提；问的开着（回答别的选项会先撤销默认做法）。
-// 默认做法没做成（规则早被改掉了、只做成一半）时也开着问：树和模型看到的已经对不上了。返回 { question 开着的问题, auto 自动处理的问题, applied }
+// 「做成一半」只看需求树本身的改动：树的改动有的做成、有的没做成（加了新规则、旧的那条却找不到）就整个撤掉。
+// 删文档行、删记忆这类收尾删不掉（在表格里、找不准），不影响树的改动，调用方在报告里提醒。
+// 一点都没做成（规则早就在树里或早被改掉了）时不问（没事可做），记成关掉，下次不再提；要改「决定：」的照样开着问。
+// 返回 { question 开着的问题, auto 自动处理的问题（没做成时为 null）, applied }
 async function settle(treePath, q0, { write, read }) {
   const d = Q.decide(q0, (read || (p => fs.readFileSync(p, 'utf8')))(treePath));
   const q = { ...q0, default: d.default };
@@ -497,8 +529,8 @@ async function settle(treePath, q0, { write, read }) {
   if (opt.ops.length) {
     changeId = store.newChangeId();
     applied = await store.applyChange(treePath, opt.ops, { source: '体检', write, id: changeId });
-    // 只做成一半（比如加了新规则、旧的那条却没找到删不掉）：撤掉做成的那部分，当成没做成，开着问
-    if (applied.length && (applied.skipped || []).some(s => !['duplicate', 'same'].includes(s.reason))) {
+    const treeOp = o => !require('./memory').isMemoryOp(o) && !Docs.isDocOp(o);
+    if (applied.some(treeOp) && (applied.skipped || []).some(s => s.op && treeOp(s.op) && !['duplicate', 'same'].includes(s.reason))) {
       await store.undoChange(treePath, changeId, { write });
       applied = [];
     }
@@ -507,6 +539,7 @@ async function settle(treePath, q0, { write, read }) {
   const done = !opt.ops.length || applied.length > 0;
   const rec = Q.addQuestion(treePath, { ...q, defaultApplied: done, changeId });
   if (!d.ask && done && Q.acceptDefault(treePath, rec.id)) return { question: null, auto: { ...rec, status: 'answered', auto: true }, applied };
+  if (!d.ask) { Q.dismissQuestion(treePath, rec.id); return { question: null, auto: null, applied }; }
   return { question: rec, auto: null, applied };
 }
 
@@ -527,7 +560,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   const mem = require('./memory');
   const readText = read || (p => fs.readFileSync(p, 'utf8'));
   const want = { rules: parts.rules !== false, memory: parts.memory !== false && memory !== false, docs: parts.docs !== false };
-  const result = { merged: [], stale: [], memory: [], removed: [], scope: [], noFiles: [], missing: [], categorized: [], questions: [],
+  const result = { merged: [], stale: [], memory: [], removed: [], scope: [], structure: [], noFiles: [], missing: [], categorized: [], questions: [],
     docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], toDoc: [], auto: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
   const projectDir = path.dirname(treePath);
   const asked = new Set(Q.readQuestions(treePath).map(q => q.memKey).filter(Boolean));
@@ -547,11 +580,23 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
         if (asked.has(q.memKey)) continue;
         asked.add(q.memKey);
         const st = await settle(treePath, q, { write, read: readText });
-        if (st.question) result.scope.push(st.question); else result.auto.push(st.auto);
+        if (st.question) result.scope.push(st.question); else if (st.auto) result.auto.push(st.auto);
       }
     } catch (e) { rec.log('查文件对应出错：' + e.stack); }
   }
-  if (want.docs) try { Object.assign(result, docProblems(readText(treePath), projectDir, treePath)); } catch (e) { rec.log('查文档出错：' + e.stack); }
+  if (want.docs) {
+    // 先理结构（建需求、挂文档），再查文档问题：刚挂上的就不再报「没挂」
+    try {
+      const files = require('./codemap').listFiles(projectDir, { any: true });
+      for (const q of require('./structure').plan(readText(treePath), projectDir, files, path.basename(treePath))) {
+        if (asked.has(q.memKey)) continue;
+        asked.add(q.memKey);
+        const st = await settle(treePath, q, { write, read: readText });
+        if (st.question) result.structure.push(st.question); else if (st.auto) result.auto.push(st.auto);
+      }
+    } catch (e) { rec.log('整理信息架构出错：' + e.stack); }
+    try { Object.assign(result, docProblems(readText(treePath), projectDir, treePath)); } catch (e) { rec.log('查文档出错：' + e.stack); }
+  }
 
   let memDir = null;
   if (want.memory) try { memDir = typeof memory === 'string' ? memory : mem.memoryDir(projectDir); } catch (e) { rec.log('找不到自动记忆：' + e.message); }
@@ -564,7 +609,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
       if (asked.has(q.memKey)) continue;
       asked.add(q.memKey);
       const st = await settle(treePath, q, { write, read: readText });
-      if (st.question) result.memory.push(st.question); else result.auto.push(st.auto);
+      if (st.question) result.memory.push(st.question); else if (st.auto) result.auto.push(st.auto);
     }
   };
   if (memDir && !model) await literalMemory();
@@ -603,7 +648,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
           if (open.has(q.text)) continue;
           // 模型没把握的什么都不改（选「都留着」，见 Q.decide）：实测 Haiku 偶尔误报冲突（docs/test-log.md 第十一节），先改上去误报就成了误改
           const st = await settle(treePath, { source: '体检', text: q.text, options: q.options, default: q.default, unsure: !!q.unsure }, { write, read: readText });
-          if (st.question) result.questions.push(st.question); else result.auto.push(st.auto);
+          if (st.question) result.questions.push(st.question); else if (st.auto) result.auto.push(st.auto);
         }
       }
       if (memSegs.length && out && Array.isArray(out.memory)) {
@@ -614,9 +659,17 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
         if (mp.remove.length) result.removed.push(...await store.applyChange(treePath, mp.remove, { source: '体检', write }));
         for (const q of mp.questions) {
           const st = await settle(treePath, q, { write, read: readText });
-          if (st.question) result.memory.push(st.question); else result.auto.push(st.auto);
+          if (st.question) result.memory.push(st.question); else if (st.auto) result.auto.push(st.auto);
         }
-        result.toDoc.push(...mp.toDoc);
+        // 某个需求的经验、进度、背景的记忆：原文搬到那个需求挂的文档末尾，删掉记忆（都先备份，一起撤销）。需求没挂文档的只提醒
+        for (const d of mp.toDoc) {
+          const q = toDocJudgment(d, plan.notes.find(n => n.file === d.file), memDir, projectDir);
+          if (!q) { result.toDoc.push(d); continue; }
+          if (asked.has(q.memKey)) continue;
+          asked.add(q.memKey);
+          const st = await settle(treePath, q, { write, read: readText });
+          if (st.question) result.memory.push(st.question); else if (st.auto) result.auto.push(st.auto);
+        }
       }
       if (docSegs.length && out && Array.isArray(out.docs)) {
         const dp = docPlan(out.docs, { text, shown: new Set(docSegs.map(s => s.name)), asked, count: result.docs.length });
@@ -636,7 +689,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
         for (const q of dp.questions) {
           const st = await settle(treePath, q, { write, read: readText });
           if (st.question) { result.docs.push(st.question); continue; }
-          result.auto.push(st.auto);
+          if (st.auto) result.auto.push(st.auto);
           // 规则搬进了树，文档里那一行却没删成：提醒用户自己删
           if (q.options[q.default].ops.some(o => o.op === 'doc_remove') && !st.applied.some(o => o.op === 'doc_remove')) result.docDup.push({ doc: q.doc, text: q.docText, node: q.node });
         }

@@ -355,6 +355,13 @@ function renderNode(g, node, scope, shown = new Set()) {
   if (!mods.length && !deps.length) return null;
   const lines = [];
   if (mods.length) lines.push('这块已有的代码（按被引用的次数排）：', ...fits(mods.slice(0, 14).map(f => fileLine(g, f)), MAP_CHARS * 0.55));
+  // 页面自己的脚本（只被这块的一个页面引用）：按被引用次数排永远排不上，AI 却最常改它。不逐个列，给个数和例子，说清对应规律
+  const own = [];
+  for (const [to, from] of g.refs) {
+    const by = [...from];
+    if (by.length === 1 && inSet.has(by[0]) && /\.html?$/i.test(by[0]) && /\.(m?js|ts)$/i.test(to)) own.push(`${by[0]} → ${to}`);
+  }
+  if (own.length) lines.push('', `页面自己的脚本（只被一个页面引用，共 ${own.length} 个），例：${own.sort().slice(0, 3).join('；')}`);
   if (deps.length) lines.push('', '这块用到的外部模块：', ...fits(deps.slice(0, 8).map(f => fileLine(g, f, `（这块有 ${ext.get(f)} 个文件用）`)), MAP_CHARS * 0.3));
   const sig = (label, set) => set.size ? `${label}：${[...set].slice(0, 12).join('、')}${set.size > 12 ? ` 等 ${set.size} 个` : ''}` : '';
   const s = [sig('发出的信号', emits), sig('监听的信号', listens)].filter(Boolean);

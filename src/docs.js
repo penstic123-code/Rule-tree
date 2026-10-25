@@ -123,9 +123,10 @@ function docsMtime(treePath) {
   try { text = fs.readFileSync(treePath, 'utf8'); } catch { return 0; }
   const dir = path.dirname(treePath);
   let latest = 0;
+  const { splitDocs } = require('./parser');
   for (const m of text.matchAll(/^\s*>\s*(?:文档|docs?)\s*[:：]\s*(.+)$/gim)) {
-    for (const ref of m[1].split(/[,，、]/)) {
-      const p = resolve(dir, ref.trim());
+    for (const ref of splitDocs(m[1])) {
+      const p = resolve(dir, ref);
       try { if (p) latest = Math.max(latest, fs.statSync(p).mtimeMs); } catch {}
     }
   }

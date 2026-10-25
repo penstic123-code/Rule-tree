@@ -192,8 +192,9 @@ test('初始化之后体检又记了规则：撤销初始化，树回到原来�
   assert.ok(parse(text).children[0].rules.some(x => x.text === '街道两边种树'));
 });
 
-test('体检的默认做法只做成一半（新规则加上了，旧的那条找不到删不掉）：整个撤掉，开着问，不记成已自动处理', async () => {
+test('体检的默认做法只做成一半（新规则加上了，旧的那条找不到删不掉）：整个撤掉，不问、记成关掉，不记成已自动处理', async () => {
   const { settle } = require('../src/checkup');
+  const Q = require('../src/questions');
   const dir = project({});
   const treePath = path.join(dir, '需求树.md');
   fs.writeFileSync(treePath, '# P x\n- 段落不超过 4 行\n');
@@ -203,8 +204,26 @@ test('体检的默认做法只做成一半（新规则加上了，旧的那条�
   ] };
   const r = await settle(treePath, q, {});
   assert.strictEqual(r.auto, null);
-  assert.ok(r.question);
+  assert.strictEqual(r.question, null);
   assert.ok(!fs.readFileSync(treePath, 'utf8').includes('6 行'));
+  assert.strictEqual(Q.readQuestions(treePath)[0].status, 'dismissed');
+});
+
+test('体检：规则搬进了树、文档那一行删不掉（在表格里）：规则留着，不撤、不问，那一行进报告让你自己删', async () => {
+  const { settle } = require('../src/checkup');
+  const dir = project({ 'a.md': '| 规则 | 每章配三张图 |\n' });
+  const treePath = path.join(dir, '需求树.md');
+  fs.writeFileSync(treePath, '# P x\n> 文档：a.md\n');
+  const q = { source: '体检', kind: 'doc', text: '搬进树', default: 0, options: [
+    { label: '搬进', ops: [{ op: 'add_rule', node: 'P', text: '每章配三张图' }, { op: 'doc_remove', file: 'a.md', text: '每章配三张图' }] },
+    { label: '留着', ops: [] },
+  ] };
+  const r = await settle(treePath, q, {});
+  assert.strictEqual(r.question, null);
+  assert.ok(r.auto);
+  assert.match(fs.readFileSync(treePath, 'utf8'), /- 每章配三张图/);
+  assert.ok(!r.applied.some(o => o.op === 'doc_remove'));
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'a.md'), 'utf8'), '| 规则 | 每章配三张图 |\n');
 });
 
 // ---------- 命令行 init 也用 AI 初始化 ----------

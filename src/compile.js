@@ -20,7 +20,7 @@ const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 _index.md 里。编译的输出或说明文字变了就加 1：ensureCompiled 只比时间，
 // 旧版本生成的文件可能比树还新，不看版本的话升级后会一直留着过时的说明（比如「标 🆕，等用户确认」）
-const FORMAT = '<!-- reqtree:format 10 -->';
+const FORMAT = '<!-- reqtree:format 11 -->';
 
 // 节点的生效范围：自己的 files，或最近上级的；都没有返回 null（全局）
 function scopeOf(node) {
@@ -63,7 +63,18 @@ function compileNode(node, treeName, projectDir) {
 }
 
 // 动手原则（config 的 principles，默认开）：不重复造轮子、遇到 bug 先找根因。借鉴 ponytail 的「阶梯」，见 docs/design-info-architecture.md 第四节
-const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②写新东西之前依次问：真需要吗 → 项目里已经有了吗（看代码地图，或用下面的命令查）→ 标准库或平台自带的能做吗 → 已经装的依赖能做吗 → 最后才写最少能用的代码；校验、数据安全、无障碍不省。③不要光照用户说的做：用户的新要求和项目的实际情况、以后好不好维护有冲突时，先指出问题、给出建议，用户拍板后再动手。别的事不问：已有的记录之间说法不同、做法细节、能撤销的改动，自己按最新的指令定，做完告诉用户改了什么。';
+const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②不要光照用户说的做：用户的新要求和项目的实际情况、以后好不好维护有冲突时，先指出问题、给出建议，用户拍板后再动手。别的事不问：已有的记录之间说法不同、做法细节、能撤销的改动，自己按最新的指令定，做完告诉用户改了什么。③写代码时照 ponytail 规则（改到代码文件时自动加载）：先看真需要吗、项目里有没有、标准库和已装的依赖能不能做，最后才写最少能用的代码。';
+
+// ponytail（src/ponytail.md，MIT）：只在读写代码文件时加载，写课程正文、文档时不占上下文。
+// 列出常见代码后缀，不扫项目（编译在 hook 里同步跑，要快）；html、css 不算（多是内容和样式）
+const CODE_EXTS = ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'vue', 'svelte', 'py', 'gd', 'cs', 'go', 'rs', 'java', 'kt', 'swift', 'rb', 'php', 'c', 'cc', 'cpp', 'h', 'hpp', 'lua', 'dart', 'sh', 'ps1'];
+function compilePonytail() {
+  let text = '';
+  try { text = fs.readFileSync(path.join(__dirname, 'ponytail.md'), 'utf8'); } catch { return null; }
+  const body = text.split(/^---8<---$/m)[0].replace(/^<!--[\s\S]*?-->\s*/, '').trim();
+  return ['---', 'paths:', ...CODE_EXTS.map(e => `  - "**/*.${e}"`), '---', MARK,
+    '<!-- 来自 ponytail（https://github.com/DietrichGebert/ponytail），MIT License，Copyright (c) 2026 DietrichGebert -->', '', body, ''].join('\n');
+}
 
 // 全局说明：告诉 AI 这套东西怎么用。不写 paths，每次都加载，保持很短。
 // opts.principles：写不写动手原则；opts.who：查名字的命令说明（代码地图生成过才有）
@@ -131,7 +142,10 @@ function compileClaude(treePath) {
   const treeName = path.basename(treePath);
   const dir = path.join(projectDir, OUT_DIR);
   const root = parse(fs.readFileSync(treePath, 'utf8'));
-  const files = new Map([['_index.md', compileIndex(root, treeName, indexOpts(projectDir))]]);
+  const opts = indexOpts(projectDir);
+  const files = new Map([['_index.md', compileIndex(root, treeName, opts)]]);
+  const pony = opts.principles ? compilePonytail() : null;
+  if (pony) files.set('ponytail.md', pony);
   for (const n of walk(root)) {
     const text = compileNode(n, treeName, projectDir);
     if (text) files.set(`${n.id}.md`, text);

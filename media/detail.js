@@ -99,6 +99,8 @@
         case 'add_node': return T('op.add_node', showIds ? `${o.id} ${o.title}` : T('d.quote', o.title));
         case 'add_files': return T('op.add_files', name(o.node), g(o));
         case 'set_files': return (o.globs || []).length ? T('op.set_files', name(o.node), g(o)) : T('op.clear_files', name(o.node));
+        case 'add_docs': return T('op.add_docs', name(o.node), (o.docs || []).join(', '));
+        case 'set_docs': return (o.docs || []).length ? T('op.set_docs', name(o.node), (o.docs || []).join(', ')) : T('op.clear_docs', name(o.node));
         case 'set_status': return T('op.set_status', name(o.node), st(o.status));
         case 'rename_node': {
           const old = (o.undo || []).find(u => u.op === 'rename_node');

@@ -352,7 +352,7 @@ class Panel {
         : await run();
     } finally { this.checking.delete(p); }
     this.load();
-    const newQs = [...r.questions, ...r.stale, ...r.memory, ...(r.scope || []), ...(r.docs || [])];
+    const newQs = [...r.questions, ...r.stale, ...r.memory, ...(r.scope || []), ...(r.structure || []), ...(r.docs || [])];
     const asked = newQs.length;
     // 结果写成一份报告（通知过几秒就收起，报告随时能再打开）
     const notes = [];

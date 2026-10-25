@@ -320,6 +320,8 @@ function describeOp(o) {
     case 'add_node': return `新需求 ${o.id} ${o.title}`;
     case 'add_files': return `${o.node} 对应文件 ${o.globs.join(', ')}`;
     case 'set_files': return o.globs.length ? `${o.node} 的文件改成 ${o.globs.join(', ')}` : `清空 ${o.node} 的文件对应`;
+    case 'add_docs': return `${o.node} 挂上文档 ${o.docs.join(', ')}`;
+    case 'set_docs': return o.docs.length ? `${o.node} 的文档改成 ${o.docs.join(', ')}` : `清空 ${o.node} 挂的文档`;
     case 'set_status': return `${o.node} 标为${STATUS_LABEL[o.status] || '无状态'}`;
     case 'rename_node': return `${o.node} 改名为${q(o.title)}`;
     case 'delete_node': return `删除需求 ${o.node}`;
@@ -340,7 +342,7 @@ function logChange(treePath, entry) {
 }
 
 // 反操作里会出现的操作（applyOps 认的）
-const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore', 'doc_restore', 'doc_put_back', 'doc_replace']);
+const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'add_docs', 'set_docs', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore', 'doc_restore', 'doc_put_back', 'doc_replace']);
 // 改文件、不改树的操作：记忆（src/memory.js）和文档（src/docs.js）
 const isFileOp = o => require('./memory').isMemoryOp(o) || require('./docs').isDocOp(o);
 const undoable = e => e.ops.every(o => (o.undo || []).every(u => UNDO_OPS.has(u.op)));
