@@ -9,7 +9,7 @@ EN = 'en' in args
 here = os.path.dirname(os.path.abspath(__file__))
 src = os.path.join(here, 'out', 'en') if EN else os.path.join(here, 'out')
 dst = os.path.join(here, '..', 'en') if EN else os.path.join(here, '..')
-drawn = ['pain', 'idea', 'scope', 'recorder', 'chart-recorder', 'chart-confusion', 'chart-audit', 'chart-migrate', 'chart-chapter',
+drawn = ['overview', 'pain', 'idea', 'scope', 'recorder', 'chart-recorder', 'chart-confusion', 'chart-audit', 'chart-migrate', 'chart-chapter',
          'chart-replay', 'chart-reorg', 'chart-effect',
          'use-1-change-tracking', 'use-2-one-place', 'use-3-rewrite-not-append', 'use-4-survive-compaction',
          'use-5-load-on-demand', 'use-6-override', 'use-7-live-status', 'use-8-click-not-markdown', 'use-9-check']

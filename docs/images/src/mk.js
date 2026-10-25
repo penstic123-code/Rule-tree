@@ -2,7 +2,7 @@
 // node mk.js [--en] all ：渲染全部 16 张；use ：只渲染 8 张"它有什么用"对比图
 const fs = require('fs'), path = require('path'), { execFileSync } = require('child_process');
 const USE = ['use-1-change-tracking', 'use-2-one-place', 'use-3-rewrite-not-append', 'use-4-survive-compaction', 'use-5-load-on-demand', 'use-6-override', 'use-7-live-status', 'use-8-click-not-markdown', 'use-9-check'];
-const ALL = ['pain', 'idea', 'scope', 'recorder', 'chart-recorder', 'chart-confusion', 'chart-audit', 'chart-migrate', 'chart-chapter', 'chart-replay', 'chart-reorg', 'chart-effect', ...USE];
+const ALL = ['overview', 'pain', 'idea', 'scope', 'recorder', 'chart-recorder', 'chart-confusion', 'chart-audit', 'chart-migrate', 'chart-chapter', 'chart-replay', 'chart-reorg', 'chart-effect', ...USE];
 const args = process.argv.slice(2), en = args.includes('--en');
 let names = args.filter(a => a !== '--en'); if (names.includes('all')) names = ALL; else if (names.includes('use')) names = USE;
 const dir = __dirname, head = fs.readFileSync(path.join(dir, en ? 'head-en.txt' : 'head.txt'), 'utf8');
