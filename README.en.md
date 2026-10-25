@@ -4,57 +4,59 @@ An information architecture designed for AI coding: rules, docs and code maps ea
 
 A VS Code extension for [Claude Code](https://claude.com/claude-code) and [OpenAI Codex](https://developers.openai.com/codex). English | [中文](README.md)
 
-![What RuleTree does: write your requests down, sort them by part of the project, hand the AI only the parts covering the file it edits](docs/images/en/overview.png)
+![How RuleTree is put together: where information comes from, how it is tidied in the background, where it lives, who gets it](docs/images/architecture.en.png)
 
-Three weeks into building a project with an AI, you have told it dozens of things: comments in English, opening hours come from the config, shopkeepers stay inside their shop. Those requests are scattered across chat history, CLAUDE.md, the AI's own memory and your design docs. Start a new chat and the AI can no longer see what was said in the old one. Put everything in CLAUDE.md and it reads tens of thousands of words before fixing a typo. Change your mind one day, and the old wording survives in two other places, so the AI cannot tell which one to follow.
+Three weeks into building a project with an AI, you have told it dozens of things: comments in English, store money as whole cents, run the tests after every edit. Those requests are scattered across chat history, CLAUDE.md, the AI's own memory and your design docs. Start a new chat and the AI can no longer see what was said in the old one. Put everything in CLAUDE.md and it reads tens of thousands of words before fixing a typo. Change your mind one day, and the old wording survives in two other places, so the AI cannot tell which one to follow.
 
 ![Requests scattered across places, messier every week](docs/images/en/pain.png)
 
-In one of the author's projects, 21 documents holding rules turned out to contain 237 duplicates, contradictions and outdated statements. RuleTree gathers those requests into one file in your project and sorts them by the files they cover. When the AI edits a file, it gets only the few rules that cover that file. The rest of this page walks through one example, a small town-management game.
+In one of the author's projects, 21 documents holding rules turned out to contain 237 duplicates, contradictions and outdated statements. RuleTree gathers those requests into one file in your project and sorts them by the files they cover. When the AI edits a file, it gets only the few rules that cover that file:
+
+![What RuleTree does: write requests down, sort them by part of the project, hand the AI only the parts covering the file it edits](docs/images/en/overview.png)
 
 ## Everything in its place
 
-RuleTree adds one file to your project, `需求树.md`, the tree. It splits the project into parts by what they do, such as shops, roads and saving. Each part is called a requirement, and a big part can hold smaller ones. Every requirement states two things: which files it covers, and the rules to follow when editing them. A rule is a request you can act on in one sentence. Here is the tree for the town game:
+A project holds more than rules: design docs, the code itself, the AI's memory, CLAUDE.md. Where each kind of information lives, and when the AI gets to read which, is the project's information architecture. Arranged badly, the same thing is written in several places and the AI reads piles of material it doesn't need. Arranged well, each thing is written once and the AI has just what it needs at hand.
+
+RuleTree's arrangement centres on one file in your project, `需求树.md`, the tree. It splits the project into parts by what they do. Each part is called a requirement, and a big part can hold smaller ones. Every requirement states two things: which files it covers, and the rules to follow when editing them. A rule is a request you can act on in one sentence. Take an online shop:
 
 ```markdown
-# P Town game
+# P Online shop
 - Comments in English
 
-## R1 Shops
-> Files: game/shops/**
-> Docs: docs/shop-design.md
-- Shopkeepers stay inside their shop
+## R1 Payments
+> Files: src/payment/**
+> Docs: docs/payment-design.md
+- Store amounts as whole cents
 
-### R1.1 Shop door and opening hours
-> Files: game/shops/shop_door.gd
-- Opening hours come only from ShopHours
-- Decision: the door announces opening and closing with a signal, not a direct call (easier to test on its own)
+### R1.1 Refunds
+> Files: src/payment/refund.ts
+- Check the order status before refunding
+- Decision: refunds go through the message queue, not a direct payment call (failures can be retried)
 ```
 
 The number of `#` marks is the depth in the tree, and P, R1 and R1.1 are IDs. `> Files:` lists the files a requirement covers, `> Docs:` points to the design doc to read before working on it, and every line starting with `-` is a rule. A rule starting with "Decision:" records a choice you made between options, and the AI must ask you before overturning it.
 
-Not everything belongs in a rule. RuleTree gives each kind of information its own place:
+Everything other than rules has its own place too:
 
 | What | Where it lives | When the AI reads it |
 |---|---|---|
-| A request you can act on in one sentence, like "opening hours come only from ShopHours" | The tree, under the requirement covering the files involved | Automatically, when it edits those files |
+| A request you can act on in one sentence, like "store amounts as whole cents" | The tree, under the requirement covering the files involved | Automatically, when it edits those files |
 | A choice you made, and why | The same, starting with "Decision:" | The same; it must ask you before overturning it |
 | What one sentence can't hold: why it is designed this way, how to do it, examples | A design doc, linked from the tree with `> Docs:` | When it edits those files, it first gets the doc's table of contents and reads only the sections it needs |
-| Which files, functions and classes each part of the code already has | The code map, generated from your code | Whenever it wants to check before writing something new |
+| Which files, functions and classes each part of the code already has | The code map, generated from your code | Whenever it wants to check before writing something new, so it doesn't write it twice |
 | Things unrelated to the project, like your computer setup | The AI's own memory | Claude Code manages it |
 | What the project is and where things are | CLAUDE.md | Every time, so keep it short |
 
-Each thing is written in one place: what can be acted on goes in the tree, what needs explaining goes in a doc.
-
 ## What the AI gets when it edits a file
 
-When the AI edits `game/shops/shop_door.gd`, three levels cover that file: the whole game, shops, and shop door and opening hours. Their rules go to the AI; the rules for roads, saving and shelves do not.
+When the AI edits `src/payment/refund.ts`, three levels cover that file: the whole shop, payments, and refunds. Their rules go to the AI; the rules for login, product pages and coupons do not.
 
-![Example: editing shop_door.gd brings the rules of the whole game, shops, and the shop door; nothing else is sent](docs/images/en/scope.png)
+![Example: editing refund.ts brings the rules of the shop, payments and refunds; nothing else is sent](docs/images/en/scope.png)
 
 The delivery relies on a feature Claude Code already has: a rule file in `.claude/rules/` can say "load me only when these files are read or written". RuleTree compiles each requirement into such a file, so delivery does not depend on the AI's memory. New chats, chats compacted after growing long, and subagents all get the rules. Codex has no such feature, so RuleTree uses an index plus top-ups there; see [docs/codex.md](docs/codex.md).
 
-A smaller part can also replace one rule of a bigger part, within its own files. If the whole game says "functions stay under 40 lines" and the saving part says "save functions may run to 80 lines", the AI still keeps to 40 lines everywhere else.
+A smaller part can also replace one rule of a bigger part, within its own files. If the whole shop says "functions stay under 40 lines" and payments says "payment functions may run to 80 lines", the AI still keeps to 40 lines everywhere else.
 
 ## The recorder writes things down each turn
 
@@ -70,11 +72,22 @@ After a few weeks the tree grows lopsided: the same thing recorded twice, contra
 
 RuleTree first finds suspects with plain code: similar rules that arrive together when one file is edited, file and class names that rules mention but the project no longer has, requirements with too many rules. A model then judges each suspect. Duplicates are merged, contradictions settled in favor of the later rule, stale rules removed, and crowded requirements split into smaller ones, with every rule moved over word for word. Requests scattered in CLAUDE.md, design docs and the AI's memory are moved into the tree as well.
 
-At the end, the report gives the tree a score from 0 to 100 for how well it works: how much the AI receives per edited file on average, whether any rule can never be delivered, how many rules sit at the top and get sent with every file. The score is for comparing before and after, to see whether tidying helped. The author reorganized copies of two projects three times each:
+Judging whether tidying helped takes a number. So the report ends with a score for the tree, out of 100, the average of six parts:
 
-![Before and after reorganizing: fewer rules at the top and per edited file, higher scores](docs/images/en/chart-reorg.png)
+| What it looks at | Why it matters |
+|---|---|
+| Delivered: rules sitting on a requirement that covers no files | Such rules never reach the AI |
+| Not crowded: requirements carrying 12 or more rules of their own | Too many means the part should be split |
+| Light at the top: how many rules sit on the top-level part | Top-level rules are sent with every file |
+| Reads little: how much text the AI gets per edited file, on average | The less it gets, the less of its context is used up |
+| No overlap: files covered by two parts at once | Both sets of rules get sent |
+| Code filed right: files filed under one part but used almost only by another | The AI editing them gets unrelated rules |
 
-In the game project, rules at the top dropped from 57 to 33, rules received per edited file from 74 to 55, and the score rose from 62 to 81. None of the three runs lost a rule or changed a rule's wording.
+The author reorganized copies of two real projects three times each. Project A is a game with a few hundred code files and over three hundred rules in its tree; project B is a teaching website with six web courses:
+
+![Before and after reorganizing: in project A, fewer rules at the top and per edited file; both projects score higher](docs/images/en/chart-reorg.png)
+
+In project A, rules at the top dropped from 57 to 33, rules received per edited file from 74 to 55, and the score rose from 62 to 81. None of the three runs lost a rule or changed a rule's wording.
 
 Even with rules written down, the AI slips. During a check-up, the model also picks out rules that one line of code is enough to judge, such as "no debug output left behind", and turns them into automatic checks. After the AI edits a file, RuleTree checks the lines it just wrote and warns it on the spot about a likely violation.
 
@@ -105,15 +118,15 @@ Install the extension yourself: Extensions panel in VS Code → `…` → "Insta
 
 ## Test results
 
-All experiments ran with real models on copies of two of the author's real projects: a Godot town game and a teaching project with six web courses.
+All experiments ran with real models on copies of the author's two real projects, project A (the game) and project B (the teaching website) from above.
 
 ### With RuleTree, does the AI read less, and follow rules better?
 
-Sending rules by file should cut what the AI has to read, and reading less but more relevant material might mean fewer broken rules. To check, each project got 2 small tasks (a summary and exercises for a course chapter; an opening-hours hint and a delivery tip for the game), and the same rules were provided three ways: all in CLAUDE.md; with RuleTree; with RuleTree plus the whole code map handed to the AI. The AI really edited the files 8 times per setup, and another model counted the rules each edit broke.
+Sending rules by file should cut what the AI has to read, and reading less but more relevant material might mean fewer broken rules. To check, each project got 2 small tasks, such as an opening-hours hint in project A or a summary for a chapter in project B. The same rules were provided three ways: all in CLAUDE.md; with RuleTree; with RuleTree plus the whole code map handed to the AI. The AI really edited the files 8 times per setup, and another model counted the rules each edit broke.
 
 ![With and without RuleTree: 40–60% less to read, no fewer rules broken](docs/images/en/chart-effect.png)
 
-The rules and notes to read shrank by 40 to 60 percent, but broken rules did not: about 1 per edit in all three setups for the course project, close to 0 for the game. On short tasks that end after one file, RuleTree makes the AI read less but has not yet made it follow rules better; long chats are untested. The full code map showed no benefit, so the AI now reads it only when it wants to.
+The rules and notes to read shrank by 40 to 60 percent, but broken rules did not: close to 0 in all three setups for project A, about 1 per edit for project B. On short tasks that end after one file, RuleTree makes the AI read less but has not yet made it follow rules better; long chats are untested. The full code map showed no benefit, so the AI now reads it only when it wants to.
 
 ### Are requests from real chats recorded correctly?
 
@@ -131,7 +144,7 @@ A simulated 32-turn chat: the user makes 13 lasting requests, then changes their
 
 ### Does reorganizing lose or change rules?
 
-Each project was reorganized 3 times: no rule lost, no wording changed, no "Decision:" missing. Three faults were also planted in the copies to see whether a check-up finds them. A top-level rule that only concerns code was moved under the "code conventions" part all 6 times, and turned into an automatic check. A rule telling the AI to use a class that no longer exists was judged stale and removed all 8 times. Two design docs that contradict each other were caught 3 times out of 3 in the course project; in the game project, with many more docs, never. The comparison has since been changed and not yet retested.
+Each project was reorganized 3 times: no rule lost, no wording changed, no "Decision:" missing. Three faults were also planted in the copies to see whether a check-up finds them. A top-level rule that only concerns code was moved under the "code conventions" part all 6 times, and turned into an automatic check. A rule telling the AI to use a class that no longer exists was judged stale and removed all 8 times. Two design docs that contradict each other were caught 3 times out of 3 in project B; in project A, with many more docs, never. The comparison has since been changed and not yet retested.
 
 ## Compared with other approaches
 

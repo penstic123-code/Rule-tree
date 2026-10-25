@@ -1,18 +1,18 @@
-// 痛点：同一个小镇游戏的要求散在聊天、CLAUDE.md、AI 的记忆、设计文档里（和 scope、recorder 是同一个例子）
+// 痛点：同一个项目的要求散在聊天、CLAUDE.md、AI 的记忆、设计文档里。例子用谁都懂的写代码要求（和 scope、recorder 的网店是同一类）
 const T = EN ? {
   title: 'Requests scattered across places, messier every week', chat: 'Chat history', more: 'hundreds more turns above…',
-  msgs: [['l', 'Comments in English'], ['r', 'OK'], ['l', 'Shops open 9 to 21'], ['r', 'Got it'], ['l', '……'], ['l', 'Read hours from config'], ['r', 'OK'], ['l', '……'], ['l', 'Keepers stay inside']],
-  docs: [['CLAUDE.md', [['Comments in English', 'dup'], ['Open 9 to 21', 'conf'], ['Saves in user://', '']]],
-    ['AI memory', [['Hours from config', 'conf'], ['English comments', 'dup'], ['Doing shops', 'old']]],
-    ['design.md', [['English comments', 'dup'], ['Keepers roam', 'old'], ['Keepers stay inside', '']]]],
+  msgs: [['l', 'Comments in English'], ['r', 'OK'], ['l', 'Money: 2 decimals'], ['r', 'Got it'], ['l', '……'], ['l', 'Use whole cents now'], ['r', 'OK'], ['l', '……'], ['l', 'Run tests after edits']],
+  docs: [['CLAUDE.md', [['Comments in English', 'dup'], ['Money: 2 decimals', 'conf'], ['Install with pnpm', '']]],
+    ['AI memory', [['Money in cents', 'conf'], ['English comments', 'dup'], ['Doing login', 'old']]],
+    ['design.md', [['English comments', 'dup'], ['Tests optional', 'old'], ['Run tests after edits', '']]]],
   leg: ['Same request in 3 places', 'Two places disagree', 'Old wording left'], old: 'old',
   ai: 'Which rule did\nwe settle on?', aiNote: ['In a long chat the AI forgets', 'what was settled early on'], you: 'Which one\nis right?',
 } : {
   title: '要求散在好几个地方，越攒越乱', chat: '聊天记录', more: '往上还有几百轮……',
-  msgs: [['l', '注释用中文'], ['r', '好的'], ['l', '营业时间写死 9 到 21 点'], ['r', '收到'], ['l', '……'], ['l', '营业时间改成读配置'], ['r', '好'], ['l', '……'], ['l', '店员只在店里出现']],
-  docs: [['CLAUDE.md', [['注释用中文', 'dup'], ['营业 9 到 21 点', 'conf'], ['存档放 user://', '']]],
-    ['AI 的记忆', [['营业时间读配置', 'conf'], ['注释写中文', 'dup'], ['正在做店铺', 'old']]],
-    ['设计文档.md', [['注释一律中文', 'dup'], ['店员可以上街', 'old'], ['店员只在店里', '']]]],
+  msgs: [['l', '注释用中文'], ['r', '好的'], ['l', '金额保留两位小数'], ['r', '收到'], ['l', '……'], ['l', '金额改成用整数分吧'], ['r', '好'], ['l', '……'], ['l', '改完先跑一遍测试']],
+  docs: [['CLAUDE.md', [['注释用中文', 'dup'], ['金额两位小数', 'conf'], ['用 pnpm 装依赖', '']]],
+    ['AI 的记忆', [['金额用整数分', 'conf'], ['注释写中文', 'dup'], ['正在做登录页', 'old']]],
+    ['设计文档.md', [['注释一律中文', 'dup'], ['测试可以不跑', 'old'], ['改完先跑测试', '']]]],
   leg: ['同一条要求抄了 3 处', '两处说法打架', '旧说法还留着'], old: '过时',
   ai: '早先定的是\n哪一条来着？', aiNote: ['对话一长，AI 就忘了', '早先定好的要求'], you: '到底以\n哪份为准？',
 };

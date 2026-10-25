@@ -1,30 +1,30 @@
-// 例子：一个小镇游戏的需求树，AI 改 shop_door.gd 时收到哪几块的规则。和 README 里那段需求树.md 是同一个例子
+// 例子：一个网店的需求树，AI 改 refund.ts 时收到哪几块的规则。和 README 里那段需求树.md 是同一个例子
 const T = EN ? {
-  title: 'Example: what the AI gets when it edits shop_door.gd',
-  N: { P: 'Town game', R1: 'Shops', R2: 'Roads & lamps', R3: 'Saving', R11: 'Shop door & hours', R12: 'Shelves' },
-  files: { P: 'every file', R1: 'game/shops/**', R11: 'shop_door.gd' },
+  title: 'Example: what the AI gets when it edits refund.ts',
+  N: { P: 'Online shop', R1: 'Payments', R2: 'Login', R3: 'Product pages', R11: 'Refunds', R12: 'Coupons' },
+  files: { P: 'every file', R1: 'src/payment/**', R11: 'refund.ts' },
   notSent: 'not sent',
   legOn: 'Covers the file being edited: its rules are sent', legOff: 'Covers other files: not sent this time',
-  file: 'game/shops/shop_door.gd', editing: 'the AI is editing this file',
+  file: 'src/payment/refund.ts', editing: 'the AI is editing this file',
   box: 'Rules the AI gets',
-  rules: [['Town game', 'Comments in English'], ['Shops', 'Shopkeepers stay inside their shop'], ['Shop door & hours', 'Opening hours come only from ShopHours']],
-  foot: ['Rules for roads, saving and shelves are not sent.', 'They arrive when the AI edits those files.'],
+  rules: [['Online shop', 'Comments in English'], ['Payments', 'Store amounts as whole cents'], ['Refunds', 'Check the order status before refunding']],
+  foot: ['Rules for login, product pages and coupons are not sent.', 'They arrive when the AI edits those files.'],
 } : {
-  title: '例子：AI 改 shop_door.gd 时，收到哪些规则',
-  N: { P: '小镇游戏', R1: '店铺', R2: '道路与路灯', R3: '存档', R11: '店门与营业时间', R12: '货架' },
-  files: { P: '所有文件', R1: 'game/shops/**', R11: 'shop_door.gd' },
+  title: '例子：AI 改 refund.ts 时，收到哪些规则',
+  N: { P: '网店', R1: '支付', R2: '登录', R3: '商品页', R11: '退款', R12: '优惠券' },
+  files: { P: '所有文件', R1: 'src/payment/**', R11: 'refund.ts' },
   notSent: '不送',
   legOn: '管着正在改的文件：规则送到', legOff: '管别的文件：这次不送',
-  file: 'game/shops/shop_door.gd', editing: 'AI 正在改这个文件',
+  file: 'src/payment/refund.ts', editing: 'AI 正在改这个文件',
   box: 'AI 收到的规则',
-  rules: [['小镇游戏', '注释用中文'], ['店铺', '店员只在店里出现'], ['店门与营业时间', '营业时间只从 ShopHours 读']],
-  foot: ['道路、存档、货架的规则这次不送，', 'AI 改到那些文件时才送。'],
+  rules: [['网店', '注释用中文'], ['支付', '金额一律用整数分'], ['退款', '退款前先查订单状态']],
+  foot: ['登录、商品页、优惠券的规则这次不送，', 'AI 改到那些文件时才送。'],
 };
 sketch(800, 470, g => {
   const { C } = g;
   g.text(24, 30, T.title, { size: 21, weight: 700 });
 
-  // 左：树。实线、绿色的是管 shop_door.gd 的那一路
+  // 左：树。实线、绿色的是管 refund.ts 的那一路
   const N = {
     P: { x: 120, y: 96, on: true }, R1: { x: 40, y: 196, on: true }, R2: { x: 226, y: 196 }, R3: { x: 366, y: 196 },
     R11: { x: 24, y: 306, on: true }, R12: { x: 214, y: 306 },

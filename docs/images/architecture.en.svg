@@ -1,12 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 580" font-family="-apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
-  <title>How ReqTree works</title>
-  <rect width="960" height="580" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="-apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+  <title>How RuleTree is put together</title>
+  <rect width="960" height="560" fill="#ffffff"/>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5b6472"/></marker>
   </defs>
+  <!-- Generic structure only; the worked example is in scope.png -->
 
   <g font-size="15" font-weight="700" fill="#5b6472">
-    <text x="95" y="38" text-anchor="middle">① What comes in</text>
+    <text x="95" y="38" text-anchor="middle">① Where it comes from</text>
     <text x="330" y="38" text-anchor="middle">② Background tidying</text>
     <text x="570" y="38" text-anchor="middle">③ Where it lives</text>
     <text x="825" y="38" text-anchor="middle">④ Who gets it</text>
@@ -14,76 +15,76 @@
 
   <g font-size="14" fill="#1f2328">
     <rect x="20" y="70" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
-    <text x="95" y="96" text-anchor="middle" font-weight="600">What you say</text>
-    <text x="95" y="117" text-anchor="middle" font-size="11" fill="#5b6472">"hours via ShopHours only"</text>
+    <text x="95" y="96" text-anchor="middle" font-weight="600">What you say in chat</text>
+    <text x="95" y="117" text-anchor="middle" font-size="12" fill="#5b6472">the requests meant to last</text>
 
     <rect x="20" y="150" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
     <text x="95" y="176" text-anchor="middle" font-weight="600">Files the AI edited</text>
-    <text x="95" y="197" text-anchor="middle" font-size="12" fill="#5b6472">shops/shop_door.gd</text>
+    <text x="95" y="197" text-anchor="middle" font-size="12" fill="#5b6472">clues for filing new rules</text>
 
     <rect x="20" y="230" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
-    <text x="95" y="256" text-anchor="middle" font-weight="600">The project's code</text>
-    <text x="95" y="277" text-anchor="middle" font-size="12" fill="#5b6472">functions, classes, calls</text>
+    <text x="95" y="256" text-anchor="middle" font-weight="600">Your code</text>
+    <text x="95" y="277" text-anchor="middle" font-size="12" fill="#5b6472">files, functions, classes</text>
 
     <rect x="20" y="310" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
-    <text x="95" y="336" text-anchor="middle" font-weight="600">Memory and docs</text>
-    <text x="95" y="357" text-anchor="middle" font-size="12" fill="#5b6472">CLAUDE.md, design docs</text>
+    <text x="95" y="336" text-anchor="middle" font-weight="600">Existing notes</text>
+    <text x="95" y="357" text-anchor="middle" font-size="12" fill="#5b6472">CLAUDE.md, docs, memory</text>
   </g>
 
   <g font-size="14" fill="#1f2328">
     <rect x="245" y="70" width="170" height="92" rx="10" fill="#fff6e5" stroke="#e5b866"/>
-    <text x="330" y="96" text-anchor="middle" font-weight="700">Recorder</text>
-    <text x="330" y="117" text-anchor="middle" font-size="12" fill="#5b6472">after each turn a small model</text>
-    <text x="330" y="134" text-anchor="middle" font-size="12" fill="#5b6472">files lasting requests</text>
-    <text x="330" y="151" text-anchor="middle" font-size="12" fill="#5b6472">by the files they govern</text>
+    <text x="330" y="96" text-anchor="middle" font-weight="700">Recorder (every turn)</text>
+    <text x="330" y="117" text-anchor="middle" font-size="12" fill="#5b6472">a small model reads the turn</text>
+    <text x="330" y="134" text-anchor="middle" font-size="12" fill="#5b6472">and files lasting requests</text>
+    <text x="330" y="151" text-anchor="middle" font-size="12" fill="#5b6472">under the matching part</text>
 
     <rect x="245" y="190" width="170" height="80" rx="10" fill="#fff6e5" stroke="#e5b866"/>
-    <text x="330" y="216" text-anchor="middle" font-weight="700">Code reading</text>
-    <text x="330" y="237" text-anchor="middle" font-size="12" fill="#5b6472">who calls whom, and</text>
-    <text x="330" y="254" text-anchor="middle" font-size="12" fill="#5b6472">where each name is defined</text>
+    <text x="330" y="216" text-anchor="middle" font-weight="700">Code map (automatic)</text>
+    <text x="330" y="237" text-anchor="middle" font-size="12" fill="#5b6472">files, functions and classes</text>
+    <text x="330" y="254" text-anchor="middle" font-size="12" fill="#5b6472">in each part, who uses whom</text>
 
     <rect x="245" y="298" width="170" height="100" rx="10" fill="#fff6e5" stroke="#e5b866"/>
     <text x="330" y="324" text-anchor="middle" font-weight="700">Check-up (on click)</text>
-    <text x="330" y="345" text-anchor="middle" font-size="12" fill="#5b6472">merge duplicates, fix conflicts</text>
-    <text x="330" y="362" text-anchor="middle" font-size="12" fill="#5b6472">clear stale rules</text>
-    <text x="330" y="379" text-anchor="middle" font-size="12" fill="#5b6472">regroup the tree, score it</text>
+    <text x="330" y="345" text-anchor="middle" font-size="12" fill="#5b6472">merge repeats, fix conflicts,</text>
+    <text x="330" y="362" text-anchor="middle" font-size="12" fill="#5b6472">drop stale rules, split</text>
+    <text x="330" y="379" text-anchor="middle" font-size="12" fill="#5b6472">crowded parts, then score</text>
   </g>
 
   <g font-size="14" fill="#1f2328">
     <rect x="480" y="70" width="180" height="210" rx="12" fill="#e9f7ef" stroke="#7cc49a" stroke-width="2"/>
-    <text x="570" y="100" text-anchor="middle" font-weight="700" font-size="16">需求树.md</text>
-    <text x="570" y="122" text-anchor="middle" font-size="12" fill="#5b6472">the single source of truth</text>
+    <text x="570" y="98" text-anchor="middle" font-weight="700" font-size="16">需求树.md (the tree)</text>
+    <text x="570" y="118" text-anchor="middle" font-size="12" fill="#5b6472">one block per part, listing</text>
+    <text x="570" y="134" text-anchor="middle" font-size="12" fill="#5b6472">its files and its rules</text>
     <g font-size="12" fill="#1f2328">
-      <text x="496" y="152">R3 Shops</text>
-      <text x="508" y="172">· staff stay inside the shop</text>
-      <text x="496" y="196">  R3.1 Doors and hours</text>
-      <text x="508" y="216">· opening hours only</text>
-      <text x="520" y="233">via ShopHours</text>
-      <text x="496" y="259">  &gt; docs: shop-design.md</text>
+      <text x="494" y="162">Whole project</text>
+      <text x="504" y="180" fill="#5b6472">· rules for every file</text>
+      <text x="504" y="204">Module A  covers a/**</text>
+      <text x="514" y="222" fill="#5b6472">· rules for editing A</text>
+      <text x="514" y="240" fill="#5b6472">· docs: A's design notes</text>
+      <text x="504" y="264">Module B  covers b/**</text>
     </g>
 
     <rect x="480" y="300" width="180" height="98" rx="10" fill="#f4f5f7" stroke="#c4c9d1"/>
-    <text x="570" y="326" text-anchor="middle" font-weight="600">.reqtree/</text>
-    <text x="570" y="347" text-anchor="middle" font-size="12" fill="#5b6472">every change, all undoable</text>
+    <text x="570" y="326" text-anchor="middle" font-weight="600">.reqtree/ folder</text>
+    <text x="570" y="347" text-anchor="middle" font-size="12" fill="#5b6472">every change (all undoable)</text>
     <text x="570" y="365" text-anchor="middle" font-size="12" fill="#5b6472">code map, automatic checks</text>
     <text x="570" y="383" text-anchor="middle" font-size="12" fill="#5b6472">check-up reports</text>
   </g>
 
   <g font-size="14" fill="#1f2328">
-    <rect x="730" y="70" width="190" height="190" rx="12" fill="#f3eefe" stroke="#a98be0"/>
-    <text x="825" y="98" text-anchor="middle" font-weight="700">AI</text>
-    <text x="825" y="122" text-anchor="middle" font-size="12" fill="#5b6472">editing shop_door.gd,</text>
-    <text x="825" y="140" text-anchor="middle" font-size="12" fill="#5b6472">it reads only:</text>
-    <text x="745" y="166" font-size="12">✓ rules for doors and hours</text>
-    <text x="745" y="186" font-size="12">✓ rules for all shops</text>
-    <text x="745" y="206" font-size="12">✗ rules for other modules</text>
-    <text x="745" y="236" font-size="12" fill="#5b6472">after an edit, new lines are</text>
-    <text x="745" y="252" font-size="12" fill="#5b6472">checked and slips flagged</text>
+    <rect x="730" y="70" width="190" height="200" rx="12" fill="#f3eefe" stroke="#a98be0"/>
+    <text x="825" y="98" text-anchor="middle" font-weight="700">The AI</text>
+    <text x="825" y="122" text-anchor="middle" font-size="12" fill="#5b6472">editing a file in a/ gets only:</text>
+    <text x="748" y="148" font-size="12">✓ whole-project rules</text>
+    <text x="748" y="168" font-size="12">✓ module A's rules</text>
+    <text x="748" y="188" font-size="12" fill="#5b6472">✗ module B's rules: not sent</text>
+    <text x="748" y="222" font-size="12" fill="#5b6472">After the edit: the new lines</text>
+    <text x="748" y="240" font-size="12" fill="#5b6472">are checked against the rules</text>
 
-    <rect x="730" y="290" width="190" height="80" rx="12" fill="#f3eefe" stroke="#a98be0"/>
-    <text x="825" y="318" text-anchor="middle" font-weight="700">You</text>
-    <text x="825" y="340" text-anchor="middle" font-size="12" fill="#5b6472">the tree, the map, changes</text>
-    <text x="825" y="357" text-anchor="middle" font-size="12" fill="#5b6472">check-up reports and scores</text>
+    <rect x="730" y="298" width="190" height="80" rx="12" fill="#f3eefe" stroke="#a98be0"/>
+    <text x="825" y="326" text-anchor="middle" font-weight="700">You</text>
+    <text x="825" y="348" text-anchor="middle" font-size="12" fill="#5b6472">tree, map, recent changes</text>
+    <text x="825" y="365" text-anchor="middle" font-size="12" fill="#5b6472">answer questions, read reports</text>
   </g>
 
   <g stroke="#5b6472" stroke-width="1.6" fill="none" marker-end="url(#a)">
@@ -92,21 +93,21 @@
     <path d="M170,261 L243,240"/>
     <path d="M170,341 L243,348"/>
     <path d="M415,116 L478,140"/>
-    <path d="M415,230 L478,220"/>
+    <path d="M415,230 L478,330"/>
     <path d="M415,348 L478,262"/>
-    <path d="M660,150 L728,150"/>
+    <path d="M660,160 L728,160"/>
     <path d="M660,250 L728,320"/>
   </g>
   <g font-size="11" fill="#5b6472">
-    <text x="695" y="124" text-anchor="middle">sent</text>
-    <text x="695" y="139" text-anchor="middle">by file</text>
+    <text x="694" y="134" text-anchor="middle">sent by the</text>
+    <text x="694" y="149" text-anchor="middle">file edited</text>
   </g>
 
   <g font-size="13" fill="#1f2328">
-    <rect x="20" y="430" width="900" height="110" rx="12" fill="#fafbfc" stroke="#e1e4e8"/>
-    <text x="40" y="460">The key is step ④: rules are sorted by file into Claude Code's own "load by path" mechanism. Whichever file the AI</text>
-    <text x="40" y="482">reads or writes, Claude Code hands it the rules covering that file, in a new conversation, after compaction, and in sub-agents.</text>
-    <text x="40" y="504">The AI reads only the rules that apply, so no context is wasted. Step ② keeps the tree in order: new rules land in the right</text>
-    <text x="40" y="526">place, stale, duplicate and conflicting ones are cleared out, and a lopsided structure gets regrouped.</text>
+    <rect x="20" y="420" width="900" height="110" rx="12" fill="#fafbfc" stroke="#e1e4e8"/>
+    <text x="40" y="450">Whichever file the AI reads or writes, Claude Code hands it the rules of the parts covering that file. This is a</text>
+    <text x="40" y="472">built-in Claude Code feature: a rule file can say "load me only for these files", and RuleTree compiles each part into one.</text>
+    <text x="40" y="494">Delivery doesn't rely on the AI's memory: new chats, compacted chats and subagents all get the rules, and nothing unneeded.</text>
+    <text x="40" y="516">The recorder adds to the tree every turn and check-ups tidy it, so you don't maintain it by hand.</text>
   </g>
 </svg>

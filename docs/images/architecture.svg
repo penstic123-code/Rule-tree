@@ -1,94 +1,95 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 580" font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif">
-  <title>需求树是怎么工作的</title>
-  <rect width="960" height="580" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif">
+  <title>RuleTree 的整体结构</title>
+  <rect width="960" height="560" fill="#ffffff"/>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5b6472"/></marker>
   </defs>
+  <!-- 只讲通用结构，不放具体项目的例子（例子在 scope.png） -->
 
   <!-- 列标题 -->
   <g font-size="15" font-weight="700" fill="#5b6472">
-    <text x="95" y="38" text-anchor="middle">① 进来的</text>
+    <text x="95" y="38" text-anchor="middle">① 从哪来</text>
     <text x="330" y="38" text-anchor="middle">② 后台整理</text>
     <text x="570" y="38" text-anchor="middle">③ 存在哪</text>
-    <text x="815" y="38" text-anchor="middle">④ 送到谁手上</text>
+    <text x="825" y="38" text-anchor="middle">④ 交给谁</text>
   </g>
 
-  <!-- ① 进来的 -->
+  <!-- ① 从哪来 -->
   <g font-size="14" fill="#1f2328">
     <rect x="20" y="70" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
-    <text x="95" y="96" text-anchor="middle" font-weight="600">你说的话</text>
-    <text x="95" y="117" text-anchor="middle" font-size="12" fill="#5b6472">"营业时间走 ShopHours"</text>
+    <text x="95" y="96" text-anchor="middle" font-weight="600">你在对话里说的话</text>
+    <text x="95" y="117" text-anchor="middle" font-size="12" fill="#5b6472">其中以后都要守的要求</text>
 
     <rect x="20" y="150" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
     <text x="95" y="176" text-anchor="middle" font-weight="600">AI 改了哪些文件</text>
-    <text x="95" y="197" text-anchor="middle" font-size="12" fill="#5b6472">shops/shop_door.gd</text>
+    <text x="95" y="197" text-anchor="middle" font-size="12" fill="#5b6472">判断新规则挂哪的线索</text>
 
     <rect x="20" y="230" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
     <text x="95" y="256" text-anchor="middle" font-weight="600">项目里的代码</text>
-    <text x="95" y="277" text-anchor="middle" font-size="12" fill="#5b6472">函数、类、谁调用谁</text>
+    <text x="95" y="277" text-anchor="middle" font-size="12" fill="#5b6472">文件、函数、类</text>
 
     <rect x="20" y="310" width="150" height="62" rx="10" fill="#eef4ff" stroke="#9db8e8"/>
-    <text x="95" y="336" text-anchor="middle" font-weight="600">记忆和文档</text>
-    <text x="95" y="357" text-anchor="middle" font-size="12" fill="#5b6472">CLAUDE.md、设计文档</text>
+    <text x="95" y="336" text-anchor="middle" font-weight="600">已有的说明</text>
+    <text x="95" y="357" text-anchor="middle" font-size="12" fill="#5b6472">CLAUDE.md、文档、记忆</text>
   </g>
 
   <!-- ② 后台整理 -->
   <g font-size="14" fill="#1f2328">
     <rect x="245" y="70" width="170" height="92" rx="10" fill="#fff6e5" stroke="#e5b866"/>
-    <text x="330" y="96" text-anchor="middle" font-weight="700">记录员</text>
-    <text x="330" y="117" text-anchor="middle" font-size="12" fill="#5b6472">每轮聊完，小模型在后台读</text>
-    <text x="330" y="134" text-anchor="middle" font-size="12" fill="#5b6472">把长期要求挂到</text>
-    <text x="330" y="151" text-anchor="middle" font-size="12" fill="#5b6472">管那些文件的需求下</text>
+    <text x="330" y="96" text-anchor="middle" font-weight="700">记录员（每轮自动）</text>
+    <text x="330" y="117" text-anchor="middle" font-size="12" fill="#5b6472">一个小模型在后台读这一轮</text>
+    <text x="330" y="134" text-anchor="middle" font-size="12" fill="#5b6472">把长期要求记到</text>
+    <text x="330" y="151" text-anchor="middle" font-size="12" fill="#5b6472">管相关文件的需求下</text>
 
     <rect x="245" y="190" width="170" height="80" rx="10" fill="#fff6e5" stroke="#e5b866"/>
-    <text x="330" y="216" text-anchor="middle" font-weight="700">读代码</text>
-    <text x="330" y="237" text-anchor="middle" font-size="12" fill="#5b6472">算出谁调用谁、名字在哪</text>
-    <text x="330" y="254" text-anchor="middle" font-size="12" fill="#5b6472">帮着判断代码归哪个需求</text>
+    <text x="330" y="216" text-anchor="middle" font-weight="700">代码地图（自动）</text>
+    <text x="330" y="237" text-anchor="middle" font-size="12" fill="#5b6472">列出每块代码有哪些文件、</text>
+    <text x="330" y="254" text-anchor="middle" font-size="12" fill="#5b6472">函数和类，谁用了谁</text>
 
     <rect x="245" y="298" width="170" height="100" rx="10" fill="#fff6e5" stroke="#e5b866"/>
     <text x="330" y="324" text-anchor="middle" font-weight="700">体检（你点了才跑）</text>
     <text x="330" y="345" text-anchor="middle" font-size="12" fill="#5b6472">合并重复、处理矛盾</text>
-    <text x="330" y="362" text-anchor="middle" font-size="12" fill="#5b6472">清掉过时的、规则归位</text>
-    <text x="330" y="379" text-anchor="middle" font-size="12" fill="#5b6472">结构长歪了重新整理，打分</text>
+    <text x="330" y="362" text-anchor="middle" font-size="12" fill="#5b6472">删掉过时的、太挤的重新分</text>
+    <text x="330" y="379" text-anchor="middle" font-size="12" fill="#5b6472">再给整理结果打个分</text>
   </g>
 
   <!-- ③ 存在哪 -->
   <g font-size="14" fill="#1f2328">
     <rect x="480" y="70" width="180" height="210" rx="12" fill="#e9f7ef" stroke="#7cc49a" stroke-width="2"/>
-    <text x="570" y="100" text-anchor="middle" font-weight="700" font-size="16">需求树.md</text>
-    <text x="570" y="122" text-anchor="middle" font-size="12" fill="#5b6472">唯一的标准答案</text>
+    <text x="570" y="98" text-anchor="middle" font-weight="700" font-size="16">需求树.md</text>
+    <text x="570" y="118" text-anchor="middle" font-size="12" fill="#5b6472">按功能分块，每块写明</text>
+    <text x="570" y="134" text-anchor="middle" font-size="12" fill="#5b6472">管哪些文件、守哪些规则</text>
     <g font-size="12" fill="#1f2328">
-      <text x="496" y="152">R3 店铺</text>
-      <text x="508" y="172">· 店员只在店里出现</text>
-      <text x="496" y="196">  R3.1 店门与营业时间</text>
-      <text x="508" y="216">· 营业时间走</text>
-      <text x="520" y="233">ShopHours</text>
-      <text x="496" y="259">  &gt; 文档：店铺设计.md</text>
+      <text x="494" y="162">整个项目</text>
+      <text x="504" y="180" fill="#5b6472">· 改任何文件都守的规则</text>
+      <text x="504" y="204">模块 A　管 a/**</text>
+      <text x="514" y="222" fill="#5b6472">· 改 A 时守的规则</text>
+      <text x="514" y="240" fill="#5b6472">· 文档：A 的设计说明</text>
+      <text x="504" y="264">模块 B　管 b/**</text>
     </g>
 
     <rect x="480" y="300" width="180" height="98" rx="10" fill="#f4f5f7" stroke="#c4c9d1"/>
-    <text x="570" y="326" text-anchor="middle" font-weight="600">.reqtree/</text>
+    <text x="570" y="326" text-anchor="middle" font-weight="600">.reqtree/ 文件夹</text>
     <text x="570" y="347" text-anchor="middle" font-size="12" fill="#5b6472">每次改动的记录（都能撤销）</text>
     <text x="570" y="365" text-anchor="middle" font-size="12" fill="#5b6472">代码地图、自动检查</text>
     <text x="570" y="383" text-anchor="middle" font-size="12" fill="#5b6472">体检报告</text>
   </g>
 
-  <!-- ④ 送到谁手上 -->
+  <!-- ④ 交给谁 -->
   <g font-size="14" fill="#1f2328">
-    <rect x="730" y="70" width="190" height="190" rx="12" fill="#f3eefe" stroke="#a98be0"/>
+    <rect x="730" y="70" width="190" height="200" rx="12" fill="#f3eefe" stroke="#a98be0"/>
     <text x="825" y="98" text-anchor="middle" font-weight="700">AI</text>
-    <text x="825" y="122" text-anchor="middle" font-size="12" fill="#5b6472">改 shop_door.gd 时</text>
-    <text x="825" y="140" text-anchor="middle" font-size="12" fill="#5b6472">只读到这些：</text>
-    <text x="745" y="166" font-size="12">✓ 店门与营业时间的规则</text>
-    <text x="745" y="186" font-size="12">✓ 整个店铺的规则</text>
-    <text x="745" y="206" font-size="12">✗ 别的模块的规则</text>
-    <text x="745" y="236" font-size="12" fill="#5b6472">改完：按规则查一遍刚写的</text>
-    <text x="745" y="252" font-size="12" fill="#5b6472">几行，可能违反就提醒</text>
+    <text x="825" y="122" text-anchor="middle" font-size="12" fill="#5b6472">改 a/ 里的文件时只收到：</text>
+    <text x="748" y="148" font-size="12">✓ 整个项目的规则</text>
+    <text x="748" y="168" font-size="12">✓ 模块 A 的规则</text>
+    <text x="748" y="188" font-size="12" fill="#5b6472">✗ 模块 B 的规则不送</text>
+    <text x="748" y="222" font-size="12" fill="#5b6472">改完：查一遍刚写的几行，</text>
+    <text x="748" y="240" font-size="12" fill="#5b6472">可能违反规则就提醒</text>
 
-    <rect x="730" y="290" width="190" height="80" rx="12" fill="#f3eefe" stroke="#a98be0"/>
-    <text x="825" y="318" text-anchor="middle" font-weight="700">你</text>
-    <text x="825" y="340" text-anchor="middle" font-size="12" fill="#5b6472">侧栏的树、导图、最近改动</text>
-    <text x="825" y="357" text-anchor="middle" font-size="12" fill="#5b6472">体检报告和评分</text>
+    <rect x="730" y="298" width="190" height="80" rx="12" fill="#f3eefe" stroke="#a98be0"/>
+    <text x="825" y="326" text-anchor="middle" font-weight="700">你</text>
+    <text x="825" y="348" text-anchor="middle" font-size="12" fill="#5b6472">侧栏看树、导图、最近改动</text>
+    <text x="825" y="365" text-anchor="middle" font-size="12" fill="#5b6472">回答拿不准的事、看体检报告</text>
   </g>
 
   <!-- 箭头 -->
@@ -98,22 +99,22 @@
     <path d="M170,261 L243,240"/>
     <path d="M170,341 L243,348"/>
     <path d="M415,116 L478,140"/>
-    <path d="M415,230 L478,220"/>
+    <path d="M415,230 L478,330"/>
     <path d="M415,348 L478,262"/>
-    <path d="M660,150 L728,150"/>
+    <path d="M660,160 L728,160"/>
     <path d="M660,250 L728,320"/>
   </g>
-  <g font-size="12" fill="#5b6472">
-    <text x="695" y="124" text-anchor="middle" font-size="11">按文件</text>
-    <text x="695" y="139" text-anchor="middle" font-size="11">分好送出</text>
+  <g font-size="11" fill="#5b6472">
+    <text x="694" y="134" text-anchor="middle">改哪个文件</text>
+    <text x="694" y="149" text-anchor="middle">送哪几块</text>
   </g>
 
   <!-- 底部说明 -->
   <g font-size="13" fill="#1f2328">
-    <rect x="20" y="430" width="900" height="110" rx="12" fill="#fafbfc" stroke="#e1e4e8"/>
-    <text x="40" y="460">关键在第 ④ 步：规则按文件分好，放进 Claude Code 自带的"按路径加载"机制里。AI 读写哪个文件，</text>
-    <text x="40" y="482">Claude Code 才把管这个文件的规则交给它；新开对话、对话被压缩、派出子 agent，都照样送到。</text>
-    <text x="40" y="504">AI 只读用得上的那几条，不占多余的上下文。第 ② 步让树一直保持整齐：新规则挂对地方，旧的、重复的、</text>
-    <text x="40" y="526">打架的被理掉，结构长歪了重新分。</text>
+    <rect x="20" y="420" width="900" height="110" rx="12" fill="#fafbfc" stroke="#e1e4e8"/>
+    <text x="40" y="450">AI 读写哪个文件，Claude Code 就把管这个文件的那几块规则交给它。这是 Claude Code 自带的功能：</text>
+    <text x="40" y="472">规则文件可以写明"只在读写某些文件时加载"，RuleTree 把每个需求编成一份这样的文件。</text>
+    <text x="40" y="494">所以送规则不靠 AI 的记性，新开对话、对话被压缩、派出子 agent 都照样送到，AI 也不用读用不上的规则。</text>
+    <text x="40" y="516">需求树由记录员每轮补充、体检定期整理，不用你自己维护。</text>
   </g>
 </svg>

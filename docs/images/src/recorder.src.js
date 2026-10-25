@@ -1,19 +1,19 @@
-// 记录员的四步，用小镇游戏的例子（和 scope、pain 同一个）：用户改了营业时间的说法，记录员改写原来那条
+// 记录员的四步，用网店的例子（和 scope 同一个）：用户改了金额的存法，记录员改写原来那条
 const T = EN ? {
-  s1: 'You state a lasting request', say: 'Don\'t hard-code the hours,\nread them from ShopHours',
+  s1: 'You state a lasting request', say: 'No decimals for money,\nstore whole cents',
   s2: 'When the turn ends, the recorder reads it',
   p2: ['Reads what you said and the AI\'s reply', 'A small model (Haiku) decides, ~6 s', 'You keep chatting, no waiting', 'Not sure? It asks you'],
   s3: 'Looks for an existing rule on the topic', doc: '需求树.md',
-  lines: ['Comments in English', 'Shops open 9 to 21', 'Keepers stay inside'], found: 'Found one: rewrite it. Only add if none',
-  s4: 'Rewrites that rule, no duplicate', old: 'Shops open 9 to 21', neu: 'Opening hours only from ShopHours',
+  lines: ['Comments in English', 'Money: 2 decimals', 'Check status first'], found: 'Found one: rewrite it. Only add if none',
+  s4: 'Rewrites that rule, no duplicate', old: 'Money: 2 decimals', neu: 'Store amounts as whole cents',
   panel: 'Sidebar · Recent changes', did: 'Recorder rewrote a rule', wrong: 'Wrong? One click', undo: '↩ Undo', next: 'next turn',
 } : {
-  s1: '你说了一条长期要求', say: '营业时间别写死，\n从 ShopHours 读',
+  s1: '你说了一条长期要求', say: '金额别用小数了，\n一律存成整数分',
   s2: '这一轮结束，记录员在后台读',
   p2: ['读你这一轮的话和 AI 的回复', '小模型 Haiku 判断要不要记，约 6 秒', '你不用等，可以接着聊', '拿不准就弹出来问你'],
   s3: '先找同一件事的已有规则', doc: '需求树.md',
-  lines: ['注释用中文', '营业时间 9 到 21 点', '店员只在店里出现'], found: '找到就改写；实在没有，才新加一条',
-  s4: '改写这一条，不再多加一条', old: '营业时间 9 到 21 点', neu: '营业时间只从 ShopHours 读',
+  lines: ['注释用中文', '金额保留两位小数', '退款前先查订单状态'], found: '找到就改写；实在没有，才新加一条',
+  s4: '改写这一条，不再多加一条', old: '金额保留两位小数', neu: '金额一律用整数分',
   panel: '侧栏 · 最近改动', did: '记录员改写了一条规则', wrong: '记错了？点一下', undo: '↩ 撤销', next: '下一轮',
 };
 sketch(800, 500, g => {
