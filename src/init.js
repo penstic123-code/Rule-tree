@@ -1,5 +1,5 @@
 'use strict';
-// 用 AI 初始化需求树。设计见 设计-信息架构.md 第七节。
+// 用 AI 初始化需求树。设计见 docs/design-info-architecture.md 第七节。
 // 读项目的文件夹、README、CLAUDE.md / AGENTS.md、最近的 git 提交，让模型一次给出：
 //   需求：按「要做的事」分（登录、支付、第 1 章），不按文件夹分；每个带文件范围和状态
 //   拆分：CLAUDE.md / AGENTS.md 里大段的参考资料（流程、技术约束、风格说明）搬成单独的文档，挂到对应需求上
@@ -32,6 +32,24 @@ const oneLine = (s, max = 40) => [...String(s || '').replace(/[\r\n#]+/g, ' ').r
 const isDoc = f => /\.md$/i.test(f) && !/(^|\/)(README[^/]*|CHANGELOG[^/]*|LICENSE[^/]*|需求树\.md|[^/]*\.tree\.md)$/i.test(f) && !ENTRY_DOCS.includes(f)
   && !/(^|\/)(tests?|fixtures|__tests__|node_modules|vendor|addons)\//i.test(f);
 const MAX_DOCS = 4; // 每个需求最多挂几份文档（每份都会写进「动手前先读」）
+const OUTLINE_DOCS = 80, OUTLINE_HEADS = 8, OUTLINE_CHARS = 12000;
+
+// 每份说明文档的用途和前几个一、二级标题：只给文件名的话，模型能看到的几乎只有文件夹结构，
+// 分出来的需求还是贴着文件夹（2026-10-25 用户反馈）。总共不超过 OUTLINE_CHARS 字
+function docOutline(dir, files) {
+  const out = [];
+  let total = 0;
+  for (const f of files.filter(isDoc).slice(0, OUTLINE_DOCS)) {
+    const text = read(path.join(dir, f));
+    const heads = Docs.sections(text).filter(h => h.level <= 2).slice(0, OUTLINE_HEADS).map(h => h.title);
+    const use = Docs.purpose(dir, f);
+    const line = `- ${f}${use && !heads.includes(use) ? `：${use}` : ''}${heads.length ? `（${heads.join(' / ')}）` : ''}`;
+    if (total + chars(line) > OUTLINE_CHARS) { out.push(`- …还有 ${files.filter(isDoc).length - out.length} 份没列`); break; }
+    total += chars(line);
+    out.push(line);
+  }
+  return out.join('\n');
+}
 
 // 项目的语言：入口文档和 README 里汉字多就是中文
 function projectLang(texts) {
@@ -90,7 +108,7 @@ function gather(dir, treeText = '') {
   const readme = ['README.md', 'readme.md', 'README.zh.md', 'README'].map(f => read(path.join(dir, f))).find(Boolean) || '';
   const entries = ENTRY_DOCS.map(f => ({ file: f, text: read(path.join(dir, f)) })).filter(e => e.text.trim());
   const rules = existingRules(treeText);
-  return { files, readme, entries, rules, git: gitSummary(dir), lang: projectLang([...entries.map(e => e.text), readme, ...rules.map(r => r.text)]) };
+  return { files, readme, entries, rules, git: gitSummary(dir), docs: docOutline(dir, files), lang: projectLang([...entries.map(e => e.text), readme, ...rules.map(r => r.text)]) };
 }
 
 function buildPrompt(g) {
@@ -102,12 +120,15 @@ function buildPrompt(g) {
   }).join('\n\n');
   return `你在帮一个用 AI 写代码的人给他的项目建一棵「需求树」。需求树是一份 Markdown：每个标题是一件要做的事（需求），可以有子需求；需求下面写它对应哪些文件。之后 AI 改到这些文件时，会自动读到这个需求的规则和背景文档。
 
-按「要做的事」分需求，不按文件夹分：
+按「要做的事」分需求，不按文件夹分。分两步想：
+1. 先从 README、文档的标题、最近的提交里看出这个项目在做、在维护哪几件事（用户眼里的功能、内容、系统），这就是顶层需求。文件夹结构只是参考，项目的文档结构也不一定就是需求结构。
+2. 再给每件事挂上实现它的文件。一个文件夹里有几件事就拆几个需求；几个文件夹合起来是一件事就合成一个，files 写多条；同一个文件可以挂在几个需求下。挂不上的文件不用硬塞。
 - 好的需求名：用户登录、支付、第 1 章、关卡编辑器、数据导入。不好的：src、utils、test、assets、misc。
-- 一个文件夹里有几件事就拆几个需求；几个文件夹合起来是一件事就合成一个，files 写多条。
+- 横跨整个项目、按文件类型来的事（比如所有文档的写法、所有界面的样式），可以单独建一个需求，files 写按类型的 glob（如 **/*.md）。
 - 测试、配置、构建脚本这类辅助文件，跟着它服务的那件事走，不单独建需求（除非项目本身就是在做它）。
 - 顶层需求 3–12 个。某件事明显由几块组成（一门课的几章、一个游戏的几个系统）时才建子需求，每个最多 ${MAX_CHILDREN} 个。最多两层。
 - id：顶层 R1、R2…，子需求 R1.1、R1.2…
+- 只是把几块归在一起的上级需求可以不写 files，程序会用子需求的文件合起来。
 - files 是 glob，相对项目根目录，例：src/auth/**、course/ch01-*.html。只写下面文件概览里真有的路径。子需求的 files 要落在上级的范围里。
 - docs 是讲这件事的说明文档（设计文档、规范、章节表），从下面的「文档」里挑，写完整路径，每个需求最多 ${MAX_DOCS} 份，挑最主要的（总说明、规范、进度），分章的细稿不挂；AI 改到这个需求的文件时会先读它们。说明文档写进 docs，不写进 files。
 - status：最近的提交还在改的写 "doing"；文档里列为计划、还没开始的写 "todo"；明确做完、最近没动的写 "done"；看不出写 null。
@@ -129,8 +150,8 @@ ${g.rules.length ? `树里已经记下了 ${g.rules.length} 条规则（见最�
 ## 文件概览（共 ${g.files.length} 个文件）
 ${folderSummary(g.files)}
 
-## 文档
-${g.files.filter(isDoc).slice(0, 80).join('\n') || '（没有）'}
+## 文档（用途和主要标题）
+${g.docs || g.files.filter(isDoc).slice(0, OUTLINE_DOCS).join('\n') || '（没有）'}
 
 ## README
 ${g.readme ? clip(g.readme, 4000) : '（没有）'}
@@ -165,7 +186,9 @@ function plan(dir, g, out) {
       const cn = cleanNode(c, `${id}.${children.length + 1}`, depth + 1);
       if (cn) children.push(cn);
     }
-    return { id, title, status, files, children, docs, rules: [] };
+    // 只是归类的上级没写文件：用子需求的文件合起来，否则挂在它上面的规则永远不会加载（compile.autoLoads）
+    const own = files.length ? files : [...new Set(children.flatMap(c => c.files))];
+    return { id, title, status, files: own, children, docs, rules: [] };
   };
   const nodes = [];
   for (const n of (Array.isArray(out.nodes) ? out.nodes : []).slice(0, MAX_TOP)) {
@@ -280,7 +303,7 @@ async function initProject(dir, { ask, treeName = '需求树.md' } = {}) {
   let treePath = store.findTree(dir);
   if (treePath) {
     const t = read(treePath).replace(/\r\n/g, '\n');
-    if (t !== store.TEMPLATE && !templateShaped(t)) return { treePath, skipped: 'exists' };
+    if (!templateShaped(t)) return { treePath, skipped: 'exists' };
   } else {
     treePath = path.join(dir, treeName);
     fs.writeFileSync(treePath, store.initialTree(dir));
@@ -307,4 +330,4 @@ async function initProject(dir, { ask, treeName = '需求树.md' } = {}) {
   return { treePath, ai: true, nodes: r.plan.nodes, moves: r.plan.moves, changeId: applied.length ? id : null, lang: r.g.lang };
 }
 
-module.exports = { templateShaped, existingRules, gather, buildPrompt, plan, renderTree, renderMoves, propose, initProject, projectLang, folderSummary };
+module.exports = { templateShaped, existingRules, gather, docOutline, buildPrompt, plan, renderTree, renderMoves, propose, initProject, projectLang, folderSummary };

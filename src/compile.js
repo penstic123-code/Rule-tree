@@ -11,7 +11,7 @@
 //   其他节点一路都没有文件对应就不编译——不然某门课的规则会在做别的课时也被加载。面板和 check 会提醒。
 const fs = require('fs');
 const path = require('path');
-const { parse, walk, pathOf } = require('./parser');
+const { parse, walk, pathOf, overrideText } = require('./parser');
 const codex = require('./targets/codex');
 const Docs = require('./docs');
 const { worktreesOf } = require('./common');
@@ -56,13 +56,13 @@ function compileNode(node, treeName, projectDir) {
   if (docLine) lines.push(docLine, '');
   for (const r of own) {
     const o = overrides.get(r.line);
-    lines.push(`- ${r.text}` + (o ? `（在本范围内以此为准，取代上级 ${o.owner.id} 的「${o.text}」）` : ''));
+    lines.push(`- ${r.text}` + (o ? overrideText(o.owner.id, o.text) : ''));
   }
   lines.push('', `（由 ${treeName} 自动生成，不要手改；规则要改就改 ${treeName}。）`);
   return lines.join('\n') + '\n';
 }
 
-// 动手原则（config 的 principles，默认开）：不重复造轮子、遇到 bug 先找根因。借鉴 ponytail 的「阶梯」，见 设计-信息架构.md 第四节
+// 动手原则（config 的 principles，默认开）：不重复造轮子、遇到 bug 先找根因。借鉴 ponytail 的「阶梯」，见 docs/design-info-architecture.md 第四节
 const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②写新东西之前依次问：真需要吗 → 项目里已经有了吗（看代码地图，或用下面的命令查）→ 标准库或平台自带的能做吗 → 已经装的依赖能做吗 → 最后才写最少能用的代码；校验、数据安全、无障碍不省。③不要光照用户说的做：用户的新要求和项目的实际情况、以后好不好维护有冲突时，先指出问题、给出建议，用户拍板后再动手。别的事不问：已有的记录之间说法不同、做法细节、能撤销的改动，自己按最新的指令定，做完告诉用户改了什么。';
 
 // 全局说明：告诉 AI 这套东西怎么用。不写 paths，每次都加载，保持很短。

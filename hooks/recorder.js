@@ -3,8 +3,7 @@
 // 记录员：每轮回复结束后由 hook 在后台启动。
 // 1. 这一轮 AI 改过的需求，没状态 / 待做 / 待定 的标成 🔨（确定的事，不用模型）
 // 2. 用户这一轮说了实质内容时，让小模型判断有没有新要求、哪些需求做完了、新文件该归哪个需求
-//    有把握的直接改；拿不准的（管全项目还是只管这一块、新说法是取代还是补充、做完没有）先按最可能的改，
-//    同时记一个问题（src/questions.js），插件弹出选项让用户改选
+//    都直接改，拿不准的按最可能的改；只有新说法和一条「决定：」对不上时问（问不问由 src/questions.js 的 decide 定）
 // 3. 标着 🔨 很久没动的需求，变成同一种问题（不调用模型）
 // 改动直接生效（面板上可撤销）。结果写进 .reqtree/state.json 的 recorder，面板会显示；出错也写在那里。
 // 用法：node recorder.js <job.json>
@@ -15,7 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { parse, findById, outline, nodeForFile, applyOps, oneLine, SKIP_REASON } = require('../src/parser');
+const { parse, findById, outline, matchesAny, applyOps, oneLine, SKIP_REASON } = require('../src/parser');
 const store = require('../src/store');
 const Q = require('../src/questions');
 
@@ -43,7 +42,7 @@ const MIN_OPTIONS = 2, MAX_OPTIONS = 4;
 // add_files 只在有根据时保留：glob 能匹配这一轮没归属的文件，或者用户这句话里提到了 glob 里的路径（用户明确要设文件）。
 // 已经被这个需求现有范围覆盖的具体文件也丢掉。2026-10-22 实测 Codex 的小模型在没有未归属文件时，
 // 给已由 DataScience/ch02-*.html 覆盖的 R4 又加了 DataScience/ch02-next.html。提示词约束不可靠，在代码里拦
-const globMatches = (globs, rel) => !!nodeForFile({ children: [{ files: globs, children: [], level: 1 }] }, rel);
+const globMatches = matchesAny;
 // dropped：传了数组就把丢掉的放进去（{ op, reason: 'no-basis' }），记录员要报给面板
 function filterAddFiles(ops, { root, unmapped = [], user = '', dropped } = {}) {
   const out = [];
@@ -96,8 +95,8 @@ function shapeQuestion(q, ctx, allowed) {
     seen.add(label);
     return { label, ops };
   });
-  // sure：体检用，模型有把握时直接按默认做法处理、不问（见 src/checkup.js 的 settle）
-  return keepOptions({ text: oneLineText(q.text, 200), options, default: def, ...(q.sure === true ? { sure: true } : {}) });
+  // sure：false 是模型说没把握（体检用），这时选「不动」那个选项（见 Q.decide）
+  return keepOptions({ text: oneLineText(q.text, 200), options, default: def, ...(q.sure === false ? { unsure: true } : {}) });
 }
 // 去掉不合格（null）的选项，default 跟着挪
 function keepOptions(q) {
@@ -125,17 +124,21 @@ function pickQuestions(raw, { text, before = [], ops = [], ctx, allowed = ALLOWE
   return { ops: ops.filter(o => !k2.has(opKey(o))), questions };
 }
 
-// 问题的默认做法写进树（用户正在编辑就排队），再把问题记下来。返回 { applied, queued, skipped }
+// 问不问、默认选哪个由 Q.decide 定；默认做法写进树（用户正在编辑就排队），再把问题记下来，不问的记成已自动处理。
+// 返回 { applied, queued, skipped, asked 开着问的个数 }
 function recordQuestions(treePath, questions, source = '记录员') {
-  let applied = [], queued = 0, skipped = [];
-  for (const q of questions) {
+  let applied = [], queued = 0, skipped = [], asked = 0;
+  for (const q0 of questions) {
+    const d = Q.decide(q0, fs.readFileSync(treePath, 'utf8'));
+    const q = { ...q0, default: d.default };
     const id = Q.newId();
     const ops = q.options[q.default].ops;
     const r = ops.length ? store.submitOps(treePath, ops, { qid: id }) : { applied: [], queued: 0, id: null, skipped: [] };
     Q.addQuestion(treePath, { id, source, text: q.text, options: q.options, default: q.default, defaultApplied: true, changeId: r.id, queued: r.queued > 0 });
+    if (d.ask) asked++; else Q.acceptDefault(treePath, id);
     applied = applied.concat(r.applied); queued += r.queued; skipped = skipped.concat(r.skipped || []);
   }
-  return { applied, queued, skipped };
+  return { applied, queued, skipped, asked };
 }
 
 // 从对话记录（jsonl，Claude Code 内部格式）取最近几轮：用户的话 + AI 回复正文
@@ -212,20 +215,21 @@ ${focus.length ? `\n这个会话正在做的需求（新的在前）：${focus.j
          P 里旧「手账风全课通用」，新「手账风只属于第一篇」→ 缩小范围：remove_rule P 那条，在第一篇 add_rule；
          P 里旧「每章互动不超过4个」，新「第5章互动可以多一点」→ 只第5章例外：在第5章 override_rule。
    - **挂在哪**：用户正在做某个需求时说的话，默认就是对这个需求说的——挂在上面「正在做的需求」里最贴切的那个（通常是第一个），哪怕措辞听起来像通用的（"小标题写概念名""互动别太多"）。用户在说哪一章、哪个模块，就挂在那一章、那个模块上。
-     只有这几种才往上挂：用户明说范围更大（"以后所有课""全项目""每门课都""每次"）→ 挂到覆盖这个范围的节点；说的是和内容无关的做事方式（"交流用中文""先给结论""反馈含糊先问清"）→ 挂最顶上那个需求。
-     拿不准是只管当前需求还是更大范围：先挂在当前需求上，同时按第 4 条问「只管 X，还是全项目？」，default 是只管 X。最顶上那个需求只放明确对整个项目都成立的规则，宁少勿多。
+     只有这几种才往上挂：用户明说范围更大（"以后所有课""全项目""每门课都""每次"）→ 挂到覆盖这个范围的节点；说的是和内容无关的做事方式，也就是怎么写、怎么检查、怎么和 AI 配合，而且没提到这一块的具体内容（"交流用中文""先给结论""反馈含糊先问清""写完先自己检查一遍再交""改完跑一遍测试"）→ 挂最顶上那个需求。这类话常常是在做某一块时顺口说的，照样挂最顶上（真实对话回放里，15 条通用要求有 9–12 条被挂到了当时在做的课下面）。
+     拿不准是只管当前需求还是更大范围：挂在当前需求上，不要问（挂在哪用户在面板上一眼能看到，挂窄了随手能改）。最顶上那个需求只放明确对整个项目都成立的规则，宁少勿多。
      没有「正在做的需求」时，按规则说的内容挂在管辖范围最小的节点上。
    - 子需求要在本范围内推翻上级的规则时，用 override_rule（node 是子需求，from 是上级 ID，text 是上级原文，new 是新内容）。
    - 规则写成一句简短具体的中文，用用户的意思，不要扩写。
    - 用户在几种做法之间拍板（技术方案、架构、结构、取舍），记成以「决定：」开头的规则，一句话写清选了什么、为什么。例：「决定：系统之间用 EventBus 传事件，不互相直接调用（方便单独测试每个系统）」。AI 提的方案，用户明确同意了也算。对话里没说原因就只写选了什么，不要编原因。
 ${aiFindings ? `   - AI 在这一轮回复里明确说出的、以后改这块还用得上的做法或坑（例：「qa.mjs 必须传绝对路径，相对路径会静默得到空结果」「这个接口要先登录再调」），用户没有反对的，也记成规则，挂在对应需求上，规则开头写「（AI 发现）」。只记确定的、能照着做的；这一轮的进展、猜测、一次性的修复步骤不记。
-` : ''}2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，按第 4 条问「做完了吗」，default 是「还没」（ops 为空）。
+` : ''}2. 需求状态：用户说某需求做完了，或 AI 的回复明确说整个需求做完了 → set_status done；用户说某需求还没想好、先放着、待定 → set_status question。看着像做完了又不确定（比如只说做完了一部分）→ 不改，也不问。
 3. 没归属的文件如果明显属于某个需求，用 add_files 给出 glob（如 DataScience/ch02-*.html）；拿不准就不给。
-4. 拿不准就问：只在真有歧义、只有用户能定的时候问——这句话管全项目还是只管当前这门课或这一章；新说法是取代旧规则、缩小范围还是补充；某需求做完没有。先把最可能的做法照常写进 ops，同时在 questions 里问：text 是一句简短的问题，options 是 2–4 种做法（label 几个字，ops 是这种做法完整的改动，可以为空），default 是已写进 ops 的那个选项的序号（从 0 起）。每轮最多 2 个问题；有把握的直接改，不要问。${noteTask}
+4. 拿不准时不要问，按最可能的做法直接写进 ops：管哪个范围拿不准就挂在当前需求上；取代还是补充拿不准就以用户最新的话为准；做完没有拿不准就不改。改动都能撤销，用户不想被问。
+   只有一种情况问：用户的新说法和一条以「决定：」开头的规则对不上，却没明说要改掉它（明说了就直接改）。这时这条改动不写进 ops，在 questions 里问：text 是一句简短的问题，options 是 2–3 种做法（label 几个字，ops 是这种做法完整的改动；「先不改」那项 ops 为空），default 是「先不改」那项的序号（从 0 起）。${noteTask}
 
 只输出 JSON，不要任何别的文字；没有改动就输出 {"ops":[]}：
 {"ops":[{"op":"replace_rule","node":"ID","old":"树里原文","text":"新内容"},{"op":"add_rule","node":"ID","key":"可选","text":"..."},{"op":"remove_rule","node":"ID","text":"原文"},{"op":"override_rule","node":"子需求ID","from":"上级ID","text":"上级原文","new":"新内容"},{"op":"add_node","parent":"ID","id":"新ID","title":"..."},{"op":"set_status","node":"ID","status":"done 或 question"},{"op":"add_files","node":"ID","globs":["..."]}],
- "questions":[{"text":"「每章配3张图」只管这门课，还是全项目？","options":[{"label":"只管这门课","ops":[{"op":"add_rule","node":"C1","text":"每章配3张图"}]},{"label":"全项目","ops":[{"op":"add_rule","node":"P","text":"每章配3张图"}]}],"default":0}]}`;
+ "questions":[{"text":"「这两个系统直接调用就行」和「决定：系统之间用 EventBus 传事件」对不上，要改掉这条决定吗？","options":[{"label":"先不改","ops":[]},{"label":"改成直接调用","ops":[{"op":"replace_rule","node":"G1","old":"决定：系统之间用 EventBus 传事件","text":"决定：这两个系统直接调用"}]}],"default":0}]}`;
 }
 
 // 补漏：把最近几轮用户的原话一起对照树，只补单轮判断漏掉的长期要求。
@@ -379,7 +383,7 @@ function describeParts(applied, queued, asked = 0) {
 // 和 media/strings.js 的中文一致（测试对照）；hook 运行时只复制 src/ 和 hooks/，读不到 media/，所以这里留一份
 const ZH = {
   'rec.rules': n => `记下 ${n} 条`, 'rec.absorbed': n => `把 ${n} 份记忆收进需求树`,'rec.done': ids => `${ids.join('、')} 标为完成`, 'rec.doing': ids => `${ids.join('、')} 标为进行中`,
-  'rec.queued': n => `${n} 条改动等你保存需求树后写入`, 'rec.asked': n => `${n} 件事拿不准，问你了`, 'rec.none': '这一轮没有新要求',
+  'rec.queued': n => `${n} 条改动等你保存需求树后写入`, 'rec.asked': n => `${n} 件事要你定，问你了`, 'rec.none': '这一轮没有新要求',
   'rec.paused': '已暂停（只标进行中，不记新要求）', 'rec.sweep': n => `补漏记下 ${n} 条`, 'rec.sweepNone': n => `补漏查了 ${n} 句，没有漏的`,
   'rec.sweepFail': m => `补漏失败：${m}`, 'rec.skipped': (n, first) => `${n} 条没写进去：${first}`,
 };
@@ -420,7 +424,7 @@ async function main(jobPath) {
     }
     const latest = turns.length ? turns[turns.length - 1].user : '';
     const config = store.readConfig(treePath);
-    let asked = false, questions = [], absorb = [];
+    let questions = [], absorb = [];
     const skipped = [];
     const notes = readNotes(job.memory);
     // 用户只说了「好」，AI 也可能在这一轮写了记忆：有新笔记就照样调用模型
@@ -443,28 +447,28 @@ async function main(jobPath) {
       const picked = pickQuestions(out.questions, { text, before: ops, ops: cleanOps(rest, ctx), ctx: { root, unmapped, user: latest } });
       ops.push(...picked.ops);
       questions = picked.questions;
-      asked = true;
     }
 
     let { applied, queued, skipped: s1 = [] } = ops.length ? store.submitOps(treePath, ops) : { applied: [], queued: 0 };
     skipped.push(...s1);
+    let askedN = 0;
     if (questions.length) {
       const r = recordQuestions(treePath, questions);
-      applied = applied.concat(r.applied); queued += r.queued;
+      applied = applied.concat(r.applied); queued += r.queued; askedN = r.asked;
       skipped.push(...r.skipped);
-      log(`问用户 ${questions.length} 个问题：${JSON.stringify(questions)}`);
+      log(`拿不准 ${questions.length} 件（问用户 ${askedN} 件，其余按默认做法直接改）：${JSON.stringify(questions)}`);
     }
     // 收编记忆：放在这一轮所有改动（包括问题的默认做法）之后。都写进去了（或者只是树里已经有）才删笔记；
     // 有改动没写进去（找不到需求等），或者还在排队（用户正在编辑需求树，写没写进去还不知道），笔记都留着，免得规则两边都丢了。
     // 这一轮问了问题也不删：规则可能在用户还没选的那个选项里
     if (absorb.length) {
-      if (!queued && !questions.length && skipped.every(s => s.reason === 'duplicate' || s.reason === 'same')) {
+      if (!queued && !askedN && skipped.every(s => s.reason === 'duplicate' || s.reason === 'same')) {
         const r = store.submitOps(treePath, absorb);
         applied = applied.concat(r.applied); queued += r.queued;
         log(`收编记忆：${JSON.stringify(absorb.map(a => a.file))}`);
       } else log(`这一轮有改动没写进去、在排队或在问用户，不删记忆：${JSON.stringify(absorb.map(a => a.file))}`);
     }
-    let parts = config.recorder === 'off' ? [{ k: 'rec.paused', a: [] }] : describeParts(applied, queued, questions.length);
+    let parts = config.recorder === 'off' ? [{ k: 'rec.paused', a: [] }] : describeParts(applied, queued, askedN);
 
     // 3. 补漏：这一轮记完以后，拿最新的树对照最近几轮的原话（hook 每 sweepEvery 轮、压缩前才给）
     const sweep = (job.sweep || []).filter(m => typeof m === 'string' && m.trim()).map(m => clip(clean(m), 1000));
@@ -474,7 +478,6 @@ async function main(jobPath) {
         const now = fs.readFileSync(treePath, 'utf8');
         const tree = now.split(/\r?\n/).length > BIG_TREE_LINES ? outline(now, [...new Set([...touched, ...(job.focus || [])])]) : now;
         const sops = (await askModel(buildSweepPrompt(tree, sweep))).filter(o => SWEEP_OPS.has(o.op));
-        asked = true;
         const r = sops.length ? store.submitOps(treePath, sops) : { applied: [], queued: 0 };
         const n = r.applied.length + r.queued;
         notePart = n ? { k: 'rec.sweep', a: [n] } : { k: 'rec.sweepNone', a: [sweep.length] };
@@ -495,7 +498,7 @@ async function main(jobPath) {
       parts = parts.length === 1 && parts[0].k === 'rec.none' ? [part] : parts.concat(part);
     }
     const message = partsText(parts);
-    status = { ok: true, asked, message, parts };
+    status = { ok: true, message, parts };
     log(`${message}｜${JSON.stringify(applied)}`);
     // 标着 🔨 很久没动的需求：变成问题（不调用模型，每个需求每个周期只问一次）
     try { Q.staleQuestions(treePath); } catch (e) { log('久未动的问题没生成：' + e.message); }

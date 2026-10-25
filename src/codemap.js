@@ -1,6 +1,6 @@
 'use strict';
 // 代码地图：让 AI 改某块代码之前知道这块已经有什么、依赖哪些公共模块，不重复造轮子、不写冲突的代码。
-// 设计见 设计-信息架构.md 第五节。用正则读结构（不装 tree-sitter、不调用模型）：
+// 设计见 docs/design-info-architecture.md 第五节。用正则读结构（不装 tree-sitter、不调用模型）：
 // aider 的 repo map 和 graphify 都不支持 GDScript，而 Godot 项目正是最需要这张图的。
 //
 // 输出（每份有字数上限，内容没变不重写，免得触发「文件已变更」通知）：

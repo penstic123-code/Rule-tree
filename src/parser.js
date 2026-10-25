@@ -349,7 +349,7 @@ function applyOps(text, ops) {
       if (!node) { skip('no-node'); continue; }
       if (!op.text || !op.text.trim()) { skip('empty'); continue; }
       // 一个节点里同一个键只能有一条：本节点已有同键规则就改写它，记成 replace_rule（上级有同键是覆盖，照加）。
-      // 放在查重之前：「4 行」改「5 行」字面几乎一样。force（撤销、升级还原）不走这里
+      // 放在查重之前：「4 行」改「5 行」字面几乎一样。force（撤销还原）不走这里
       const same = !op.force && op.key && node.rules.find(r => r.key === op.key);
       if (same) {
         if (same.text === op.text.trim()) { skip('same'); continue; }
@@ -571,8 +571,7 @@ function splitGlobs(s) {
   return out;
 }
 
-// 找出管这个文件的最深节点；relPath 用 / 分隔、相对于树文件所在目录
-// 文件属于哪些需求：自己的文件对应匹配上的全部节点，从浅到深。按内容分的需求（某门课）和按文件类型横切的需求（「写作」）可以同时命中
+// 文件属于哪些需求（relPath 用 / 分隔、相对于树文件所在目录）：自己的文件对应匹配上的全部节点，从浅到深。按内容分的需求（某门课）和按文件类型横切的需求（「写作」）可以同时命中
 function nodesForFile(root, relPath) {
   const out = [];
   for (const n of walk(root)) if (n.files.some(g => globToRegExp(g).test(relPath))) out.push(n);
@@ -580,6 +579,20 @@ function nodesForFile(root, relPath) {
 }
 
 // 最深的那一个（面板上「AI 正在改」显示它）
+// 下级用同一个键覆盖上级的规则时，编进规则文件的说明。写明取代哪条，否则两条矛盾时 AI 可能任选一条（compile、点名补送、Codex 共用）
+const overrideText = (ownerId, text) => `（在本范围内以此为准，取代上级 ${ownerId} 的「${text}」）`;
+// 带键的规则覆盖最近上级（不含根）里同键的规则：返回那句说明，没有覆盖返回 ''
+function overrideNote(node, rule) {
+  if (!rule.key) return '';
+  for (let p = node.parent; p && p.parent; p = p.parent) {
+    const hit = p.rules.find(x => x.key === rule.key);
+    if (hit) return overrideText(hit.owner.id, hit.text);
+  }
+  return '';
+}
+
+// 文件匹配这几条 glob 中的任一条吗（和需求的文件对应同一套规则：花括号、** 等）
+const matchesAny = (globs, relPath) => !!nodeForFile({ children: [{ files: globs, children: [], level: 1 }] }, relPath);
 function nodeForFile(root, relPath) {
   let best = null;
   for (const n of walk(root)) {
@@ -592,7 +605,7 @@ function nodeForFile(root, relPath) {
 
 module.exports = {
   STATUS_EMOJI, STATUS_LABEL, parse, walk, findById, pathOf, effectiveRules, check,
-  DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, applyOps, outline, relocate, splitGlobs, globToRegExp,
+  DECISION_RE, nextChildId, setStatusInText, nodeForFile, nodesForFile, matchesAny, overrideText, overrideNote, applyOps, outline, relocate, splitGlobs, globToRegExp,
   oneLine, norm, sameMeaning, numbersOf, SKIP_REASON,
   similarity, DUPLICATE, // 测试校准去重门槛用
 };

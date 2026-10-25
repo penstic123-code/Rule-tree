@@ -8,7 +8,7 @@
 //   短于 4 个字的标题、短编号（C2、R3，在代码和日志里太常见）
 // 弱匹配只在这几种情况下给：这句话也提到了它所属的课程（顶层需求）；整棵树只有一门课；这个会话最近在这门课上干活。
 // 这句话点了某门课时，别的课里的弱匹配都不给。同时匹配上级和下级时只给下级：下级那段已经带上了上级的规则。
-const { walk, pathOf, findById } = require('./parser');
+const { walk, pathOf, findById, overrideNote } = require('./parser');
 
 const MAX_NODES = 3;
 const MAX_CHARS = 1500;
@@ -95,14 +95,6 @@ function mentionedNodes(root, prompt, { max = MAX_NODES, active = [] } = {}) {
 }
 
 // 节点生效的规则（不含根节点的：根节点规则全局加载），加上它下面没写文件的子需求（它们沿用这个范围，改到这些文件时也会加载）
-function overrideNote(node, rule) {
-  if (!rule.key) return '';
-  for (let p = node.parent; p && p.parent; p = p.parent) {
-    const hit = p.rules.find(x => x.key === rule.key);
-    if (hit) return `（在本范围内以此为准，取代上级 ${hit.owner.id} 的「${hit.text}」）`;
-  }
-  return '';
-}
 // projectDir 给了就带上这一路（不含根）挂的背景文档那一句
 function renderNode(node, projectDir) {
   const chain = pathOf(node);

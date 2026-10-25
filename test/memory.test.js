@@ -63,55 +63,40 @@ test('记忆文件夹：路径里不是字母数字的都换成 -（和本机 Cl
   assert.strictEqual(M.memoryDir(dir), custom);
 });
 
-test('体检（不调用模型）：记忆和需求树字面重复的变成问题；删记忆里的那一句（备份、可撤销）；问过的不再问', async () => {
+test('体检（不调用模型）：记忆和需求树字面重复的直接删记忆里的那一句（备份、可撤销，不问）；处理过的不再处理', async () => {
   const { tree, mem, dir } = project();
   const r = await runCheckup(tree, { model: false });
-  const texts = r.memory.map(q => q.text);
-  assert.strictEqual(r.memory.length, 2, texts.join('\n'));
+  assert.strictEqual(r.memory.length, 0, '不问');
+  const texts = r.auto.map(q => q.text);
+  assert.strictEqual(r.auto.length, 2, texts.join('\n'));
   assert.ok(texts.some(t => t.includes('段落不超过 4 行') && t.includes('style.md')));
   assert.ok(texts.some(t => t.includes('交流用中文') && t.includes('talk.md')));
-  const q = r.memory.find(x => x.text.includes('style.md'));
-  assert.deepStrictEqual(q.options.map(o => o.label), ['删记忆里的', '删需求树里的', '都留']);
-  assert.strictEqual(q.defaultApplied, false);
-  // 删记忆里的：style.md 还有别的内容，只删那一行
-  assert.ok((await Q.answerQuestion(tree, q.id, 0)).ok);
+  // style.md 还有别的内容，只删那一行；树不动
   assert.ok(!read(path.join(mem, 'style.md')).includes('段落不超过'));
   assert.match(read(path.join(mem, 'style.md')), /文风要平实/);
   assert.match(read(tree), /段落不超过 4 行/, '树不动');
   assert.ok(fs.readdirSync(path.join(dir, '.reqtree', 'memory-backup')).some(f => f.endsWith('style.md')), '先备份');
-  const [c] = store.readChanges(tree);
+  const q = r.auto.find(x => x.text.includes('style.md'));
+  const c = store.readChanges(tree).find(x => x.id === q.changeId);
   assert.match(c.summary[0], /删掉记忆 style\.md 里的「段落不超过 4 行」/);
   assert.ok(store.undoChange(tree, c.id));
   assert.match(read(path.join(mem, 'style.md')), /段落不超过 4 行/, '撤销后放回');
-  // 再体检：问过的不再问
-  assert.strictEqual((await runCheckup(tree, { model: false })).memory.length, 0);
+  // 再体检：处理过的（用户撤销了）不再处理
+  const again = await runCheckup(tree, { model: false });
+  assert.strictEqual(again.memory.length + again.auto.length, 0);
+  assert.match(read(path.join(mem, 'style.md')), /段落不超过 4 行/);
 });
 
 test('删记忆里的：整个文件只有这一条就删文件，连同 MEMORY.md 的那一行；撤销都放回', async () => {
   const { tree, mem } = project();
   const r = await runCheckup(tree, { model: false });
-  const q = r.memory.find(x => x.text.includes('talk.md'));
-  await Q.answerQuestion(tree, q.id, 0);
+  const q = r.auto.find(x => x.text.includes('talk.md'));
   assert.ok(!fs.existsSync(path.join(mem, 'talk.md')));
   assert.ok(!read(path.join(mem, 'MEMORY.md')).includes('talk.md'));
   assert.match(read(path.join(mem, 'MEMORY.md')), /style\.md/);
-  assert.ok(store.undoChange(tree, store.readChanges(tree)[0].id));
+  assert.ok(store.undoChange(tree, q.changeId));
   assert.ok(fs.existsSync(path.join(mem, 'talk.md')));
   assert.strictEqual(read(path.join(mem, 'MEMORY.md')).split('\n')[0], '- [沟通](talk.md) — 交流用中文');
-});
-
-test('删需求树里的 / 都留', async () => {
-  const { tree, mem } = project();
-  const r = await runCheckup(tree, { model: false });
-  const q1 = r.memory.find(x => x.text.includes('style.md'));
-  await Q.answerQuestion(tree, q1.id, 1);
-  assert.ok(!read(tree).includes('段落不超过'));
-  assert.match(read(path.join(mem, 'style.md')), /段落不超过/);
-  const q2 = r.memory.find(x => x.text.includes('talk.md'));
-  const before = read(tree);
-  await Q.answerQuestion(tree, q2.id, 2);
-  assert.strictEqual(read(tree), before);
-  assert.ok(fs.existsSync(path.join(mem, 'talk.md')));
 });
 
 // 体检时假模型返回的东西（体检在本进程里调用模型）
@@ -196,7 +181,7 @@ test('体检提示词：每份记忆整份给模型（带类型和日期），�
   assert.ok(!/covered/.test(buildCheckPrompt(TREE, '')));
 });
 
-test('体检：有规则却永远不加载的需求报出来；AI 改过、现在文件全找不到的需求变成问题；🔨 却从没见过文件的只提醒；⏳ 的不管（不调用模型）', async () => {
+test('体检：有规则却永远不加载的需求报出来；AI 改过、现在文件全找不到的需求直接改成待定（不问，可撤销）；🔨 却从没见过文件的只提醒；⏳ 的不管（不调用模型）', async () => {
   const { tree, dir } = project();
   fs.writeFileSync(tree, TREE + '\n## C2 删掉的课\n> 文件：gone/**\n- 一条规则\n\n## C3 写错路径 🔨\n> 文件：typo/**\n\n## C4 还没开始 ⏳\n> 文件：later/**\n\n## K1 组件库\n- 没有文件的规则\n');
   fs.mkdirSync(path.join(dir, 'c'));
@@ -205,13 +190,16 @@ test('体检：有规则却永远不加载的需求报出来；AI 改过、现�
   const r = await runCheckup(tree, { model: false, memory: false });
   assert.deepStrictEqual(r.noFiles, ['K1']);
   assert.deepStrictEqual(r.missing.map(m => m.node), ['C3']);
-  assert.strictEqual(r.scope.length, 1);
-  assert.match(r.scope[0].text, /删掉的课/);
-  await Q.answerQuestion(tree, r.scope[0].id, 0);
-  assert.ok(!read(tree).includes('删掉的课'));
-  // 问过的不再问
-  fs.writeFileSync(tree, TREE + '\n## C2 删掉的课\n> 文件：gone/**\n');
-  assert.strictEqual((await runCheckup(tree, { model: false, memory: false })).scope.length, 0);
+  assert.strictEqual(r.scope.length, 0, '不问');
+  assert.strictEqual(r.auto.length, 1);
+  assert.match(r.auto[0].text, /删掉的课/);
+  assert.match(read(tree), /## C2 删掉的课 ❓/);
+  assert.strictEqual(Q.openQuestions(tree).length, 0);
+  // 处理过的不再处理（用户撤销了也不再改）
+  assert.ok(store.undoChange(tree, r.auto[0].changeId));
+  const again = await runCheckup(tree, { model: false, memory: false });
+  assert.strictEqual(again.scope.length + again.auto.length, 0);
+  assert.ok(!read(tree).includes('删掉的课 ❓'));
 });
 
 test('收编：AI 这一轮写进记忆的其实是项目规则，记录员把它收进树并删掉记忆；树里没写进去就不删', () => {
@@ -310,7 +298,7 @@ test('命令行：check --fix 也查记忆（--no-memory 不查）', () => {
 
 // ---------- 审查发现的问题（2026-10-23）----------
 
-test('体检：模型说已有、只是措辞不同的记忆直接删（可撤销）；没看全的（长到切成几段）不删，问你，默认留着；选过留着的下次不再动', async () => {
+test('体检：模型说已有、只是措辞不同的记忆直接删（可撤销）；没看全的（长到切成几段）留着、不问；处理过的下次不再动', async () => {
   const { tree, mem } = project();
   fs.writeFileSync(path.join(mem, 'long.md'), '---\nname: long\n---\n\n交流用中文，回答先给结论。\n' + '这是一段很长的进度记录。'.repeat(1200) + '\n');
   fs.writeFileSync(path.join(mem, 'para.md'), '---\nname: para\n---\n\n对话里一律讲汉语，先说结论再展开。\n');
@@ -318,12 +306,10 @@ test('体检：模型说已有、只是措辞不同的记忆直接删（可撤�
   assert.ok(!fs.existsSync(path.join(mem, 'para.md')), '措辞不同也删');
   assert.ok(r.auto.some(a => a.text.includes('para.md')));
   assert.ok(fs.existsSync(path.join(mem, 'long.md')), '没看全的不删');
-  assert.strictEqual(r.memory.length, 1);
-  const q = r.memory[0];
-  assert.match(q.text, /long\.md.*已经有了，删掉这份记忆吗/);
-  assert.strictEqual(q.default, 1, '拿不准：默认留着');
-  await Q.answerQuestion(tree, q.id, 1); // 留在记忆
-  // 下次模型还说 covered 也不动：这份记忆问过、没改过
+  assert.strictEqual(r.memory.length, 0, '不问');
+  const q = r.auto.find(a => a.text.includes('long.md'));
+  assert.strictEqual(q.options[q.default].ops.length, 0, '拿不准：留着');
+  // 下次模型还说 covered 也不动：这份记忆处理过、没改过
   const again = await checkWith(tree, { questions: [], memory: [{ file: 'long.md', kind: 'covered', where: 'P' }] }, { full: true });
   assert.strictEqual(again.removed.length + again.auto.length + again.memory.length, 0);
   assert.ok(fs.existsSync(path.join(mem, 'long.md')));

@@ -79,16 +79,8 @@ function hookCommand(file, platform = process.platform) {
 // 或 Vibe-Friend / Vibecoding-Friend（git clone 下来的仓库名，仓库改过名）。不要求两者紧挨着；用户自己别的 hook.js 不算
 const isOurs = h => { const c = String((h && h.command) || '').replace(/\\/g, '/'); return /hooks\/+hook\.js/.test(c) && /reqtree|vibe(coding)?-friend/i.test(c); };
 
-// 读 Claude Code 的 settings：文件不在返回 fallback；带 BOM（记事本另存的）照读；解析不了就抛错——
-// 绝不能当成空对象再写回去，那会清掉用户的 permissions 等全部设置
-function readSettings(file, fallback = {}) {
-  let text;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return fallback; }
-  text = text.replace(/^﻿/, '');
-  if (!text.trim()) return fallback;
-  try { return JSON.parse(text); }
-  catch (e) { throw new Error(`${file} 不是合法的 JSON（${e.message}），为了不弄丢里面的设置，没有改它。修好后再运行 init`); }
-}
+// 读 Claude Code 的 settings（解析不了就抛错，绝不当成空对象写回去）
+const { readSettings } = require('../src/memory');
 
 // hook 命令里的脚本路径（引号里的那段）
 const scriptOf = h => { const m = String((h && h.command) || '').match(/"([^"]+)"|'([^']+)'/); return m ? (m[1] || m[2]) : null; };
@@ -197,23 +189,24 @@ function compileOrExit(tree) {
 
 // init 的参数：[目录] [--tool 名字 | --tool=名字]；别的 -- 选项（如旧的 --track-bash）忽略
 function parseInitArgs(args) {
-  let dir = null, tool = 'claude';
+  let dir = null, tool = 'claude', ai = true;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--tool') tool = args[++i];
+    if (a === '--no-ai') ai = false;
+    else if (a === '--tool') tool = args[++i];
     else if (a.startsWith('--tool=')) tool = a.slice(7);
     else if (!a.startsWith('--') && dir == null) dir = a;
   }
-  return { dir: dir || process.cwd(), tool };
+  return { dir: dir || process.cwd(), tool, ai };
 }
 
 const USAGE = `用法：
-  reqtree init  [目录] [--tool claude|codex] 在项目里装好 hook 和忽略规则（默认当前目录）
+  reqtree init  [目录] [--tool claude|codex] [--no-ai] 在项目里装好 hook 和忽略规则（默认当前目录），用 AI 按要做的事生成需求树（--no-ai 只按文件夹分）
   reqtree disable [目录]        在项目里停用：去掉 hook 和编译出的规则（需求树.md 留着）
   reqtree tree  <文件>          打印整棵树
   reqtree rules <文件> <ID>     打印某个节点实际生效的规则（含继承与覆盖）
   reqtree check <文件>          检查重复 ID、重复规则键、重复规则、很久没动的 🔨（只读）
-  reqtree check <文件> --fix    体检：合并重复规则，冲突、该提到上级的有把握就直接改，拿不准的问你（都能撤销）
+  reqtree check <文件> --fix    体检：合并重复规则，冲突、该提到上级的有把握就直接改，拿不准的不动，只有要改掉「决定：」才问你（都能撤销）
                                 （要调用模型；加 --no-model 不调用）；也按分工整理 Claude Code 自动记忆（--no-memory 不查）；还查挂的文档和 CLAUDE.md、AGENTS.md：
                                 和树重复的从文档里删掉、该进树的搬进树（只查上次之后改过的，--full 全部重查）
   reqtree map   <文件>          重建代码地图（每个需求这块已有的代码、依赖的公共模块）
@@ -260,9 +253,19 @@ if (require.main === module) {
     process.exit(0);
   }
   if (cmd === 'init') {
-    const { dir, tool } = parseInitArgs(process.argv.slice(3));
+    const { dir, tool, ai } = parseInitArgs(process.argv.slice(3));
     try { init(dir, { tool }); } catch (e) { console.error(e.message); process.exit(1); }
-    process.exit(0);
+    if (!ai) process.exit(0);
+    // 和插件一样用 AI 初始化（src/init.js）：树还是模板或按文件夹生成的样子才做，失败就保持原样
+    const tree = store.findTree(path.resolve(dir));
+    if (!tree || !require('../src/init').templateShaped(fs.readFileSync(tree, 'utf8').replace(/\r\n/g, '\n'))) process.exit(0);
+    console.log('正在用 AI 读项目、按要做的事生成需求（一两分钟；按 Ctrl+C 跳过，树保持按文件夹分的样子）…');
+    require('../src/init').initProject(path.resolve(dir)).then(r => {
+      if (r.ai) console.log(`✓ 已按要做的事生成 ${r.nodes.length} 个需求（不满意可以在面板「最近改动」里撤销）`);
+      else if (!r.skipped) console.log(`AI 初始化没成功（${r.error ? r.error.message : '未知原因'}），需求树保持按文件夹分的样子；在 VS Code 里打开项目时插件会再试`);
+      process.exit(0);
+    }, e => { console.error(e.message); process.exit(0); });
+    return;
   }
   if (!cmd || !file) { console.log(USAGE); process.exit(1); }
   const flags = process.argv.slice(4); // 文件之后的参数

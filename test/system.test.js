@@ -19,6 +19,8 @@ const ROOT = path.join(__dirname, '..');
 const HOOK = path.join(ROOT, 'hooks', 'hook.js');
 const RECORDER = path.join(ROOT, 'hooks', 'recorder.js');
 const FAKE = path.join(__dirname, 'fixtures', 'fake-claude.js');
+// 命令行 init 会用 AI 初始化：子进程一律用假 claude（它返回的东西初始化用不上，树保持按文件夹生成的样子）
+process.env.REQTREE_CLAUDE_CMD = process.env.REQTREE_INIT_CMD = `"${process.execPath}" "${FAKE}"`;
 
 const TREE = `# P 测试项目
 - [段落] 段落不超过 4 行

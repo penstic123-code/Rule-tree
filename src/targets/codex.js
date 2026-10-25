@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { parse, walk, pathOf, nodeForFile } = require('../parser');
+const { parse, walk, pathOf, matchesAny, overrideNote } = require('../parser');
 const Docs = require('../docs');
 
 const RULES_DIR = path.join('.reqtree', 'rules');
@@ -53,15 +53,6 @@ function units(root, docLine = () => '') {
 
 const globalRules = root => root.children.filter(isRoot).flatMap(n => n.rules.map(r => ({ node: n, rule: r })));
 
-// 带键的规则覆盖最近上级里同键的规则（和 compile.js 的说法一致）
-function overrideNote(node, rule) {
-  if (!rule.key) return '';
-  for (let p = node.parent; p && p.parent; p = p.parent) {
-    const hit = p.rules.find(x => x.key === rule.key);
-    if (hit) return `（在本范围内以此为准，取代上级 ${hit.owner.id} 的「${hit.text}」）`;
-  }
-  return '';
-}
 
 function renderUnit(u, treeName, docLine = () => '') {
   const lines = [MARK, `# 需求 ${pathOf(u.owner).map(n => `${n.id} ${n.title}`).join(' → ')}`,
@@ -255,7 +246,7 @@ function relTo(projectDir, cwd, p) {
   return !rel || rel.startsWith('..') || path.isAbsolute(rel) ? null : rel;
 }
 
-const matchesGlobs = (globs, rel) => !!nodeForFile({ children: [{ files: globs, children: [], level: 1 }] }, rel);
+const matchesGlobs = matchesAny;
 
 // 这些文件涉及哪些单元（按树里的顺序，上级在前）
 function unitsForFiles(root, rels, docLine) {

@@ -28,8 +28,8 @@ Claude Code 有一种叫"路径规则"的功能：在项目的 `.claude/rules/` 
 | 编译 | 树变了、挂的文档变了 | 每个需求生成一份规则文件；长文档附上目录 | `src/compile.js`、`src/docs.js` |
 | hook（Claude Code 在特定时刻调用的小程序） | 你发消息、AI 改文件、一轮结束、对话压缩前 | 记下 AI 在改哪个需求；一轮结束叫醒记录员 | `hooks/hook.js` |
 | 记录员 | 每轮结束（可以设成每几轮） | 用一个便宜的小模型读最近的对话，把长期要求写进树，挂在你正在做的需求上 | `hooks/recorder.js` |
-| 问题 | 记录员拿不准时 | 先按最可能的意思记下，再问你；你选了别的，就撤回原来的 | `src/questions.js` |
-| 体检 | 你点"体检"时 | 合并重复、处理矛盾、拆分过大的需求、整理记忆和文档 | `src/checkup.js` |
+| 问题 | 记录员、体检要改掉一条「决定：」时 | 先不动，问你；别的拿不准都按最可能的直接改（可撤销），由 `decide` 统一判断 | `src/questions.js` |
+| 体检 | 你点"体检"时 | 合并重复、处理矛盾、整理记忆和文档 | `src/checkup.js` |
 | 代码地图 | 记录员跑完、这一轮改过代码时 | 用正则读代码，记下每块有什么，生成按需加载的地图 | `src/codemap.js` |
 | 界面 | 一直 | 侧栏、导图、详情面板 | `extension.js`、`media/` |
 | Codex 支持 | — | Codex 没有路径规则，改用 `AGENTS.md` 里的索引加补送 | `src/targets/`、`hooks/codex-hook.js` |
@@ -57,7 +57,7 @@ Claude Code 有一种叫"路径规则"的功能：在项目的 `.claude/rules/` 
 
 ## 改代码前
 
-- 先读 `项目进度与交接.md`：进度、踩过的坑、测试怎么跑。
+- 设计笔记见 [design-info-architecture.md](design-info-architecture.md)，每次测试和测量的原始数据见 [test-log.md](test-log.md)。
 - 跑测试：`node --test test/*.test.js`（界面测试要装 Edge 或 Chrome）。
 - 用真实模型评测记录员：`node test/eval-recorder.js 3`（花少量额度）。
 

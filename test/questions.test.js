@@ -25,7 +25,7 @@ const rec = require('../hooks/recorder');
 const { runCheckup, duplicateOps } = require('../src/checkup');
 
 const TREE = `# P 测试项目
-- 每章互动不超过4个
+- 决定：每章互动不超过4个
 - 段落不超过 4 行
 
 ## C1 AI 课 🔨
@@ -58,9 +58,9 @@ function runRecorder(dir, out, job = {}) {
   };
 }
 
-// 第5章例外 vs 全项目改成 6：典型的范围歧义
-const OVERRIDE = { op: 'override_rule', node: 'C1.5', from: 'P', text: '每章互动不超过4个', new: '本章互动可以到6个' };
-const GLOBAL = { op: 'replace_rule', node: 'P', old: '每章互动不超过4个', text: '每章互动不超过6个' };
+// 第5章例外 vs 全项目改成 6。上级那条是「决定：」，两种做法都会改到它，所以要问（Q.decide）
+const OVERRIDE = { op: 'override_rule', node: 'C1.5', from: 'P', text: '决定：每章互动不超过4个', new: '本章互动可以到6个' };
+const GLOBAL = { op: 'replace_rule', node: 'P', old: '决定：每章互动不超过4个', text: '每章互动不超过6个' };
 const SCOPE_Q = { text: '「互动可以多一点」只管第5章，还是所有章？', options: [{ label: '只第5章', ops: [OVERRIDE] }, { label: '所有章', ops: [GLOBAL] }], default: 0 };
 
 test('记录员：问题和默认做法——默认做法写进树（只写一次），问题记进 questions.jsonl，状态里说问了', () => {
@@ -70,7 +70,7 @@ test('记录员：问题和默认做法——默认做法写进树（只写一�
   assert.match(calls[0].input, /questions/, '提示词里要说可以问');
   const text = read(tree);
   assert.strictEqual((text.match(/本章互动可以到6个/g) || []).length, 1, '默认做法只写一次');
-  assert.match(text, /^- \[改写1\] 每章互动不超过4个$/m, 'override_rule 给上级补了键');
+  assert.match(text, /^- \[改写1\] 决定：每章互动不超过4个$/m, 'override_rule 给上级补了键');
   assert.match(text, /- 例子配插图/);
   const [q] = Q.openQuestions(tree);
   assert.strictEqual(q.text, SCOPE_Q.text);
@@ -80,7 +80,7 @@ test('记录员：问题和默认做法——默认做法写进树（只写一�
   const changes = store.readChanges(tree);
   assert.strictEqual(changes.length, 2);
   assert.ok(changes.some(c => c.id === q.changeId && c.ops.length === 1 && c.ops[0].op === 'override_rule'));
-  assert.match(status.message, /1 件事拿不准/);
+  assert.match(status.message, /1 件事要你定/);
   assert.deepStrictEqual(status.parts.map(p => p.k), ['rec.rules', 'rec.asked']);
 });
 
@@ -244,7 +244,7 @@ test('排队：还没保存就改选了别的，排着的默认做法从队列�
   assert.match(read(tree), /^- 每章互动不超过6个$/m);
 });
 
-test('状态：明确做完 → 完成；待定 → ❓；拿不准是否做完 → 问，默认不改', async () => {
+test('状态：明确做完 → 完成；待定 → ❓；拿不准是否做完 → 不改、不问', async () => {
   const { dir, tree } = project();
   runRecorder(dir, { ops: [{ op: 'set_status', node: 'C1.1', status: 'done' }, { op: 'set_status', node: 'C1.5', status: 'question' }] });
   assert.match(read(tree), /### C1\.1 第1章 ✅/);
@@ -254,15 +254,44 @@ test('状态：明确做完 → 完成；待定 → ❓；拿不准是否做完 
   const { status } = runRecorder(p2.dir, { ops: [], questions: [doneQ] }, { turns: [{ user: '第1章的练习写好了', ai: '练习部分完成了' }] });
   assert.ok(status.ok);
   assert.match(read(p2.tree), /### C1\.1 第1章 🔨/, '默认是还没：不改');
-  const [q] = Q.openQuestions(p2.tree);
-  assert.ok(q.defaultApplied && !q.changeId);
-  await Q.answerQuestion(p2.tree, q.id, 0);
-  assert.match(read(p2.tree), /### C1\.1 第1章 ✅/);
+  assert.strictEqual(Q.openQuestions(p2.tree).length, 0, '不问');
+  assert.strictEqual(Q.readQuestions(p2.tree)[0].auto, true, '记成已自动处理');
+  assert.deepStrictEqual(status.parts.map(p => p.k), ['rec.none']);
 });
 
-test('提示词：有「拿不准就问」、最新为准的例子、override_rule、状态规则', () => {
+test('不问范围：没碰到「决定：」的问题（只管这一章还是全项目）按默认做法直接改，不开着问，可以撤销', () => {
+  const { dir, tree } = project(TREE.replace('决定：', ''));
+  const q = { text: '「例子配插图」只管第1章，还是全项目？', options: [
+    { label: '只第1章', ops: [{ op: 'add_rule', node: 'C1.1', text: '例子配插图' }] },
+    { label: '全项目', ops: [{ op: 'add_rule', node: 'P', text: '例子配插图' }] }], default: 0 };
+  const { status } = runRecorder(dir, { ops: [], questions: [q] });
+  assert.ok(status.ok, JSON.stringify(status));
+  assert.strictEqual(Q.openQuestions(tree).length, 0);
+  assert.match(read(tree), /- 开场用霍乱\n- 例子配插图/);
+  assert.ok(!status.parts.some(p => p.k === 'rec.asked'));
+  const [rec0] = Q.readQuestions(tree);
+  assert.ok(rec0.auto && rec0.changeId);
+  assert.ok(store.undoChange(tree, rec0.changeId));
+  assert.ok(!read(tree).includes('例子配插图'));
+});
+
+test('Q.decide：改掉、删掉、在下级推翻「决定：」才问，问的时候默认不动；模型没把握或没看全的选「不动」；别的直接改', () => {
+  const text = '# P x\n- 决定：用 EventBus\n- 段落短\n\n## C1 课\n- 手账风\n';
+  const opts = ops => [{ label: 'a', ops }, { label: '不动', ops: [] }];
+  const d = (ops, extra = {}) => Q.decide({ options: opts(ops), default: 0, ...extra }, text);
+  assert.deepStrictEqual(d([{ op: 'replace_rule', node: 'P', old: '决定：用 EventBus', text: '直接调用' }]), { ask: true, default: 1 });
+  assert.deepStrictEqual(d([{ op: 'remove_rule', node: 'P', text: '用EventBus' }]), { ask: true, default: 1 }, '转述（标点空格、不带前缀）也认');
+  assert.deepStrictEqual(d([{ op: 'override_rule', node: 'C1', from: 'P', text: '决定：用 EventBus', new: '本课直接调用' }]), { ask: true, default: 1 });
+  assert.deepStrictEqual(d([{ op: 'replace_rule', node: 'P', old: '段落短', text: '段落更短' }]), { ask: false, default: 0 });
+  assert.deepStrictEqual(d([{ op: 'add_rule', node: 'C1', text: '决定：配色用暖色' }]), { ask: false, default: 0 }, '新加一条决定不算改');
+  assert.deepStrictEqual(d([{ op: 'remove_rule', node: 'C1', text: '手账风' }], { unsure: true }), { ask: false, default: 1 });
+  assert.deepStrictEqual(d([{ op: 'memory_remove', file: 'a.md' }], { partial: true }), { ask: false, default: 1 });
+});
+
+test('提示词：拿不准不问（只有对不上「决定：」才问）、最新为准的例子、override_rule、状态规则', () => {
   const p = rec.buildPrompt(TREE, [{ user: 'x', ai: 'y' }], [], []);
-  for (const s of ['questions', 'default', '以最新的为准', '像素风探险地图', '手账风只属于第一篇', '第5章互动可以多一点', 'override_rule', 'set_status question', '先放着', '每轮最多 2 个问题']) assert.ok(p.includes(s), s);
+  for (const s of ['questions', 'default', '以最新的为准', '像素风探险地图', '手账风只属于第一篇', '第5章互动可以多一点', 'override_rule', 'set_status question', '先放着', '拿不准时不要问', '决定：']) assert.ok(p.includes(s), s);
+  assert.ok(!p.includes('还是全项目？」'), '不再教模型问范围');
 });
 
 // ---------- 久未动 ----------
@@ -355,7 +384,7 @@ test('体检：同一需求里几乎一样的、同键的规则合并（留后�
 });
 
 const CONFLICT_TREE = `# P 项目
-- 每章互动不超过4个
+- 决定：每章互动不超过4个
 
 ## C1 AI 课
 > 文件：ai/**
@@ -364,7 +393,7 @@ const CONFLICT_TREE = `# P 项目
 const CONFLICT_Q = {
   text: '全局写每章互动不超过4个，AI 课写不超过5个：',
   options: [
-    { label: 'AI 课用5（本课例外）', ops: [{ op: 'remove_rule', node: 'C1', text: '每章互动不超过5个' }, { op: 'override_rule', node: 'C1', from: 'P', text: '每章互动不超过4个', new: '每章互动不超过5个' }] },
+    { label: 'AI 课用5（本课例外）', ops: [{ op: 'remove_rule', node: 'C1', text: '每章互动不超过5个' }, { op: 'override_rule', node: 'C1', from: 'P', text: '决定：每章互动不超过4个', new: '每章互动不超过5个' }] },
     { label: '统一用4', ops: [{ op: 'remove_rule', node: 'C1', text: '每章互动不超过5个' }] },
     { label: '两条都留着', ops: [] },
   ],
@@ -587,7 +616,7 @@ test('插件：「需求树：体检」合并重复、调用（假）模型，�
     fakeVscode.pick = (items, opts) => (opts && opts.canPickMany ? items.filter(i => i.picked && i.id !== 'full') : undefined);
     const r = await fake.commands['reqtree.checkup']();
     assert.strictEqual(r.merged.length, 1);
-    assert.ok(fake.shown.includes('需求树体检：合并了 1 条重复规则（都可以在「最近改动」里撤销），有 1 个拿不准的问题等你回答'), fake.shown.join('\n'));
+    assert.ok(fake.shown.includes('需求树体检：合并了 1 条重复规则（都可以在「最近改动」里撤销），有 1 个问题等你回答'), fake.shown.join('\n'));
     await panel.asking;
     const note = fake.notes.find(n => /全局写/.test(n.m));
     assert.ok(note.items.some(i => /两条都留着（现在）/.test(i.title)), '拿不准：现在是「两条都留着」，树没改');

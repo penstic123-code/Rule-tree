@@ -144,7 +144,7 @@ function findDuplicates(treeText, dir) {
 }
 
 const memKey = d => `${d.file}|${norm(d.memory)}|${d.node}|${norm(d.rule)}`;
-// 记忆和需求树各有一份：问删哪份。默认建议删记忆里的（需求树是准绳），不先改
+// 记忆和需求树各有一份：删哪份。默认删记忆里的（需求树是准绳，问不问由 Q.decide 定，一般直接删、可撤销）
 function memoryQuestion(d, dir) {
   return {
     source: '体检', kind: 'memory', memKey: memKey(d),

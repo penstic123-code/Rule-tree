@@ -4,7 +4,7 @@
 //
 // .reqtree/ 里的文件
 //   长期保存
-//     config.json     用户开关（面板 ⚙）：{ recorder: 'turn' 每轮记录 | 'off' 暂停, sweepEvery 补漏间隔（轮） }
+//     config.json     用户开关（面板 ⚙），键和默认值见 DEFAULT_CONFIG
 //     state.json      程序状态：{ recorder 记录员上次结果, compile 上次编译结果, since 开始跟踪的时间, touched {需求ID: 最后被 AI 改的时间} }
 //     activity.jsonl  AI 改了哪些文件（只追加）
 //     context.jsonl   每个会话加载了哪些规则文件、各多少字（只追加，给上下文用量表）
@@ -190,7 +190,7 @@ function ensureTracking(treePath) {
   return updateState(treePath, st => (st.since ? st : { ...st, since: Date.now() }));
 }
 
-// 记录员最近一次运行的结果，给面板显示：{ ok, time, message, asked }
+// 记录员最近一次运行的结果，给面板显示：{ ok, time, message, parts }
 const writeRecorderStatus = (treePath, status) => updateState(treePath, s => ({ ...s, recorder: { ...status, time: Date.now() } }));
 const readRecorderStatus = treePath => readState(treePath).recorder || null;
 const readCompileStatus = treePath => readState(treePath).compile || null;
@@ -351,7 +351,13 @@ function readChanges(treePath, limit = 20) {
   try { lines = fs.readFileSync(metaFile(treePath, 'changes.jsonl'), 'utf8').trim().split('\n').slice(-500); } catch {}
   const entries = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   const undone = new Set(entries.filter(e => e.undone).map(e => e.undone));
-  return entries.filter(e => e.id && Array.isArray(e.ops)).map(e => ({ ...e, undone: undone.has(e.id), undoable: undoable(e) })).reverse().slice(0, limit);
+  // 整棵树换过（初始化整份写入、撤销初始化整份放回）以后，更早的改树的改动不能再撤：反操作按需求 ID 找，
+  // 新树里同号的是另一个需求（模板和初始化都从 R1 编起），撤销会把规则加到别处（2026-10-25 测出）
+  const whole = new Set(entries.filter(e => e.id && Array.isArray(e.ops) && e.ops.some(o => o.op === 'doc_write' && samePath(path.resolve(path.dirname(treePath), o.file), treePath))).map(e => e.id));
+  const replaced = Math.max(0, ...entries.filter(e => whole.has(e.id) || whole.has(e.undone)).map(e => e.time || 0));
+  const touchesTree = e => e.ops.some(o => !isFileOp(o)) || whole.has(e.id);
+  return entries.filter(e => e.id && Array.isArray(e.ops))
+    .map(e => ({ ...e, undone: undone.has(e.id), undoable: undoable(e) && !(e.time < replaced && touchesTree(e)) })).reverse().slice(0, limit);
 }
 
 // 写入 + 写完之后的收尾。没给 write 就加锁同步写；给了（插件的 writeTree，异步）就交给它，返回 Promise。
@@ -361,7 +367,7 @@ function writeThen(treePath, update, write, after) {
   return Promise.resolve(write(treePath, update)).then(after);
 }
 
-// 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你'（升级清理记为 '升级'）。
+// 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你' | '体检' | '初始化'。
 // id：这条改动记录用的编号（问题要记下默认做法是哪条改动，之后好撤销）；不给就新起一个。
 // 返回生效的改动（数组），数组上另挂 skipped：没做成的改动和原因（见 parser.applyOps）
 // 改记忆文件、文档的操作（memory_*，见 src/memory.js；doc_*，见 src/docs.js）不改树，和树的改动记成同一条。

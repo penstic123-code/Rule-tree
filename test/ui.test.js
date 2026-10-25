@@ -1446,7 +1446,6 @@ test('英文界面：新的改动记录、记录员状态、出错提示都按�
     { id: 'n2', time: now - 120000, source: '你', summary: ['R4 改名为「第2章」'], undone: false,
       ops: [{ op: 'rename_node', node: 'R4', title: 'Chapter 2', undo: [{ op: 'rename_node', node: 'R4', title: 'Chapter Two' }] },
             { op: 'delete_node', node: 'R9', undo: [{ op: 'restore_node', parent: 'P', before: null, at: 30, lines: ['## R9 Old idea ⏳', '- something'] }] }] },
-    { id: 'n3', time: now - 180000, source: '升级', summary: ['清掉旧版本留下的待确认标记（3 处）'], event: { k: 'chg.legacy', a: [3] }, undone: false, ops: [] },
     { id: 'old', time: now - 240000, source: '记录员', summary: ['old entry kept as stored'], undone: false, ops: [{ op: 'reject_pending', node: 'R1' }] },
   ];
   const recorder = { ok: true, time: now - 30000, message: '记下 2 条；R3.2 标为进行中', parts: [{ k: 'rec.rules', a: [2] }, { k: 'rec.doing', a: [['R3.2']] }] };
@@ -1461,10 +1460,9 @@ test('英文界面：新的改动记录、记录员状态、出错提示都按�
     assert.deepStrictEqual(r.lines, [
       'Added rule "Suspense within the first screen" to "Opening story"', 'Marked "Opening story" as In progress',
       'Renamed "Chapter Two" to "Chapter 2"', 'Deleted requirement "Old idea"',
-      'Cleared 3 leftover pending marks from an old version',
       'old entry kept as stored',
     ]);
-    assert.deepStrictEqual(r.who, ['Recorder', 'You', 'Upgrade', 'Recorder']);
+    assert.deepStrictEqual(r.who, ['Recorder', 'You', 'Recorder']);
     assert.match(r.status, /^Recorder · .* · Recorded 2 rules; marked "Opening story" in progress$/);
     assert.match(r.banner, /The requirement tree is busy; couldn't get the lock within 5 s/);
     assert.deepStrictEqual(r.cjk, [], '英文界面里还有中文');

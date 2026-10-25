@@ -1,6 +1,6 @@
 'use strict';
-// 拿不准、要问用户的事。有把握的改动直接写进树；拿不准的（管全项目还是只管这一块、新说法是取代还是补充、做完没有）
-// 先按最可能的做法写进树（默认做法），同时在这里记一个问题，插件弹出选项让用户改选。
+// 要问用户的事和自动处理了的判断。每个判断先按 decide 定问不问：问的开着，插件弹出选项让用户改选；
+// 不问的默认做法照样写进树，这里记成「已自动处理」（可以撤销，下次也不再提）。
 //
 // .reqtree/questions.jsonl，只追加（记录员在后台、插件在前台，同时写也不会互相覆盖）：
 //   问题一行 { id, time, source, kind?, node?, staleKey?, t?, text, options: [{ label, t?, ops }], default,
@@ -11,7 +11,7 @@
 // 读的时候按 id 合并。开着超过 7 天没回答的算过期（status 'expired'），保留默认做法。
 const fs = require('fs');
 const store = require('./store');
-const { parse, walk, findById } = require('./parser');
+const { parse, walk, findById, norm, DECISION_RE } = require('./parser');
 const { isStale } = require('./viewmodel');
 
 const FILE = 'questions.jsonl';
@@ -20,6 +20,31 @@ const EXPIRE_MS = 7 * 86400000;
 const STALE_OPEN_MAX = 3;
 
 const newId = () => 'q' + store.newChangeId();
+
+// 直接改还是问：记录员、体检的每个判断都走这里，别处不再各自定（以前散在六处，说法一处一个样）。
+// 用户定下的（2026-10-25「为什么老问我」）：只有默认做法要改掉、删掉一条「决定：」才问，问的时候先不动它；
+// 别的（管哪个范围、取代还是补充、哪边新）都按最可能的做法直接改，可以撤销，不问。
+// 拿不准的（q.unsure 模型说没把握、q.partial 内容没看全）选「不动」那个选项，也不问。
+// 🔨 久未动的问题不走这里：做完没有只有用户知道，staleQuestions 直接开着问。
+// 返回 { ask, default }
+function decide(q, text) {
+  const keep = q.options.findIndex(o => !o.ops.length);
+  if (changesDecision(text, q.options[q.default].ops)) return { ask: true, default: keep >= 0 ? keep : q.default };
+  if ((q.unsure || q.partial) && keep >= 0) return { ask: false, default: keep };
+  return { ask: false, default: q.default };
+}
+// 这些改动里有没有改掉、删掉、在下级推翻一条「决定：」
+function changesDecision(text, ops) {
+  const root = parse(text);
+  return ops.some(o => {
+    const said = o.op === 'replace_rule' ? o.old : (o.op === 'remove_rule' || o.op === 'override_rule') ? o.text : null;
+    if (typeof said !== 'string') return false;
+    if (DECISION_RE.test(said.trim())) return true;
+    const n = findById(root, o.op === 'override_rule' ? o.from : o.node);
+    const bare = t => norm(t.replace(DECISION_RE, ''));
+    return !!n && n.rules.some(r => r.decision && bare(r.text) === bare(said));
+  });
+}
 
 function readAll(treePath) {
   let text = '';
@@ -147,6 +172,6 @@ function staleQuestions(treePath, now = Date.now()) {
 }
 
 module.exports = {
-  FILE, EXPIRE_MS, STALE_OPEN_MAX, newId, readQuestions, openQuestions, addQuestion,
+  FILE, EXPIRE_MS, STALE_OPEN_MAX, newId, decide, readQuestions, openQuestions, addQuestion,
   answerQuestion, dismissQuestion, acceptDefault, staleQuestions,
 };

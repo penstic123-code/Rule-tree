@@ -38,7 +38,7 @@ The recorder relies on a small model and sometimes gets it wrong: say you meant 
 
 **Step 3: you can see the whole picture at any time.** The sidebar shows a tree: each course and each chapter is a "requirement", with its rules and status (in progress, to do, done). Whichever chapter the AI is editing lights up.
 
-**Step 4: as rules pile up, it tidies them.** Over time some rules repeat, some contradict, some go stale. There's a "Check-up" button at the top of the sidebar; click it and it merges duplicates, resolves contradictions and clears out stale ones. What it's sure about it fixes directly, and every fix can be undone; what it isn't sure about it leaves alone and asks you.
+**Step 4: as rules pile up, it tidies them.** Over time some rules repeat, some contradict, some go stale. There's a "Check-up" button at the top of the sidebar; click it and it merges duplicates, resolves contradictions and clears out stale ones. What it's sure about it fixes directly, what it isn't sure about it leaves alone, and every fix can be undone. It only asks you when a fix would overturn one of your Decisions.
 
 ![How ReqTree works: what comes in, background tidying, where it's stored, who it reaches](docs/images/architecture.en.png)
 
@@ -157,12 +157,12 @@ When editing chapter 1, the AI reads "the opening may run to 6 lines"; for every
 
 ## Other features
 
-**When it's unsure, it asks.** Some things only you can settle: does "chapter 5 can have a few more interactions" make an exception for that chapter, or apply to every chapter from now on? In cases like this the recorder writes down the most likely reading (by default, just the requirement you're working on) and shows a notification in VS Code with options. You can ignore it; the first reading stays in effect.
+**It tries not to interrupt you.** Does "chapter 5 can have a few more interactions" make an exception for that chapter, or apply to every chapter from now on? When it can't tell, the recorder writes down the most likely reading (by default, just the requirement you're working on) without asking. You can see where it went in the panel and move it or undo it in "Recent changes". It asks in only one case, with a notification in VS Code: what you just said doesn't fit one of your Decisions and you didn't say to change it. You can ignore it; the Decision stays as it was.
 
 **Check-up.** Rules used for long enough repeat, contradict and go stale. Click "Check-up" in the sidebar and it:
 
 - merges duplicate rules, and removes a sub-requirement's rule that repeats one from above
-- resolves contradictions: when two rules in the same requirement disagree, the one recorded later wins, fixed directly; when it can't tell, it changes nothing and only asks you
+- resolves contradictions: when two rules in the same requirement disagree, the one recorded later wins, fixed directly; when it can't tell, it changes nothing
 - tidies the AI's auto memory: notes already in the tree are deleted, project rules move into the tree
 - tidies docs and CLAUDE.md: lines that repeat the tree are deleted, rules that belong in the tree move there
 
@@ -200,7 +200,7 @@ When it can see the contradiction, it usually picks one, and not necessarily the
 
 ## Test data
 
-Each experiment answers one question. Raw data and conditions are in [`测试数据记录.md`](测试数据记录.md).
+Each experiment answers one question. Raw data and conditions are in [`docs/test-log.md`](docs/test-log.md).
 
 ### Does the recorder get things wrong or add duplicates?
 
@@ -229,7 +229,7 @@ Three rounds against the real model on a copy of my course project (8 requiremen
 | 2 | 0 | 0 | 0 |
 | 3 | 2 | 1 | 0 |
 
-The real one in round 3: one rule said "pick one of four skins", while another in the same requirement said "only three of them are usable". The small model still raises the occasional false alarm, so there's now a floor: when it isn't sure, it changes nothing and only asks you. A false alarm costs one question, never a wrong change. A feature that split requirements with many rules into sub-requirements never once applied in three rounds, and has been removed.
+The real one in round 3: one rule said "pick one of four skins", while another in the same requirement said "only three of them are usable". The small model still raises the occasional false alarm, so there's now a floor: when it isn't sure, it changes nothing. A false alarm never turns into a wrong change. A feature that split requirements with many rules into sub-requirements never once applied in three rounds, and has been removed.
 
 ### Is the first tree any good?
 
@@ -261,10 +261,12 @@ I replayed 436 messages I typed across 12 conversations over a few weeks, in ord
 
 ![Rule base after replaying real conversations](docs/images/en/chart-replay.png)
 
+ReqTree filed more rules in the wrong place, and nearly all of them were one kind of mistake: a general request made in passing while working on one course (how to write, how to check, how to work with the AI) was filed under that course, so it never reached the other courses. These numbers come from an earlier version. Since then the recorder's prompt singles out this kind of request and files it at the top, and the check-up lifts a rule that several courses share up to their parent.
+
 ## Current limits
 
 - Rules are delivered by file. It works best when different tasks touch different files; if everything lives in one file, there's no way to send only part of the rules. Which files a requirement covers can be changed at any time, down to a single file.
-- The recorder relies on a small model and occasionally files a rule in the wrong place. When it notices it's unsure it asks; otherwise you fix it in the panel or undo it in "Recent changes".
+- The recorder relies on a small model and occasionally files a rule in the wrong place. It doesn't interrupt you over this; you fix it in the panel or undo it in "Recent changes".
 - Each turn adds one small-model call, run in the background (about 6 seconds), so you don't wait. You can record every few turns instead.
 - Codex has no "deliver rules by file" mechanism, so ReqTree uses an index plus top-ups; see [docs/codex.md](docs/codex.md).
 - Developed on Windows; macOS and Linux are covered by automated tests.

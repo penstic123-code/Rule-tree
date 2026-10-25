@@ -219,7 +219,7 @@ class Panel {
     if (st) return Promise.resolve(st.update(SNOOZE_KEY, [...this.snoozed().filter(x => x !== id), id].slice(-200))).catch(() => {});
   }
 
-  // 新出现的问题：notify 弹通知；off 时记录员的问题按默认做法算数（体检的问题是用户主动要的，留着）
+  // 新出现的问题：notify 弹通知；off 时默认做法已经写进树的问题（记录员的、体检的）都按默认做法算数
   handleQuestions() {
     const mode = askMode();
     const snoozed = new Set(this.snoozed());
@@ -296,7 +296,7 @@ class Panel {
     return this.chooseOption(one.t.path, one.q);
   }
 
-  // 命令「需求树：体检」：合并重复规则，久未动和可能冲突的规则变成问题（冲突要调用一次模型）
+  // 命令「需求树：体检」：合并重复规则，处理冲突、记忆和文档（要调用模型），问不问由 Q.decide 定；结果写成报告
   // preset（初始化之后自动体检用）：{ tree, parts }，不问查什么、不确认
   async checkupCommand(preset) {
     const trees = findTrees();
@@ -363,6 +363,7 @@ class Panel {
     if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
     if (r.docConflicts && r.docConflicts.length) notes.push(T('q.docConflicts', r.docConflicts));
+    if (r.docDup && r.docDup.length) notes.push(T('q.docDup', r.docDup));
     const auto = r.auto || [];
     const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length);
     const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
@@ -551,7 +552,7 @@ class Panel {
         return;
       }
       case 'setConfig':
-        // 「每轮记录 / 暂停记录员」和「记下 AI 发现的做法」（writeConfig 只认 DEFAULT_CONFIG 里的键）。只影响记录员下一次怎么做，不用重编
+        // 「每轮记录 / 暂停记录员」和「记下 AI 发现的做法」（writeConfig 只认 DEFAULT_CONFIG 里的键）。动手原则、代码地图要马上生效，见 applyConfigEffects
         // 写不进去（state.lock 一直被占）时要告诉用户，不然点了没反应、菜单还停在旧选项
         if (!p) return;
         try { store.writeConfig(p, msg.patch || {}); applyConfigEffects(p, msg.patch || {}); }
@@ -601,7 +602,7 @@ async function aiInit(dir, panel) {
     return r;
   } catch (e) { console.error(e); return null; } finally { initRunning.delete(dir); }
 }
-const needsInit = treePath => { try { const t = fs.readFileSync(treePath, 'utf8').replace(/\r\n/g, '\n'); return t === store.TEMPLATE || require('./src/init').templateShaped(t); } catch { return false; } };
+const needsInit = treePath => { try { const t = fs.readFileSync(treePath, 'utf8').replace(/\r\n/g, '\n'); return require('./src/init').templateShaped(t); } catch { return false; } };
 
 // 「新建需求树」= 在这个项目启用：装 hook、用 AI 生成需求树、编译（只建一个模板文件的话，记录员和按需加载都不会工作）
 async function create(panel) {
@@ -624,14 +625,18 @@ function activate(context) {
   // 连续多次文件变化合并成一次刷新
   const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { try { checkLang(); panel.load(); } catch (e) { console.error(e); } }, 150); };
   // 还没真正初始化过的树（模板、按文件夹生成的，哪怕记录员已经往里记了规则）：后台用 AI 初始化。
+  // 启动时看一次，VS Code 开着时新建出来的树（比如在终端里跑了 reqtree init）也看。
   // 一天只试一次：没装 Claude、模型调用失败时，别每次打开都跑
-  for (const t of findTrees()) {
-    if (!needsInit(t)) continue;
-    const key = `reqtree.initTried:${t}`;
-    if (Date.now() - (context.workspaceState.get(key) || 0) < 24 * 3600e3) continue;
-    context.workspaceState.update(key, Date.now());
-    setTimeout(() => aiInit(path.dirname(t), panel), 3000);
-  }
+  const initIfNeeded = () => {
+    for (const t of findTrees()) {
+      if (!needsInit(t)) continue;
+      const key = `reqtree.initTried:${t}`;
+      if (Date.now() - (context.workspaceState.get(key) || 0) < 24 * 3600e3) continue;
+      context.workspaceState.update(key, Date.now());
+      setTimeout(() => aiInit(path.dirname(t), panel), 3000);
+    }
+  };
+  initIfNeeded();
   const isTree = doc => doc.uri.scheme === 'file' && panel.trees.some(t => samePath(t.path, doc.uri.fsPath));
 
   const watchers = (vscode.workspace.workspaceFolders || []).flatMap(f => [
@@ -639,6 +644,8 @@ function activate(context) {
     vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(f, '.reqtree/*.{json,jsonl}')),
   ]);
   for (const w of watchers) { w.onDidChange(refresh); w.onDidCreate(refresh); w.onDidDelete(refresh); }
+  // 每个文件夹两个监视器，单数位是需求树的
+  watchers.filter((_, i) => i % 2 === 0).forEach(w => w.onDidCreate(() => { try { initIfNeeded(); } catch (e) { console.error(e); } }));
   // 定时刷新，让"AI 正在改"过期消失
   const tick = setInterval(refresh, 60 * 1000);
 

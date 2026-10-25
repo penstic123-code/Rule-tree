@@ -117,6 +117,7 @@ test('模型调用失败：留下按文件夹生成的树，不报错', async ()
 // ---------- 体检里的记忆冲突 ----------
 const note = (file, mtime) => ({ file, type: 'feedback', modified: '', mtime, description: '', body: '云保留它自己的预设色，作为例外' });
 const TREE = '# P 游戏\n- 光照只有一条规则：albedo 乘一个太阳，加一层天光；植物、云、远景着色器用同一个太阳\n';
+const Q = require('../src/questions');
 const plan = (it, opts = {}) => memoryPlan([it], { text: TREE, dir: SANDBOX, projectDir: SANDBOX, notes: [note('v.md', opts.mtime || 1000)], asked: new Set(), shown: null, ...opts }).questions[0];
 
 test('记忆说的是一条例外：按记忆处理时在旁边加一条，不把整条规则换掉', () => {
@@ -128,17 +129,19 @@ test('记忆和树冲突、树里那条是用户的话定下的：按时间判�
   const it = { file: 'v.md', kind: 'conflict', node: 'P', rule: '光照只有一条规则：albedo 乘一个太阳，加一层天光；植物、云、远景着色器用同一个太阳', text: '光照用两个太阳：albedo 乘一个暖色主光、一个冷色补光，加一层天光；植物、远景着色器另算', newer: 'memory', sure: false, whole: false };
   const decided = 5000;
   const ruleTime = (node, text) => (node === 'P' && text.startsWith('光照') ? decided : 0);
+  const asks = q => Q.decide(q, TREE);
   const treeNewer = plan(it, { ruleTime, mtime: 1000 });
-  assert.strictEqual(treeNewer.sure, true);
-  assert.strictEqual(treeNewer.default, 1);
+  assert.deepStrictEqual(asks(treeNewer), { ask: false, default: 1 });
   const memNewer = plan(it, { ruleTime, mtime: 9000 });
-  assert.strictEqual(memNewer.sure, true);
-  assert.strictEqual(memNewer.default, 0);
+  assert.deepStrictEqual(asks(memNewer), { ask: false, default: 0 });
   assert.deepStrictEqual(memNewer.options[0].ops.map(o => o.op), ['replace_rule']);
-  // 树里那条没有时间、模型也拿不准：按需求树，不问；要改掉「决定：」才问
+  // 树里那条没有时间、模型也拿不准：按需求树，不问
   const unsure = plan(it, { mtime: 9000 });
-  assert.strictEqual(unsure.sure, true);
-  assert.strictEqual(unsure.default, 1);
+  assert.deepStrictEqual(asks(unsure), { ask: false, default: 1 });
+  // 要改掉「决定：」才问，问的时候先不动
+  const DTREE = TREE.replace('- 光照', '- 决定：光照');
+  const dq = memoryPlan([{ ...it, rule: '决定：' + it.rule }], { text: DTREE, dir: SANDBOX, projectDir: SANDBOX, notes: [note('v.md', 9000)], asked: new Set(), shown: null, ruleTime: () => 5000 }).questions[0];
+  assert.deepStrictEqual(Q.decide(dq, DTREE), { ask: true, default: 1 });
 });
 
 // ---------- 体检：文档跟着需求树改 ----------
@@ -194,7 +197,7 @@ test('体检的默认做法只做成一半（新规则加上了，旧的那条�
   const dir = project({});
   const treePath = path.join(dir, '需求树.md');
   fs.writeFileSync(treePath, '# P x\n- 段落不超过 4 行\n');
-  const q = { source: '体检', text: '两条冲突', default: 0, sure: true, options: [
+  const q = { source: '体检', text: '两条冲突', default: 0, options: [
     { label: '换', ops: [{ op: 'add_rule', node: 'P', text: '段落不超过 6 行', force: true }, { op: 'remove_rule', node: 'P', text: '根本没有这条规则' }] },
     { label: '不动', ops: [] },
   ] };
@@ -202,4 +205,44 @@ test('体检的默认做法只做成一半（新规则加上了，旧的那条�
   assert.strictEqual(r.auto, null);
   assert.ok(r.question);
   assert.ok(!fs.readFileSync(treePath, 'utf8').includes('6 行'));
+});
+
+// ---------- 命令行 init 也用 AI 初始化 ----------
+test('命令行 init：按文件夹建好以后用 AI 按要做的事生成需求；--no-ai 只按文件夹；模型失败保持按文件夹', () => {
+  const { spawnSync } = require('child_process');
+  const bin = path.join(__dirname, '..', 'bin', 'reqtree.js');
+  const fake = `"${process.execPath}" "${path.join(__dirname, 'fixtures', 'fake-claude.js')}"`;
+  const run = (dir, out, ...extra) => spawnSync(process.execPath, [bin, 'init', dir, ...extra], { encoding: 'utf8', env: { ...process.env, REQTREE_INIT_CMD: fake, REQTREE_CLAUDE_CMD: fake, FAKE_OUT: out } });
+  const plan = JSON.stringify({ project: '小猪', nodes: [{ id: 'R1', title: '城市', files: ['game/world/**'] }], split: [] });
+  {
+    const dir = project(FILES);
+    const r = run(dir, plan);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /已按要做的事生成 1 个需求/);
+    const text = fs.readFileSync(path.join(dir, '需求树.md'), 'utf8');
+    assert.match(text, /## R1 城市/);
+    assert.ok(!text.includes(store.FOLDER_INTRO));
+  }
+  {
+    const dir = project(FILES);
+    assert.strictEqual(run(dir, plan, '--no-ai').status, 0);
+    assert.ok(fs.readFileSync(path.join(dir, '需求树.md'), 'utf8').includes(store.FOLDER_INTRO));
+  }
+  {
+    const dir = project(FILES);
+    const r = run(dir, '我不会');
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /AI 初始化没成功/);
+    assert.ok(fs.readFileSync(path.join(dir, '需求树.md'), 'utf8').includes(store.FOLDER_INTRO));
+  }
+});
+
+test('初始化的材料：每份说明文档给用途和主要标题（不只文件名）；只是归类的上级没写文件，用子需求的文件合起来', async () => {
+  const dir = project({ ...FILES, 'docs/look.md': '用途：画面风格和配色\n\n# 画面\n## 配色\n## 光照\n' });
+  const g = Init.gather(dir);
+  assert.match(g.docs, /docs\/look\.md：画面风格和配色（画面 \/ 配色 \/ 光照）/);
+  assert.match(Init.buildPrompt(g), /先从 README、文档的标题/);
+  assert.match(Init.buildPrompt(g), /配色 \/ 光照/);
+  const p = Init.plan(dir, g, { nodes: [{ id: 'R1', title: '游戏', children: [{ id: 'R1.1', title: '城市', files: ['game/world/**'] }, { id: 'R1.2', title: '界面', files: ['game/ui/**'] }] }] });
+  assert.deepStrictEqual(p.nodes[0].files, ['game/world/**', 'game/ui/**']);
 });
