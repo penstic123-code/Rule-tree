@@ -239,7 +239,7 @@ test('编译：每个节点一份原生规则，继承交给 glob 嵌套，覆�
   const tree = path.join(dir, '需求树.md');
   fs.writeFileSync(tree, TREE.replace('- 开场用霍乱', '- [段落] 开场段落可以到 6 行\n- 开场用霍乱') + '\n### C2.2 子需求没有文件\n- 只在数据科学课范围内\n\n## G1 写作（全局分类）\n- 先场景后概念\n');
   const r = compile(tree);
-  assert.deepStrictEqual(r.written.sort(), ['C2.1.md', 'C2.2.md', 'C2.md', 'P.md', '_index.md', 'ponytail.md'], 'G1 没有文件对应，不编译（否则会在做别的事时也加载）');
+  assert.deepStrictEqual(r.written.sort(), ['C2.1.md', 'C2.2.md', 'C2.md', 'P.md', '_index.md'], 'G1 没有文件对应，不编译（否则会在做别的事时也加载）');
   assert.ok(!ruleFile(dir, 'P').startsWith('---'), '根节点规则全局加载，不写 paths');
   assert.match(ruleFile(dir, 'C2'), /paths:\n  - "DataScience\/\*\*"/);
   assert.ok(!ruleFile(dir, 'C2.1').includes('不引原话'), '不抄上级规则，靠 glob 嵌套继承');

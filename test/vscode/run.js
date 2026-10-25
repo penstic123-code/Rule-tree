@@ -85,7 +85,9 @@ async function runSuite(suite) {
     });
   } catch (e) { err = e; }
   const logErrs = hostLogErrors(userData);
-  const ours = logErrs.filter(l => /reqtree|需求树|extension\.js/i.test(l));
+  // 先去掉临时目录的路径：它本身可能含 reqtree（比如 …Desktop-reqtree\…），VS Code 自己的错误行会被误算进来
+  const norm = p => { try { p = decodeURI(p); } catch {} return p.replace(/\\/g, '/').toLowerCase(); }; // 有的行是网址编码的路径
+  const ours = logErrs.filter(l => /reqtree|需求树|extension\.js/i.test(norm(l).split(norm(S)).join('')));
   if (logErrs.length) console.log(`--- ${suite}：VS Code 日志里的 [error] 行（${logErrs.length}）：\n` + logErrs.slice(0, 30).join('\n'));
   if (ours.length) err = err || new Error(`日志里有 ${ours.length} 行和需求树有关的错误`);
   return err;

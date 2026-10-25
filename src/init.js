@@ -108,7 +108,10 @@ function gather(dir, treeText = '') {
   const readme = ['README.md', 'readme.md', 'README.zh.md', 'README'].map(f => read(path.join(dir, f))).find(Boolean) || '';
   const entries = ENTRY_DOCS.map(f => ({ file: f, text: read(path.join(dir, f)) })).filter(e => e.text.trim());
   const rules = existingRules(treeText);
-  return { files, readme, entries, rules, git: gitSummary(dir), docs: docOutline(dir, files), lang: projectLang([...entries.map(e => e.text), readme, ...rules.map(r => r.text)]) };
+  // 程序运行时读的 .md 不算说明文档（见 docs.isProgramData）
+  const cache = new Map();
+  const data = new Set(files.filter(f => isDoc(f) && Docs.isProgramData(dir, f, cache)));
+  return { files, data, readme, entries, rules, git: gitSummary(dir), docs: docOutline(dir, files.filter(f => !data.has(f))), lang: projectLang([...entries.map(e => e.text), readme, ...rules.map(r => r.text)]) };
 }
 
 function buildPrompt(g) {
@@ -151,7 +154,7 @@ ${g.rules.length ? `树里已经记下了 ${g.rules.length} 条规则（见最�
 ${folderSummary(g.files)}
 
 ## 文档（用途和主要标题）
-${g.docs || g.files.filter(isDoc).slice(0, OUTLINE_DOCS).join('\n') || '（没有）'}
+${g.docs || g.files.filter(f => isDoc(f) && !(g.data && g.data.has(f))).slice(0, OUTLINE_DOCS).join('\n') || '（没有）'}
 
 ## README
 ${g.readme ? clip(g.readme, 4000) : '（没有）'}
@@ -177,7 +180,7 @@ function plan(dir, g, out) {
     if (n.id) idMap.set(String(n.id).trim(), id);
     const list = (Array.isArray(n.files) ? n.files : []).map(x => oneLine(x, 200)).filter(Boolean);
     // 说明文档挂成背景文档：模型写进 docs 的，和误写进 files 的单个 .md 文件
-    const docs = [...new Set([...(Array.isArray(n.docs) ? n.docs : []).map(x => oneLine(x, 200)), ...list.filter(isDoc)])].filter(d => isDoc(d) && g.files.includes(d)).slice(0, MAX_DOCS);
+    const docs = [...new Set([...(Array.isArray(n.docs) ? n.docs : []).map(x => oneLine(x, 200)), ...list.filter(isDoc)])].filter(d => isDoc(d) && g.files.includes(d) && !(g.data && g.data.has(d))).slice(0, MAX_DOCS);
     const files = [...new Set(list.filter(x => !docs.includes(x)))].filter(matchesAny);
     const status = ['doing', 'todo', 'done'].includes(n.status) ? n.status : null;
     const kids = depth < 2 && Array.isArray(n.children) ? n.children : [];
@@ -327,6 +330,8 @@ async function initProject(dir, { ask, treeName = '需求树.md' } = {}) {
   const id = `${Date.now().toString(36)}init`;
   const applied = store.applyChange(treePath, ops, { source: '初始化', id });
   store.compileTree(treePath, { force: true });
+  // 需求全换了：旧地图挂着旧需求的名字和范围，马上按新树重建
+  try { require('./codemap').refresh(treePath); } catch {}
   return { treePath, ai: true, nodes: r.plan.nodes, moves: r.plan.moves, changeId: applied.length ? id : null, lang: r.g.lang };
 }
 

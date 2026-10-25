@@ -35,6 +35,27 @@ function exists(projectDir, rel) {
   try { return !!p && fs.statSync(p).isFile(); } catch { return false; }
 }
 
+// 程序运行时读的 .md（提示词模板、要原样编译出去的文字）：同一个文件夹里有代码文件用字符串写着它的文件名。
+// 它不是写给 AI 的说明文档：不挂成文档，体检也不改它。2026-10-25 初始化把 src/ponytail.md 挂成了文档，体检把里面的句子搬进树、从原文删掉
+const CODE_FILE = /\.(c?js|mjs|ts|tsx|jsx|py|gd|cs|go|rs|rb|php|java|kt|lua|sh|ps1)$/i;
+function isProgramData(projectDir, rel, cache = new Map()) {
+  const file = splitRef(rel).file.replace(/\\/g, '/');
+  const dir = path.posix.dirname(file);
+  if (!cache.has(dir)) {
+    let text = '';
+    try {
+      for (const n of fs.readdirSync(path.join(projectDir, dir))) {
+        if (!CODE_FILE.test(n)) continue;
+        const p = path.join(projectDir, dir, n);
+        try { if (fs.statSync(p).size < 300 * 1024) text += fs.readFileSync(p, 'utf8') + '\n'; } catch {}
+      }
+    } catch {}
+    cache.set(dir, text);
+  }
+  const name = path.posix.basename(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`['"\`]${name}['"\`]`).test(cache.get(dir));
+}
+
 const clean = s => s.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
 const clip = s => { const a = [...s]; return a.length > PURPOSE_MAX ? a.slice(0, PURPOSE_MAX).join('') + '…' : s; };
 
@@ -168,9 +189,11 @@ function removeDocText(treePath, op) {
     fs.copyFileSync(file, path.join(dir, `${Date.now()}-${op.file.replace(/[\\/:]/g, '_')}`));
   } catch {}
   const lineText = lines[at];
+  // 记下前后两行：同一份文档删了好几行、不按从新到旧的顺序撤销时，只靠行号会插错位置
+  const before = lines[at - 1], after = lines[at + 1];
   lines.splice(at, 1);
   fs.writeFileSync(file, lines.join(nl));
-  return { op: 'doc_remove', file: op.file, text: bodyOf(lineText), undo: [{ op: 'doc_restore', file: op.file, at, lineText }] };
+  return { op: 'doc_remove', file: op.file, text: bodyOf(lineText), undo: [{ op: 'doc_restore', file: op.file, at, lineText, prev: before, next: after }] };
 }
 
 // 撤销：那一行不在了就插回原来的位置
@@ -182,7 +205,12 @@ function restoreDoc(treePath, u) {
   const nl = /\r\n/.test(text) ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);
   if (lines.includes(u.lineText)) return false;
-  lines.splice(Math.min(u.at || 0, lines.length), 0, u.lineText);
+  // 插回原来那两行之间：先找原来的下一行（只出现一次的才算），再找上一行，都找不到才按行号。
+  // 已知限制：连着删掉的几行按从旧到新的顺序全撤，几行之间的先后可能对调（每行只记得删它那时的邻居）
+  const only = s => typeof s === 'string' && s.trim() && lines.indexOf(s) === lines.lastIndexOf(s) ? lines.indexOf(s) : -1;
+  const n = only(u.next), p = only(u.prev);
+  const at = n >= 0 ? n : p >= 0 ? p + 1 : Math.min(u.at || 0, lines.length);
+  lines.splice(at, 0, u.lineText);
   fs.writeFileSync(file, lines.join(nl));
   return true;
 }
@@ -254,4 +282,4 @@ function undoDoc(treePath, u) {
 
 const isDocOp = o => !!o && typeof o.op === 'string' && o.op.startsWith('doc_');
 
-module.exports = { resolve, exists, purpose, readLine, removeDocText, restoreDoc, writeDoc, putBack, replaceDocText, doDoc, undoDoc, isDocOp, splitRef, sections, findSection, toc, describe, docsMtime, LONG_CHARS };
+module.exports = { resolve, exists, isProgramData, purpose, readLine, removeDocText, restoreDoc, writeDoc, putBack, replaceDocText, doDoc, undoDoc, isDocOp, splitRef, sections, findSection, toc, describe, docsMtime, LONG_CHARS };

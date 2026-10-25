@@ -55,6 +55,22 @@ test('JS：立即执行函数里的函数、window.X 的成员；对象字面量
   assert.deepStrictEqual(r.members.DS, ['toast', 'mountQuiz', 'store']);
 });
 
+test('Node 模块：对外的是 module.exports 的键，别的函数不列；注释里举例的 window.X、module.exports 不算', () => {
+  const dir = fs.mkdtempSync(path.join(SANDBOX, 'n-'));
+  write(dir, {
+    'lib/q.js': "'use strict';\n// 例：module.exports = { fake }；window.FAKE = {}\nfunction helper() {}\nfunction decide() {}\nfunction readAll() {}\nmodule.exports = { decide, readAll };\n",
+    'lib/use.js': "const q = require('./q');\nq.decide();\n",
+    '需求树.md': '# P x\n\n## L1 库\n> 文件：lib/**\n- 不用第三方库\n',
+  });
+  const js = C.readJs(fs.readFileSync(path.join(dir, 'lib/q.js'), 'utf8'));
+  assert.deepStrictEqual(js.members.exports, ['decide', 'readAll']);
+  assert.deepStrictEqual(js.globals, []);
+  C.refresh(path.join(dir, '需求树.md'), { targets: { claude: true } });
+  const map = fs.readFileSync(path.join(dir, '.claude', 'rules', 'reqtree', 'map-L1.md'), 'utf8');
+  assert.match(map, /`lib\/q\.js`（被 1 个文件用） 对外：decide、readAll\n/);
+  assert.ok(!/helper|FAKE|fake/.test(map), map);
+});
+
 test('建图：单例、class_name、场景挂的脚本都算引用；Godot 的 addons 不看', () => {
   const { dir } = godot();
   const g = C.build(dir);

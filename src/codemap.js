@@ -110,14 +110,16 @@ function readJs(text) {
     for (const m of l.matchAll(/(?:require\(\s*|import\s*\(\s*|from\s+|import\s+)['"](\.{1,2}\/[^'"]+)['"]/g)) out.paths.push(m[1]);
   });
   // window.X = Y：Y 是同一文件里的对象字面量时，它的键就是 X 的成员
-  for (const m of text.matchAll(/\bwindow\.([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*|\{)/g)) {
+  // 注释里举例的 window.X = …、module.exports 不算（去掉注释再找）
+  const code = text.replace(/\/\*[\s\S]*?\*\/|(^|[^:\\])\/\/[^\n]*/g, '$1');
+  for (const m of code.matchAll(/\bwindow\.([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*|\{)/g)) {
     const g = m[1];
     if (!out.globals.includes(g)) out.globals.push(g);
-    const body = m[2] === '{' ? objectBody(text, m.index + m[0].length - 1) : objectBody(text, findObject(text, m[2]));
+    const body = m[2] === '{' ? objectBody(code, m.index + m[0].length - 1) : objectBody(code, findObject(code, m[2]));
     if (body) out.members[g] = objectKeys(body);
   }
-  const me = text.match(/module\.exports\s*=\s*\{/);
-  if (me) out.members.exports = objectKeys(objectBody(text, me.index + me[0].length - 1) || '');
+  const me = code.match(/module\.exports\s*=\s*\{/);
+  if (me) out.members.exports = objectKeys(objectBody(code, me.index + me[0].length - 1) || '');
   return out;
 }
 function findObject(text, name) {
@@ -307,10 +309,15 @@ function exportsOf(g, rel, n = 6) {
     if (mu) mem.sort((a, b) => (mu.get(b) || 0) - (mu.get(a) || 0));
     names.push(...mem.map(m => `${name}.${m}`));
   }
-  const inMembers = new Set(Object.values(info.members).flat());
-  const plain = info.defs.filter(d => d.pub && !info.globals.includes(d.name) && !inMembers.has(d.name))
-    .sort((a, b) => (g.defUse.get(b.name) || 0) - (g.defUse.get(a.name) || 0));
-  names.push(...plain.map(d => (d.kind === 'signal' ? `信号 ${d.name}` : d.name)));
+  const byUse = (a, b) => (g.defUse.get(b) || 0) - (g.defUse.get(a) || 0);
+  // module.exports = { … }：对外的就是这些键，文件里别的函数是内部的，不列
+  const exp = info.members.exports || [];
+  if (exp.length) names.push(...exp.slice().sort(byUse));
+  else {
+    const inMembers = new Set(Object.values(info.members).flat());
+    const plain = info.defs.filter(d => d.pub && !info.globals.includes(d.name) && !inMembers.has(d.name)).sort((a, b) => byUse(a.name, b.name));
+    names.push(...plain.map(d => (d.kind === 'signal' ? `信号 ${d.name}` : d.name)));
+  }
   return names.slice(0, n).join('、') + (names.length > n ? ` 等 ${names.length} 个` : '');
 }
 
@@ -469,7 +476,7 @@ function refresh(treePath, { targets } = {}) {
   try {
     const st = path.join(projectDir, '.reqtree', 'codemap.json');
     fs.mkdirSync(path.dirname(st), { recursive: true });
-    fs.writeFileSync(st, JSON.stringify({ time: Date.now(), files: g.files.size, nodes: [...maps.keys()], ms }) + '\n');
+    fs.writeFileSync(st, JSON.stringify({ time: Date.now(), files: g.files.size, nodes: [...maps.keys()], ms, scopes: scopesKey(treePath) }) + '\n');
   } catch {}
   // 第一次建：总目录要补上「查名字」的命令，重新编译一次
   if (first) try { require('./store').compileTree(treePath, { force: true, wait: false }); } catch {}
@@ -479,6 +486,18 @@ function refresh(treePath, { targets } = {}) {
 // 上次重建是什么时候（没建过返回 0）
 function lastBuilt(treePath) {
   try { return JSON.parse(fs.readFileSync(path.join(path.dirname(treePath), '.reqtree', 'codemap.json'), 'utf8')).time || 0; } catch { return 0; }
+}
+// 需求的编号、名字和文件范围：变了（初始化、新建删除需求、改范围）地图就过时了，挂着旧需求的名字和范围。2026-10-25 初始化后 map-R2 还写着旧的「R2 test」
+function scopesKey(treePath) {
+  try {
+    const { parse, walk } = require('./parser');
+    return [...walk(parse(fs.readFileSync(treePath, 'utf8')))].map(n => `${n.id}|${n.title}|${n.files.join(',')}`).join('\n');
+  } catch { return ''; }
+}
+function scopesChanged(treePath) {
+  let old = null;
+  try { old = JSON.parse(fs.readFileSync(path.join(path.dirname(treePath), '.reqtree', 'codemap.json'), 'utf8')).scopes; } catch {}
+  return old !== scopesKey(treePath);
 }
 
 // ---------- 查名字 ----------
@@ -525,7 +544,7 @@ function who(projectDir, q, { max = 40 } = {}) {
   return out.join('\n');
 }
 
-module.exports = { listFiles, build, refresh, lastBuilt, who, whoHint, renderNode, renderGlobal, readGd, readJs, readPy, readHtml, readTscn, objectKeys, MAP_MARK };
+module.exports = { listFiles, build, refresh, lastBuilt, scopesChanged, who, whoHint, renderNode, renderGlobal, readGd, readJs, readPy, readHtml, readTscn, objectKeys, MAP_MARK };
 
 if (require.main === module) {
   const [cmd, a, b] = process.argv.slice(2);

@@ -114,25 +114,19 @@ test('记忆搬进文档：模型说某份记忆是某需求的进度，原文�
   assert.ok(fs.existsSync(path.join(mem, 'ds-progress.md')));
 });
 
-test('ponytail：编成只在代码文件上加载的规则（原文、带 MIT 声明）；总目录只留一句指路；关掉动手原则就都不写', () => {
+test('写代码的原则只在总目录里一句（不再单独加载 ponytail 原文）；0.18.0 编出的 ponytail.md 重编时删掉；关掉动手原则就不写', () => {
   const dir = project({ '需求树.md': '# P x\n- r\n', '.claude/settings.local.json': '{"x":"reqtree"}' });
   const tree = path.join(dir, '需求树.md');
-  require('../src/compile').compile(tree);
   const rules = path.join(dir, '.claude', 'rules', 'reqtree');
-  const pony = read(path.join(rules, 'ponytail.md'));
-  assert.match(pony, /^---\npaths:\n  - "\*\*\/\*\.js"/);
-  assert.ok(!/\*\*\/\*\.html?"/.test(pony), 'html 不算代码');
-  assert.match(pony, /MIT License，Copyright \(c\) 2026 DietrichGebert/);
-  assert.match(pony, /# Ponytail, lazy senior dev mode/);
-  assert.match(pony, /Never cut: validation at trust boundaries/);
-  assert.ok(!pony.includes('ponytail repo itself'), '说给 ponytail 仓库自己的那句不要');
-  assert.ok(!pony.includes('Permission is hereby granted'), '许可证全文留在 src/ponytail.md，不进规则');
+  fs.mkdirSync(rules, { recursive: true });
+  fs.writeFileSync(path.join(rules, 'ponytail.md'), '---\npaths:\n  - "**/*.js"\n---\n<!-- reqtree:generated -->\n# Ponytail\n');
+  require('../src/compile').compile(tree);
+  assert.ok(!fs.existsSync(path.join(rules, 'ponytail.md')), '旧版编出的 ponytail.md 要删掉');
   const idx = read(path.join(rules, '_index.md'));
-  assert.match(idx, /写代码时照 ponytail 规则/);
+  for (const s of ['标准库和已装的依赖', '调用方、测试、配置一起改', '留一个小测试', '无障碍不省', '没查的和风险']) assert.ok(idx.includes(s), s);
   assert.match(idx, /不要光照用户说的做/);
   store.writeConfig(tree, { principles: false });
   require('../src/compile').compile(tree);
-  assert.ok(!fs.existsSync(path.join(rules, 'ponytail.md')));
   assert.ok(!read(path.join(rules, '_index.md')).includes('动手原则'));
 });
 

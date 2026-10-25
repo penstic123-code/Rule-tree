@@ -22,9 +22,9 @@ const NOT_DOCS = /^(readme|changelog|license|licence|contributing|claude|agents)
 const docRank = f => (/规则|规范|rules|guide|brief|progress|进度|章节|chapters|plan|计划/i.test(path.basename(f)) ? 0 : 1);
 
 // 文件夹第一层的说明文档（.md，不含 README 这类）
-const topDocs = (files, folder, treeName) => files
+const topDocs = (files, folder, treeName, projectDir, cache) => files
   .filter(f => f.startsWith(folder + '/') && !f.slice(folder.length + 1).includes('/') && /\.md$/i.test(f)
-    && !NOT_DOCS.test(path.basename(f)) && path.basename(f) !== treeName)
+    && !NOT_DOCS.test(path.basename(f)) && path.basename(f) !== treeName && !Docs.isProgramData(projectDir, f, cache))
   .sort((a, b) => docRank(a) - docRank(b) || a.localeCompare(b));
 
 // 新需求的名字：第一层说明文档的标题里「：」前面那段（「教育学 · 美术馆：项目规则与经验」→「教育学 · 美术馆」），没有就用文件夹名
@@ -81,6 +81,7 @@ function folderNodeId(root, top) {
 function plan(text, projectDir, files, treeName = '需求树.md') {
   const out = [];
   let root = parse(text);
+  const dataCache = new Map(); // isProgramData 读过的文件夹
   const nodes = [...walk(root)].filter(n => n.id);
   // 这个文件夹有没有专门的需求：只看文件对应以这个文件夹开头的。*/ch*.html 这种横跨所有文件夹的（「正文写作」）不算
   const owned = folder => nodes.some(n => n.files.some(g => g === folder || g.startsWith(folder + '/')));
@@ -95,7 +96,7 @@ function plan(text, projectDir, files, treeName = '需求树.md') {
   for (const [folder, list] of [...byFolder].sort((a, b) => a[0].localeCompare(b[0]))) {
     // 只放 .md 的是文档文件夹（规范、笔记），挂在需求上就够了，不单独成一块
     if (NOT_CONTENT.test(folder) || list.length < MIN_FILES || owned(folder) || list.every(f => /\.md$/i.test(f)) || !recentlyChanged(projectDir, list)) continue;
-    const docs = topDocs(files, folder, treeName).slice(0, MAX_DOCS);
+    const docs = topDocs(files, folder, treeName, projectDir, dataCache).slice(0, MAX_DOCS);
     const title = titleOf(projectDir, folder, docs);
     const r = parse(work);
     const top = r.children[0];
@@ -111,7 +112,7 @@ function plan(text, projectDir, files, treeName = '需求树.md') {
   // 2. 没挂文档的需求：自己文件夹第一层的说明文档
   for (const n of nodes) {
     if (n.docs.length) continue;
-    const docs = n.files.flatMap(g => { const m = g.match(/^([^*?{}[\]]+)\/\*\*$/); return m ? topDocs(files, m[1], treeName) : []; }).slice(0, MAX_DOCS);
+    const docs = n.files.flatMap(g => { const m = g.match(/^([^*?{}[\]]+)\/\*\*$/); return m ? topDocs(files, m[1], treeName, projectDir, dataCache) : []; }).slice(0, MAX_DOCS);
     if (!docs.length) continue;
     out.push(judgment(`struct|docs|${n.id}|${docs.join(',')}`, `「${n.title}」没挂文档：挂上 ${docs.join('、')}`,
       { k: 'q.structDocs', a: [n.title, docs] }, [{ op: 'add_docs', node: n.id, docs }]));

@@ -87,3 +87,21 @@ jobs:
           name: ui-${{ matrix.os }}-node${{ matrix.node }}
           path: test/out/*.png
           if-no-files-found: ignore
+
+  # 真实 VS Code 里的集成测试（test/vscode/run.js）。以前只在本机跑，0.14–0.17 改了激活方式、删了功能，
+  # 测试过时了好几个月没人发现（2026-10-25）。Linux 没有显示器，用 xvfb-run 开一个虚拟的
+  vscode:
+    name: VS Code integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install test deps (outside the project)
+        run: npm install --prefix "$RUNNER_TEMP/vsc" @vscode/test-electron mocha
+      - name: Test
+        env:
+          RT_SCRATCH: ${{ runner.temp }}/vsc
+        run: xvfb-run -a node test/vscode/run.js

@@ -75,19 +75,19 @@ const MEMORY_TASK = `另外逐份看自动记忆，每份在 memory 里写一项
 - covered：整份说的事，需求树或 CLAUDE.md 里都已经有了（措辞不同也算）。where 写需求 ID，或 "CLAUDE.md"。
 - move：里面有这个项目的规则，需求树和 CLAUDE.md 里都还没有。node 写该挂的需求 ID（管辖范围最小的那个），rules 是要加的规则（1–5 条，每条一句简短具体的中文，照记忆的意思，不扩写）；整份都是这类规则时 whole 为 true，还混着别的内容时为 false。
 - 例外不算冲突：记忆说树里某条规则在某一类、某种情况下不适用（「云除外」「这一章例外」），写成 move，rules 写「例外：……」，加在那条规则所在的需求（或更窄的需求）下。
-- conflict：和需求树里某条规则说的是同一件事，说法却不一样。node 是需求 ID，rule 是树里原文，text 是照记忆的说法写成的一条规则，newer 写 "memory" 或 "tree"（看记忆的更新日期和内容判断哪边是后来的决定；判断不了写 "tree"，按需求树处理），whole 同上。
+- conflict：和需求树里某条规则说的是同一件事，说法却不一样。node 是需求 ID，rule 是树里原文，text 是照记忆的说法写成的一条规则，newer 写 "memory" 或 "tree"（比记忆的更新日期和那条规则定下的日期、看哪边和正在做的需求一致，判断哪边是后来的决定；判断不了写 "tree"，按需求树处理），whole 同上。
 - stale：过时的进度，或已经做完、放弃的计划（比如树里那个需求已经 ✅ 或已经删了）。why 用一句话说为什么。
 - doc：不是规则，是这个项目某门课、某块内容的经验、进度或背景（踩过的坑、做到哪了、为什么这么定）。这类该写进那个需求挂的背景文档（需求下的「> 文档：」），不该在记忆里。node 写需求 ID。
 - keep：属于自动记忆该记的事，或者拿不准。
-每项可以加 sure：false 表示拿不准（就先不动它）；不写就是有把握，会直接处理（删记忆前有备份，用户可以撤销）。
+先用记忆的更新日期、规则定下的日期和正在做的需求判断，真看不出来才加 sure：false（就先不动它）；不写就是有把握，会直接处理（删记忆前有备份，用户可以撤销）。
 `;
 
 // 文档：需求下「> 文档：」挂的，加上项目根的 CLAUDE.md、AGENTS.md（它们每次全文加载，最该精简）。
 // 不管哪种项目，规则（以后都要照做的要求）只该在需求树里；文档放参考资料：架构、接口、进度、章节表、决策的来由、踩过的坑
 const DOC_TASK = `另外逐份看文档。分工：规则（以后都要照做的要求）只该写在需求树里；文档只放参考资料（架构、接口、进度、章节表、某个决定的来由、经验）。CLAUDE.md、AGENTS.md 每次都全文加载，最好只留"东西在哪"这类说明。文档里每处写成规则的地方，在 docs 里写一项（只是参考资料的不写）：
-- dup：需求树里已经有同一条（措辞不同也算）。doc 是文档名（照下面每段标题里的写），text 是文档里那句的原文（尽量短，能在文档里搜到），node 是树里那条所在的需求 ID。
+- dup：需求树里已经有同一条（措辞不同也算）。doc 是文档名（照下面每段标题里的写），text 是文档里那一整行的原文（去掉列表符号，能在文档里原样搜到；只是表格里的一格、长句里的半句的不写），node 是树里那条所在的需求 ID。
 - move：需求树里还没有的长期规则。doc、text 同上，node 写该挂的需求 ID（管辖范围最小的那个；管全项目的写顶层需求），rule 是照文档意思写成的一条简短规则。
-- stale：文档挂在某个需求下（下面每段标题里写着挂在哪），里面的说法和这个需求自己的规则冲突。需求树是最新的，文档要跟着改。text 是文档里要换掉的原文（几个字到一句，能在文档里原样搜到），new 是照规则改好的文字（只替换 text 这一段，格式和语言跟文档一致），node 是需求 ID，rule 是树里那条原文。全项目的规范文档和某个需求说法不同，是那个需求的例外，不写。
+- stale：文档挂在某个需求下（下面每段标题里写着挂在哪），里面的说法和这个需求自己的规则冲突。需求树是最新的，文档要跟着改。text 是文档里要换掉的原文（几个字到一句，能在文档里原样搜到），new 是照规则改好的文字（只替换 text 这一段，格式和语言跟文档一致；text 里和这条规则无关的说法原样留在 new 里，例：原文「不说话，不加戏份」，规则说点击可以说话 → new「点击可以让它说话，不加戏份」），node 是需求 ID，rule 是树里那条原文。全项目的规范文档和某个需求说法不同，是那个需求的例外，不写。
 dup、move 和 stale 会直接处理：规则进树，文档里那一行删掉（用户可以撤销）。所以 text 要是文档里完整的一行（去掉列表符号），只是参考资料、说明来由的句子不要写进来。
 每段文档最多 15 项，拿不准的不写。
 `;
@@ -101,8 +101,9 @@ function docText(projectDir, rel) {
 
 // 要查的文档：[{ name, node }]。挂了的文档 + 项目根的 CLAUDE.md、AGENTS.md
 function docList(root, projectDir) {
-  const out = [], seen = new Set();
-  const add = (name, node) => { const k = name.replace(/\\/g, '/'); if (!seen.has(k) && Docs.exists(projectDir, k)) { seen.add(k); out.push({ name: k, node }); } };
+  const out = [], seen = new Set(), cache = new Map();
+  // 程序运行时读的 .md 就算挂上了也不看、不改（见 docs.isProgramData）
+  const add = (name, node) => { const k = name.replace(/\\/g, '/'); if (!seen.has(k) && Docs.exists(projectDir, k) && !Docs.isProgramData(projectDir, k, cache)) { seen.add(k); out.push({ name: k, node }); } };
   for (const f of ['CLAUDE.md', '.claude/CLAUDE.md', 'AGENTS.md']) add(f, null);
   // 只挂了一节的，体检照样看整份（重复、该搬的规则可能在别的节里）
   for (const n of walk(root)) for (const d of n.docs) add(Docs.splitRef(d).file, n.id);
@@ -113,11 +114,18 @@ function docList(root, projectDir) {
 const NOT_DOCS = /^(readme|changelog|license|licence|contributing|claude|agents)\b/i;
 function docProblems(text, projectDir, treePath) {
   const root = parse(text);
-  const linked = new Set(), docMissing = [], docUnlinked = [];
+  const linked = new Set(), docMissing = [], docUnlinked = [], docNoToc = [], dataCache = new Map();
   for (const n of walk(root)) for (const d of n.docs) {
     const { file, section } = Docs.splitRef(d);
     linked.add(file.replace(/\\/g, '/'));
     if (!Docs.exists(projectDir, d)) { docMissing.push({ node: n.id, doc: d }); continue; }
+    // 很长却没有分节标题：没法按节读，AI 每次都整份读。加几个 ## 标题就行（不替你拆、不改写）
+    if (!section && !linked.has('toc:' + file)) {
+      linked.add('toc:' + file);
+      let t = '';
+      try { t = fs.readFileSync(Docs.resolve(projectDir, d), 'utf8'); } catch {}
+      if ([...t].length > Docs.LONG_CHARS * 2 && !Docs.toc(t)) docNoToc.push({ node: n.id, doc: file, chars: [...t].length });
+    }
     // 只挂一节，节名在文档里找不到了（标题改过名）：AI 会退回读整份，提醒改节名
     if (section) {
       let t = '';
@@ -137,11 +145,11 @@ function docProblems(text, projectDir, treePath) {
       for (const e of ents) {
         if (!e.isFile() || !/\.md$/i.test(e.name) || NOT_DOCS.test(e.name) || e.name === treeName) continue;
         const rel = `${m[1]}/${e.name}`;
-        if (!linked.has(rel)) { linked.add(rel); docUnlinked.push({ node: n.id, title: n.title, doc: rel }); }
+        if (!linked.has(rel) && !Docs.isProgramData(projectDir, rel, dataCache)) { linked.add(rel); docUnlinked.push({ node: n.id, title: n.title, doc: rel }); }
       }
     }
   }
-  return { docMissing, docUnlinked };
+  return { docMissing, docUnlinked, docNoToc };
 }
 
 // 模型对文档的判断 → { dup 文档里和树重复的（ops 是从文档删掉那一行）, questions 该搬进树的（问不问由 Q.decide 定，一般直接搬）,
@@ -199,6 +207,8 @@ const PIECE_CHARS = 12000;
 const SEEN_FILE = 'checkup-seen.json';
 // 体检一批内容多，每次调用等得比记录员久
 const CHECK_TIMEOUT_MS = +process.env.REQTREE_CHECK_TIMEOUT_MS || 300000;
+// 同时问模型的批数：大项目十几批一批批等要半小时以上
+const CHECK_PARALLEL = 3;
 const crypto = require('crypto');
 const fingerprint = s => crypto.createHash('md5').update(s).digest('hex');
 // 指纹记的可能是一个，也可能是几个（文档改前改后）
@@ -252,18 +262,54 @@ function checkPlan(treePath, { read, parts = {}, full = false, memory } = {}) {
     cur.push(s); size += s.block.length;
   }
   if (cur.length) batches.push(cur);
-  if (!batches.length && parts.rules !== false) batches.push([]);
+  // 冲突和分组：只有一批时和它一起查（少调用一次）；不止一批时单独一次，免得第一批比别的都重、先超时
+  if (parts.rules !== false && batches.length !== 1) batches.unshift([]);
   return { notes, docs, batches, calls: batches.length, memDir, seen };
 }
 
 // conflicts：false 时不找规则冲突（分批体检的后几批、或用户没选「规则」）
-function buildCheckPrompt(tree, memory = '', claudeMd = '', categoryTask = '', docs = '', conflicts = true) {
+// 判断时的参考：正在做的需求、最近 AI 在改哪些需求的文件、用户最近亲口定下的规则（带日期）。
+// 用户要的是「除非真的拿不准，都自己定；时间和正在进行的任务是很好的参考」（2026-10-25）
+const RECENT_DAYS = 14, RECENT_RULES = 40;
+function contextBlock(treePath, text) {
+  const day = t => new Date(t).toISOString().slice(0, 10);
+  const lines = [];
+  const root = parse(text);
+  const doing = [...walk(root)].filter(n => n.id && n.status === 'doing').map(n => `${n.id} ${n.title}`);
+  if (doing.length) lines.push('标着进行中的需求：' + doing.join('、'));
+  let act = [];
+  try { act = store.readActivity(treePath, Date.now() - RECENT_DAYS * 864e5); } catch {}
+  // 按文件对照现在的树算属于哪个需求（记下的编号可能是重新初始化之前的），取范围最窄的那个
+  const { nodesForFile } = require('./parser');
+  const owner = new Map();
+  const nodeOf = f => { if (!owner.has(f)) owner.set(f, (nodesForFile(root, f).filter(n => n.id).pop() || {}).id || null); return owner.get(f); };
+  const last = new Map();
+  for (const a of act) { const id = a.file ? nodeOf(a.file) : null; if (id) last.set(id, Math.max(last.get(id) || 0, a.time || 0)); }
+  const hot = [...last].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  if (hot.length) lines.push(`最近 ${RECENT_DAYS} 天 AI 改过文件的需求（新的在前）：` + hot.map(([id, t]) => `${id}（${day(t)}）`).join('、'));
+  const said = [];
+  for (const e of store.readChanges(treePath, 500)) {
+    if (e.undone || !['记录员', '你'].includes(e.source)) continue;
+    for (const o of e.ops) {
+      const t = o.op === 'override_rule' ? o.new : (o.op === 'add_rule' || o.op === 'replace_rule') ? o.text : null;
+      if (t && said.length < RECENT_RULES) said.push(`- ${day(e.time)} ${o.node}「${clipChars(t, 40)}」`);
+    }
+  }
+  if (said.length) lines.push('用户最近亲口定下的规则（新的在前；没列出的是更早的，或体检、初始化搬进来的）：\n' + said.join('\n'));
+  return lines.join('\n');
+}
+
+function buildCheckPrompt(tree, memory = '', claudeMd = '', categoryTask = '', docs = '', conflicts = true, context = '') {
   return `你是需求树的体检员。下面是一个项目的需求树（Markdown）：标题是需求，开头是 ID；标题下 "- " 开头的是规则，可带 [键]；下级用和上级同一个 [键] 的规则，是有意在本范围内覆盖上级（不算冲突）。
 
 <需求树>
 ${tree}
 </需求树>
-${memory ? `
+${context ? `
+<时间和正在做的事（判断哪边是现在的说法时参考）>
+${context}
+</时间和正在做的事>
+` : ''}${memory ? `
 <自动记忆（AI 自己记下的笔记，每份一段）>
 ${memory}
 </自动记忆>
@@ -281,7 +327,7 @@ ${conflicts ? `找出说法互相冲突、要用户拍板的规则：上级和�
 - 下级只是更具体、补充了细节；
 - 两条话题相近但管的不是一件事（「组件里不带公式」和「推导收进抽屉」：一个说组件，一个说正文）；
 - 不在同一条上下级链上的两个需求说法不同（比如按文件类型分的「写作」需求和某门课）：范围窄的本来就为准，是有意的例外；
-- 拿不准是不是冲突的。
+- 参考了时间和正在做的事，还是拿不准是不是冲突的。
 宁可少报，不要误报。override_rule 的 from 只能是 node 的上级（标题层级更高、而且是它的祖先）。
 每处冲突写成一个问题：text 是一句简短的问题，说清两条各是什么；options 是 2–3 种处理（label 几个字，ops 是这种处理完整的改动）。常用的：
 - 下级算例外：[{"op":"remove_rule","node":"下级ID","text":"下级原文"},{"op":"override_rule","node":"下级ID","from":"上级ID","text":"上级原文","new":"下级原文"}]
@@ -290,7 +336,7 @@ ${conflicts ? `找出说法互相冲突、要用户拍板的规则：上级和�
 同一个需求里的两条冲突：留后面那条（remove_rule 前面的）、留前面那条（remove_rule 后面的）、两条都留着。写在后面的那条是后来记的（记录员总是往后加），所以默认留后面那条，sure 写 true。
 另外找几个兄弟需求里都有的同一条规则（措辞不同也算），写成同样格式的问题：提到它们共同的上级（每处 remove_rule，再在上级 add_rule），或者不动。上级是最顶上的需求时，只有这条对整个项目都成立才提。
 以「决定：」开头的规则是用户拍板定下的：不要提议删掉或改掉它，除非另一条更新的「决定：」推翻了它。
-default 是最可能的那个选项的序号（从 0 起）。sure 默认写 true，会直接按 default 处理（用户可以撤销），不问用户：同一需求里后写的为准，上下级之间下级算例外，提到上级要明显成立才提。拿不准是不是真冲突写 false（那就什么都不改）。最多 ${MAX_CHECK_QUESTIONS} 个问题。
+default 是最可能的那个选项的序号（从 0 起）。sure 默认写 true，会直接按 default 处理（用户可以撤销），不问用户：同一需求里后写的为准，上下级之间下级算例外，提到上级要明显成立才提。判断时参考「时间和正在做的事」：后定下的为准；和正在进行、最近在改的需求有关的那条是现在在用的说法。只有这些都看不出哪边对、也看不出是不是真冲突时才写 false（那就什么都不改）。最多 ${MAX_CHECK_QUESTIONS} 个问题。
 ` : `这次不用找规则冲突，questions 输出空数组。
 `}${memory ? MEMORY_TASK : ''}${docs ? DOC_TASK : ''}${categoryTask}
 只输出 JSON，不要任何别的文字；没有冲突就输出 {"questions":[]}：
@@ -561,7 +607,7 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   const readText = read || (p => fs.readFileSync(p, 'utf8'));
   const want = { rules: parts.rules !== false, memory: parts.memory !== false && memory !== false, docs: parts.docs !== false };
   const result = { merged: [], stale: [], memory: [], removed: [], scope: [], structure: [], noFiles: [], missing: [], categorized: [], questions: [],
-    docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], toDoc: [], auto: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
+    docs: [], docDup: [], docConflicts: [], docMissing: [], docUnlinked: [], docNoToc: [], toDoc: [], auto: [], checked: { notes: 0, docs: 0, calls: 0, failed: 0 }, error: null };
   const projectDir = path.dirname(treePath);
   const asked = new Set(Q.readQuestions(treePath).map(q => q.memKey).filter(Boolean));
 
@@ -622,22 +668,40 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   let claudeMd = '';
   try { claudeMd = clipChars(fs.readFileSync(path.join(projectDir, 'CLAUDE.md'), 'utf8'), CLAUDE_MD_CHARS); } catch {}
   const Cat = require('./categories');
+  let context = '';
+  try { context = contextBlock(treePath, readText(treePath)); } catch (e) { rec.log('体检参考没生成：' + e.message); }
   const askModel = ask || (p => rec.askJson(p, { timeoutMs: CHECK_TIMEOUT_MS }));
   const failedNames = new Set();
-  let rulesDone = !want.rules;
-  for (let i = 0; i < plan.batches.length; i++) {
+  // 几批同时问模型（最多 CHECK_PARALLEL 个），回来的结果按批的顺序一批批处理：写树、写文档不会互相打架，每处改动照样单独记、单独撤销。
+  // 冲突和分组只查一次：交给最先开始的一批；它出错了，之后才开始的批接着查
+  let rulesTaken = !want.rules;
+  const calls = [];
+  const start = i => {
     const batch = plan.batches[i];
-    // 冲突和分组只查一次：放在第一批，第一批出错就挪到下一批
-    const first = !rulesDone;
-    if (progress) try { progress(i + 1, plan.batches.length); } catch {}
-    try {
+    const first = !rulesTaken;
+    rulesTaken = true;
+    const call = Promise.resolve().then(() => {
       const text = readText(treePath);
       const memSegs = batch.filter(s => s.kind === 'mem'), docSegs = batch.filter(s => s.kind === 'doc');
       const prompt = buildCheckPrompt(text, memSegs.map(s => s.block).join('\n\n'), memSegs.length ? claudeMd : '',
-        first ? Cat.promptTask(text, Cat.read(treePath)) : '', docSegs.map(s => s.block).join('\n\n'), first);
-      const out = await askModel(prompt);
+        first ? Cat.promptTask(text, Cat.read(treePath)) : '', docSegs.map(s => s.block).join('\n\n'), first, context);
+      return Promise.resolve(askModel(prompt)).then(out => ({ out, text, first }));
+    }).catch(e => { if (first) rulesTaken = false; throw e; });
+    // 这一批回来了（不管成没成）就开下一批，保持同时跑的个数
+    call.then(() => {}, () => {}).then(() => { const n = calls.length; if (n < plan.batches.length) calls[n] = start(n); });
+    return call;
+  };
+  while (calls.length < Math.min(CHECK_PARALLEL, plan.batches.length)) calls[calls.length] = start(calls.length);
+  for (let i = 0; i < plan.batches.length; i++) {
+    const batch = plan.batches[i];
+    if (progress) try { progress(i + 1, plan.batches.length); } catch {}
+    try {
+      const r = await (calls[i] || (calls[i] = start(i)));
+      const { out, first } = r;
+      // 分组和冲突针对模型看到的那份树；其余按现在的树处理（前面几批可能已经改过它）
+      const text = first ? r.text : readText(treePath);
+      const memSegs = batch.filter(s => s.kind === 'mem'), docSegs = batch.filter(s => s.kind === 'doc');
       if (first) {
-        rulesDone = true;
         // 规则分类：只改面板的显示方式
         if (out && Array.isArray(out.categories)) try { result.categorized = Cat.save(treePath, text, out.categories); } catch (e) { rec.log('规则分类没存上：' + e.message); }
         const ctx = { root: parse(text), unmapped: [], user: '' };
@@ -720,4 +784,4 @@ async function runCheckup(treePath, { read, write, model = true, ask, memory, pa
   return result;
 }
 
-module.exports = { duplicateOps, buildCheckPrompt, runCheckup, checkPlan, memoryPlan, docPlan, docProblems, scopeProblems, settle, CHECK_OPS };
+module.exports = { duplicateOps, buildCheckPrompt, contextBlock, runCheckup, checkPlan, memoryPlan, docPlan, docProblems, scopeProblems, settle, CHECK_OPS };

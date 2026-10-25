@@ -31,7 +31,6 @@ Claude Code 有一种叫"路径规则"的功能：在项目的 `.claude/rules/` 
 | 问题 | 记录员、体检要改掉一条「决定：」时 | 先不动，问你；别的拿不准都按最可能的直接改（可撤销），由 `decide` 统一判断 | `src/questions.js` |
 | 体检 | 你点"体检"时 | 合并重复、处理矛盾、整理记忆和文档 | `src/checkup.js` |
 | 信息架构 | 体检时（不调用模型） | 没有需求的内容文件夹建需求、挂说明文档、按章的需求只挂那一节、删下级文档里逐字重复上级的条目 | `src/structure.js` |
-| ponytail | 读写代码文件时 | 编成只匹配代码文件的规则 `ponytail.md`，原文照抄（MIT） | `src/ponytail.md`、`src/compile.js` |
 | 代码地图 | 记录员跑完、这一轮改过代码时 | 用正则读代码，记下每块有什么，生成按需加载的地图 | `src/codemap.js` |
 | 界面 | 一直 | 侧栏、导图、详情面板 | `extension.js`、`media/` |
 | Codex 支持 | — | Codex 没有路径规则，改用 `AGENTS.md` 里的索引加补送 | `src/targets/`、`hooks/codex-hook.js` |

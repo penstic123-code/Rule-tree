@@ -131,12 +131,12 @@ test('编译说明：长期要求只记在树里，不要再写进记忆 / CLAUD
   const tree = path.join(dir, '需求树.md');
   compile(tree, { targets: { claude: true, codex: true } });
   const idx = fs.readFileSync(path.join(dir, '.claude', 'rules', 'reqtree', '_index.md'), 'utf8');
-  assert.match(idx, /reqtree:format 11/);
+  assert.match(idx, /reqtree:format 12/);
   assert.match(idx, /不要再写进记忆（memory）或 CLAUDE\.md/);
   assert.match(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8'), /不要再写进记忆（memory）或 AGENTS\.md/);
   // 旧格式的 _index.md 比树新也要重编
   const p = path.join(dir, '.claude', 'rules', 'reqtree', '_index.md');
-  fs.writeFileSync(p, idx.replace('reqtree:format 11', 'reqtree:format 2').replace(/不要再写进记忆.*\n/, ''));
+  fs.writeFileSync(p, idx.replace('reqtree:format 12', 'reqtree:format 2').replace(/不要再写进记忆.*\n/, ''));
   const later = new Date(Date.now() + 60000);
   fs.utimesSync(p, later, later);
   assert.ok(ensureCompiled(tree));

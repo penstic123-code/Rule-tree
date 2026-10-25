@@ -44,14 +44,6 @@ describe('命令', () => {
     await vscode.commands.executeCommand('reqtree.refresh');
   });
 
-  it('reqtree.create 在已有树时只打开它，不覆盖', async () => {
-    const before = read(TREE);
-    await vscode.commands.executeCommand('reqtree.create');
-    await waitFor(() => vscode.window.activeTextEditor && samePath(vscode.window.activeTextEditor.document.uri.fsPath, TREE), '打开需求树.md');
-    assert.strictEqual(read(TREE), before);
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-  });
-
   it('reqtree.enable 在没装 hook 的项目里写 hook，命令指向 REQTREE_HOME', async () => {
     const settings = path.join(WS, '.claude', 'settings.local.json');
     assert.ok(!fs.existsSync(settings), '开始时不应有 settings.local.json');
@@ -68,6 +60,14 @@ describe('命令', () => {
     await vscode.commands.executeCommand('reqtree.enable');
     const s2 = JSON.parse(read(settings));
     for (const ev of events) assert.strictEqual(s2.hooks[ev].length, 1, '重复启用后 hook 重复了：' + ev);
+  });
+
+  it('reqtree.create 在已有树、已启用时只打开它，不覆盖', async () => {
+    const before = read(TREE);
+    await vscode.commands.executeCommand('reqtree.create');
+    await waitFor(() => vscode.window.activeTextEditor && samePath(vscode.window.activeTextEditor.document.uri.fsPath, TREE), '打开需求树.md');
+    assert.strictEqual(read(TREE), before);
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   });
 
   it('reqtree.openMap 打开导图标签页；再执行一次不开第二个', async () => {

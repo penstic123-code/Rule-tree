@@ -509,12 +509,12 @@ async function main(jobPath) {
   // 状态只是给面板看的。树已经改好了、只是状态写不进去（state.lock 一直被占）时，不能把这一轮说成出错
   try { store.writeRecorderStatus(treePath, status); }
   catch (e) { log(`面板状态没写进去（${e.message}）${status.ok ? '；这一轮的改动已经写进需求树' : ''}`); }
-  // 代码地图：从没建过，或者这一轮 AI 改了文件、离上次超过 2 分钟，就在这里（后台）重建
+  // 代码地图：从没建过、需求的编号或文件范围变了，或者这一轮 AI 改了文件、离上次超过 2 分钟，就在这里（后台）重建
   try {
     const codemap = require('../src/codemap');
     const last = codemap.lastBuilt(treePath);
     const edited = touched.length || unmapped.length;
-    if (!last || (edited && Date.now() - last > MAP_EVERY_MS)) {
+    if (!last || codemap.scopesChanged(treePath) || (edited && Date.now() - last > MAP_EVERY_MS)) {
       const r = codemap.refresh(treePath);
       log(`代码地图：看了 ${r.files} 个文件，${r.nodes.length} 个需求有地图，改了 ${r.written.length} 份，用时 ${r.ms} ms`);
     }

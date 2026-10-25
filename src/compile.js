@@ -20,7 +20,7 @@ const OUT_DIR = path.join('.claude', 'rules', 'reqtree');
 const MARK = '<!-- reqtree:generated -->';
 // 生成格式的版本，写在 _index.md 里。编译的输出或说明文字变了就加 1：ensureCompiled 只比时间，
 // 旧版本生成的文件可能比树还新，不看版本的话升级后会一直留着过时的说明（比如「标 🆕，等用户确认」）
-const FORMAT = '<!-- reqtree:format 11 -->';
+const FORMAT = '<!-- reqtree:format 12 -->';
 
 // 节点的生效范围：自己的 files，或最近上级的；都没有返回 null（全局）
 function scopeOf(node) {
@@ -63,18 +63,9 @@ function compileNode(node, treeName, projectDir) {
 }
 
 // 动手原则（config 的 principles，默认开）：不重复造轮子、遇到 bug 先找根因。借鉴 ponytail 的「阶梯」，见 docs/design-info-architecture.md 第四节
-const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②不要光照用户说的做：用户的新要求和项目的实际情况、以后好不好维护有冲突时，先指出问题、给出建议，用户拍板后再动手。别的事不问：已有的记录之间说法不同、做法细节、能撤销的改动，自己按最新的指令定，做完告诉用户改了什么。③写代码时照 ponytail 规则（改到代码文件时自动加载）：先看真需要吗、项目里有没有、标准库和已装的依赖能不能做，最后才写最少能用的代码。';
-
-// ponytail（src/ponytail.md，MIT）：只在读写代码文件时加载，写课程正文、文档时不占上下文。
-// 列出常见代码后缀，不扫项目（编译在 hook 里同步跑，要快）；html、css 不算（多是内容和样式）
-const CODE_EXTS = ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'vue', 'svelte', 'py', 'gd', 'cs', 'go', 'rs', 'java', 'kt', 'swift', 'rb', 'php', 'c', 'cc', 'cpp', 'h', 'hpp', 'lua', 'dart', 'sh', 'ps1'];
-function compilePonytail() {
-  let text = '';
-  try { text = fs.readFileSync(path.join(__dirname, 'ponytail.md'), 'utf8'); } catch { return null; }
-  const body = text.split(/^---8<---$/m)[0].replace(/^<!--[\s\S]*?-->\s*/, '').trim();
-  return ['---', 'paths:', ...CODE_EXTS.map(e => `  - "**/*.${e}"`), '---', MARK,
-    '<!-- 来自 ponytail（https://github.com/DietrichGebert/ponytail），MIT License，Copyright (c) 2026 DietrichGebert -->', '', body, ''].join('\n');
-}
+const PRINCIPLES = '动手原则：①遇到 bug 先找根因：规则互相矛盾、架构不合理、系统之间冲突的，先解决这些，不在表面打补丁。②不要光照用户说的做：用户的新要求和项目的实际情况、以后好不好维护有冲突时，先指出问题、给出建议，用户拍板后再动手。别的事不问：已有的记录之间说法不同、做法细节、能撤销的改动，自己按最新的指令定，做完告诉用户改了什么。③写代码：先看真需要吗、项目里有没有、标准库和已装的依赖能不能做，最后才写最少能用的代码，不加没人要的抽象、选项和"以后用"的代码；改动要做全，调用方、测试、配置一起改，新的非平凡逻辑留一个小测试，修 bug 先写能复现它的测试；只改任务要改的，旁边看到的问题说出来，不顺手改；校验、防丢数据的错误处理、安全、无障碍不省；做完说清没做的、没查的和风险。';
+// 0.18.0 曾把 ponytail 原文（英文约 3200 字）编成只在代码文件上加载的规则：一半和这里重复，
+// 而且新建第一个代码文件时它跟着写文件的结果才到（已经写完了）。2026-10-25 用户定：缺的几条并进 ③，不再单独加载
 
 // 全局说明：告诉 AI 这套东西怎么用。不写 paths，每次都加载，保持很短。
 // opts.principles：写不写动手原则；opts.who：查名字的命令说明（代码地图生成过才有）
@@ -144,8 +135,6 @@ function compileClaude(treePath) {
   const root = parse(fs.readFileSync(treePath, 'utf8'));
   const opts = indexOpts(projectDir);
   const files = new Map([['_index.md', compileIndex(root, treeName, opts)]]);
-  const pony = opts.principles ? compilePonytail() : null;
-  if (pony) files.set('ponytail.md', pony);
   for (const n of walk(root)) {
     const text = compileNode(n, treeName, projectDir);
     if (text) files.set(`${n.id}.md`, text);

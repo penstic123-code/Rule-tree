@@ -233,10 +233,16 @@ async function checkFix(file, { model, memoryOn = true, full = false }) {
   if (r.noFiles.length) console.log(`提醒：${r.noFiles.join('、')} 有规则，可它们和上级都没有对应的文件，这些规则不会自动加载给 AI`);
   if (r.categorized.length) console.log(`给 ${r.categorized.join('、')} 的规则分了组（只改面板上的显示）`);
   for (const m of r.missing) console.log(`提醒：${m.node} ${m.title} 标着进行中，可对应的文件（${m.globs.join(', ')}）一个也找不到`);
+  for (const d of r.docNoToc || []) console.log(`提醒：${d.doc}（${d.node}）有 ${d.chars} 字，却没有分节标题，AI 每次只能整份读；加几个「## 标题」就能按节读`);
   for (const d of r.docMissing) console.log(`提醒：${d.node} 挂的文档 ${d.doc} 找不到`);
   for (const d of r.docUnlinked) console.log(`提醒：${d.doc} 在 ${d.node} 的文件夹里，却没挂上（在需求下写「> 文档：${d.doc}」）`);
   for (const a of r.auto || []) console.log(`直接处理：${a.text}${a.options ? ` → ${a.options[a.default].label}` : ''}（可以撤销）`);
-  for (const d of r.docDup) console.log(`文档里和需求树重复、没法自动删的（表格里、带子项或找不准）：${d.doc}「${d.text}」（树里在 ${d.node}）`);
+  // 按文档汇总：大项目会有几十处（多半是表格里的半句），逐条打出来淹没了别的；明细在面板的体检报告里
+  if (r.docDup.length) {
+    const byDoc = new Map();
+    for (const d of r.docDup) byDoc.set(d.doc, (byDoc.get(d.doc) || 0) + 1);
+    console.log(`文档里还留着 ${r.docDup.length} 处规则，需求树里已经有了（在表格里、带子项，或只是长句里的半句，没有自动删；留着不影响）：${[...byDoc].map(([f, n]) => `${f} ${n} 处`).join('、')}`);
+  }
   for (const d of r.toDoc) console.log(`记忆 ${d.file} 像是 ${d.node} 的经验或进度，建议挪进${d.docs.length ? ` ${d.docs[0]}` : '它的文档'}`);
   const asked = [...r.stale, ...r.scope, ...r.structure, ...r.memory, ...r.questions, ...r.docs];
   for (const q of asked) printQuestion(q);

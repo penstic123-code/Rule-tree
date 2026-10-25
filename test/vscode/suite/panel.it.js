@@ -1,6 +1,6 @@
 'use strict';
-// 工作区一开始没有树：先包住 registerWebviewViewProvider 再复制树、用命令触发激活，拿到插件里的 Panel 实例。
-// （测试文件在插件目录里，require('vscode') 和插件拿到的是同一个 API 对象，所以包得住。）
+// 工作区一开始没有树：插件照样在启动后激活（onStartupFinished），从 activate 的返回值拿到 Panel 实例，
+// 包住它的消息处理和 resolveWebviewView，再复制树进来。
 // 测：侧栏 webview 真的加载（网页脚本在 CSP 下跑起来并发回 ready）、导图同样、面板消息处理（加规则 / 撤销 / 删除 /
 // 编辑器有未保存改动时写树等）。弹框（输入框、确认框、选择框）用替身返回固定答案。
 const assert = require('assert');
@@ -22,31 +22,24 @@ function unstubAll() { while (stubs.length) { const [n, f] = stubs.pop(); vscode
 const send = msg => panel.handle({ uri, ...msg });
 const treeText = () => read(TREE);
 
-describe('激活前接管（工作区里起初没有树）', () => {
-  it('没有树时插件没被自动激活', () => {
+describe('启动后接管（工作区里起初没有树）', () => {
+  it('没有树时插件照样启动（onStartupFinished），不编译、不建树', async () => {
+    const ext = vscode.extensions.getExtension(EXT_ID);
+    await waitFor(() => ext.isActive, '插件启动后激活');
     assert.ok(!fs.existsSync(TREE));
-    assert.ok(!vscode.extensions.getExtension(EXT_ID).isActive, '不该在没有树的工作区自动激活');
+    assert.ok(!fs.existsSync(RULES), '没有树时不该编译');
   });
 
-  it('包住 registerWebviewViewProvider，复制树，用 reqtree.refresh 触发激活', async () => {
-    const orig = vscode.window.registerWebviewViewProvider;
-    const wrapped = function (id, provider, opts) {
-      if (id === 'reqtree.panel') {
-        panel = provider;
-        const handle = provider.handle.bind(provider);
-        provider.handle = msg => { messages.push(msg); return handle(msg); };
-        const resolve = provider.resolveWebviewView.bind(provider);
-        provider.resolveWebviewView = (view, ...rest) => { resolved = view; return resolve(view, ...rest); };
-      }
-      return orig.call(this, id, provider, opts);
-    };
-    vscode.window.registerWebviewViewProvider = wrapped;
-    assert.strictEqual(vscode.window.registerWebviewViewProvider, wrapped, '替换不了 vscode.window 上的函数');
+  it('从 activate 的返回值拿到 Panel，包住消息处理；复制树后 Panel 找到树', async () => {
+    panel = vscode.extensions.getExtension(EXT_ID).exports.panel;
+    assert.ok(panel && typeof panel.handle === 'function', 'exports.panel');
+    const handle = panel.handle.bind(panel);
+    panel.handle = msg => { messages.push(msg); return handle(msg); };
+    // 侧栏还没打开过，VS Code 打开时才 resolve，这时包住来得及
+    const resolve = panel.resolveWebviewView.bind(panel);
+    panel.resolveWebviewView = (view, ...rest) => { resolved = view; return resolve(view, ...rest); };
     fs.copyFileSync(process.env.RT_EXAMPLE, TREE);
-    await vscode.commands.executeCommand('reqtree.refresh'); // onCommand 隐式激活
-    const ext = vscode.extensions.getExtension(EXT_ID);
-    await waitFor(() => ext.isActive && panel, '插件激活并拿到 Panel');
-    vscode.window.registerWebviewViewProvider = orig;
+    await vscode.commands.executeCommand('reqtree.refresh');
     await waitFor(() => panel.trees.length === 1, 'Panel 找到树');
     uri = panel.trees[0].uri;
     assert.ok(samePath(panel.trees[0].path, TREE));
@@ -200,16 +193,6 @@ describe('面板消息处理（真实 VS Code API + 弹框替身）', () => {
     const ed = vscode.window.activeTextEditor;
     assert.ok(ed && samePath(ed.document.uri.fsPath, TREE));
     assert.strictEqual(ed.selection.active.line, line);
-  });
-
-  it('copy：把生效规则（含继承）复制到剪贴板', async () => {
-    stub('showInformationMessage', async () => {});
-    await panel.load(); // copy 用 panel.trees 里的 text
-    await send({ type: 'copy', key: `${uri}#R3.2` });
-    const clip = await vscode.env.clipboard.readText();
-    assert.match(clip, /^# P 示例课程 → R3 第1章 → R3\.2 开场故事/);
-    assert.ok(clip.includes('[段落] 开场故事的段落可以到 6 行'));
-    assert.ok(clip.includes('开场用勇士爬塔的故事'), '应含上级 R3 的规则');
   });
 
   it('setConfig：暂停记录员写进 .reqtree/config.json', async () => {

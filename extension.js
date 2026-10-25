@@ -360,6 +360,7 @@ class Panel {
     if (r.noFiles && r.noFiles.length) notes.push(T('q.noFiles', r.noFiles));
     if (r.missing && r.missing.length) notes.push(T('q.missing', r.missing));
     if (r.docMissing && r.docMissing.length) notes.push(T('q.docMissing', r.docMissing));
+    if (r.docNoToc && r.docNoToc.length) notes.push(T('q.docNoToc', r.docNoToc));
     if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
     if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
     if (r.docConflicts && r.docConflicts.length) notes.push(T('q.docConflicts', r.docConflicts));

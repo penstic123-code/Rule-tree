@@ -204,6 +204,117 @@ test('体检分批：某一批出错（如超时）不停下，后面的批照�
   assert.ok(checkPlan(tree, { parts }).docs.some(d => d.name === 'c/_CHAPTERS.md'), '出错那份下次再看');
 });
 
+test('挂的文档很长却没有分节标题：体检提醒加标题（有标题的、短的不提醒）', () => {
+  const { dir, tree } = project();
+  fs.writeFileSync(path.join(dir, 'c', '_CHAPTERS.md'), '# 长\n' + '没有标题的一大段说明。'.repeat(800));
+  fs.writeFileSync(path.join(dir, 'd', 'notes.md'), '# 笔记\n\n## 一\n' + '有标题。'.repeat(1000) + '\n\n## 二\n内容\n');
+  fs.writeFileSync(tree, '# P x\n\n## C1 课\n> 文件：c/**\n> 文档：c/_CHAPTERS.md, c/README.md\n\n## D1 课\n> 文件：d/**\n> 文档：d/notes.md\n');
+  assert.deepStrictEqual(docProblems(fs.readFileSync(tree, 'utf8'), dir, tree).docNoToc.map(d => d.doc), ['c/_CHAPTERS.md']);
+});
+
+test('体检的参考：进行中的需求、最近改过文件的需求（按现在的树算）、用户最近定下的规则带日期；写进提示词', () => {
+  const { contextBlock, buildCheckPrompt } = require('../src/checkup');
+  const { dir, tree } = project();
+  fs.writeFileSync(tree, '# P x\n\n## C1 第一课 🔨\n> 文件：c/**\n- 每章配图\n\n## D1 第二课\n> 文件：d/**\n');
+  store.appendActivity(tree, { node: 'R9', file: 'c/ch01.html', time: Date.now() });
+  store.applyChange(tree, [{ op: 'add_rule', node: 'D1', text: '例子用本地的' }], { source: '记录员' });
+  const ctx = contextBlock(tree, fs.readFileSync(tree, 'utf8'));
+  assert.match(ctx, /标着进行中的需求：C1 第一课/);
+  assert.match(ctx, /改过文件的需求（新的在前）：C1（\d{4}-\d\d-\d\d）/, '旧编号 R9 按文件算成 C1');
+  assert.match(ctx, /- \d{4}-\d\d-\d\d D1「例子用本地的」/);
+  const p = buildCheckPrompt(fs.readFileSync(tree, 'utf8'), '', '', '', '', true, ctx);
+  assert.match(p, /<时间和正在做的事[^>]*>\n标着进行中的需求/);
+  assert.match(p, /后定下的为准；和正在进行、最近在改的需求有关的那条是现在在用的说法/);
+});
+
+test('程序运行时读的 .md（同文件夹的代码用字符串写着它的名字）：初始化不挂、体检不看不改、不提醒没挂', () => {
+  const { docProblems } = require('../src/checkup');
+  const { gather } = require('../src/init');
+  const { dir, tree } = project();
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src', 'build.js'), "const t = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');\n");
+  fs.writeFileSync(path.join(dir, 'src', 'prompt.md'), '# 提示词\n- 每次回答都要先列出改动范围\n');
+  fs.writeFileSync(path.join(dir, 'src', 'notes.md'), '# 笔记\n');
+  fs.writeFileSync(tree, '# P x\n\n## S1 代码\n> 文件：src/**\n> 文档：src/prompt.md\n- 加注释\n');
+  assert.ok(Docs.isProgramData(dir, 'src/prompt.md'));
+  assert.ok(!Docs.isProgramData(dir, 'src/notes.md'));
+  assert.ok(!checkPlan(tree, { parts: { rules: false, memory: false, docs: true } }).docs.some(d => d.name === 'src/prompt.md'), '体检不看');
+  fs.writeFileSync(tree, '# P x\n\n## S1 代码\n> 文件：src/**\n- 加注释\n');
+  assert.deepStrictEqual(docProblems(fs.readFileSync(tree, 'utf8'), dir, tree).docUnlinked.map(d => d.doc), ['src/notes.md']);
+  const g = gather(dir);
+  assert.ok(g.data.has('src/prompt.md') && !g.data.has('src/notes.md'));
+  assert.ok(!g.docs.includes('src/prompt.md'), '不进给模型的文档清单');
+});
+
+test('文档里删掉的行撤销时插回原位：只撤中间一处、从新到旧全撤、删了以后上面又加了几行', async () => {
+  const store = require('../src/store');
+  const { dir, tree } = project();
+  const doc = path.join(dir, 'c', '项目规则与经验.md');
+  const original = '# 经验\n\n- 第一条要求写在这里\n- 第二条要求写在这里\n- 第三条要求写在这里\n- 第四条要求写在这里\n';
+  const removeAll = async () => {
+    fs.writeFileSync(doc, original);
+    for (const t of ['第二条要求写在这里', '第三条要求写在这里', '第四条要求写在这里'])
+      assert.ok((await store.applyChange(tree, [{ op: 'doc_remove', file: 'c/项目规则与经验.md', text: t }], { source: '体检' })).length);
+    assert.strictEqual(fs.readFileSync(doc, 'utf8'), '# 经验\n\n- 第一条要求写在这里\n');
+    return store.readChanges(tree).filter(e => e.source === '体检' && !e.undone).map(e => e.id).slice(0, 3); // 最新的在前
+  };
+  let ids = await removeAll();
+  assert.ok(await store.undoChange(tree, ids[1])); // 只撤第三条
+  assert.strictEqual(fs.readFileSync(doc, 'utf8'), '# 经验\n\n- 第一条要求写在这里\n- 第三条要求写在这里\n');
+  for (const id of [ids[0], ids[2]]) assert.ok(await store.undoChange(tree, id));
+  ids = await removeAll();
+  for (const id of ids) assert.ok(await store.undoChange(tree, id)); // 从新到旧
+  assert.strictEqual(fs.readFileSync(doc, 'utf8'), original);
+  ids = await removeAll();
+  fs.writeFileSync(doc, '# 经验\n\n新加的说明一\n新加的说明二\n\n- 第一条要求写在这里\n');
+  for (const id of ids) assert.ok(await store.undoChange(tree, id));
+  assert.strictEqual(fs.readFileSync(doc, 'utf8'), '# 经验\n\n新加的说明一\n新加的说明二\n\n' + original.split('\n\n')[1]);
+});
+
+test('体检分批：不止一批时冲突和分组单独查一次；几批同时问模型（最多 3 个），结果按批的顺序处理', async () => {
+  const { dir, tree } = project();
+  fs.writeFileSync(path.join(dir, 'c', '_CHAPTERS.md'), '# 长\n' + '第N章的进度记录。'.repeat(8000));
+  const parts = { rules: true, memory: false, docs: true };
+  const plan = checkPlan(tree, { parts });
+  assert.deepStrictEqual(plan.batches[0], [], '第一批只查冲突和分组');
+  assert.ok(plan.calls >= 4, `calls=${plan.calls}`);
+  let running = 0, most = 0;
+  const prompts = [], order = [];
+  const r = await runCheckup(tree, { memory: false, parts, progress: i => order.push(i),
+    ask: async p => {
+      prompts.push(p);
+      running++; most = Math.max(most, running);
+      await new Promise(res => setTimeout(res, 30));
+      running--;
+      return { docs: [], questions: [] };
+    } });
+  assert.strictEqual(most, 3, '同时跑 3 批');
+  assert.strictEqual(prompts.length, plan.calls);
+  const conflict = prompts.filter(p => /说法互相冲突、要用户拍板/.test(p));
+  assert.strictEqual(conflict.length, 1, '冲突只查一次');
+  assert.ok(!/第N章的进度记录/.test(conflict[0]), '查冲突那次不带文档正文');
+  assert.deepStrictEqual(order, plan.batches.map((_, i) => i + 1));
+  assert.strictEqual(r.checked.failed, 0);
+  // 只有一批：冲突和分组跟它一起查，只调用一次
+  const small = project();
+  assert.strictEqual(checkPlan(small.tree, { parts }).calls, 1);
+});
+
+test('体检分批：查冲突的那次出错，之后才开始的批接着查', async () => {
+  const { dir, tree } = project();
+  fs.writeFileSync(path.join(dir, 'c', '_CHAPTERS.md'), '# 长\n' + '第N章的进度记录。'.repeat(8000));
+  const parts = { rules: true, memory: false, docs: true };
+  const conflictPrompts = [];
+  await runCheckup(tree, { memory: false, parts,
+    ask: async p => {
+      const rules = /说法互相冲突、要用户拍板/.test(p);
+      if (rules) conflictPrompts.push(p);
+      if (rules && conflictPrompts.length === 1) throw new Error('调用模型超时');
+      return { docs: [], questions: [], categories: [] };
+    } });
+  assert.strictEqual(conflictPrompts.length, 2, '第一次出错后，后面开始的一批接着查');
+});
+
 test('新项目的第一棵树按最上一层的文件夹生成（文件多的在前）；没有子文件夹时退回模板', () => {
   const store = require('../src/store');
   const dir = fs.mkdtempSync(path.join(SANDBOX, 'init-'));
