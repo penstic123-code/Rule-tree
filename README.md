@@ -1,6 +1,6 @@
 # RuleTree 需求树
 
-一套为 AI 编程设计的信息架构：规则、文档、代码地图各归其位，一直替你理好，AI 改哪个文件，就只读哪个文件的规则。
+一套为 AI 编程设计的优秀信息架构：规则、文档、代码地图各归其位，一直替你理好，AI 改哪个文件，就只读哪个文件的规则。
 
 给 [Claude Code](https://claude.com/claude-code) 和 [OpenAI Codex](https://developers.openai.com/codex) 用的 VS Code 插件。[English](README.en.md) | 中文
 
