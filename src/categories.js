@@ -1,21 +1,21 @@
 'use strict';
-// 规则分类：只改面板的显示方式，需求树.md 不动。
-// 体检时模型给规则多的需求（MIN_RULES 条以上）分组，比如「画风」「写作」「互动」「工作流」，存在 .reqtree/categories.json：
+// 规则分类：只改面板的显示方式，规则文件不动。
+// 体检时模型给规则多的需求（MIN_RULES 条以上）分组，比如「画风」「写作」「互动」「工作流」，存在 .ruletree/categories.json：
 //   { "<需求 ID>": { "<规则文字（norm 后）>": "分类名" } }
 // 面板按分类显示这些需求的规则。规则后来被改写、对不上了，就显示在「其他」里，下次体检再分。
 // 分类不影响规则怎么加载、怎么记，只是给人看的
 const fs = require('fs');
 const store = require('./store');
-const { parse, walk, findById, norm } = require('./parser');
+const { walk, findById, norm } = require('./tree');
 
 const FILE = 'categories.json';
 const MIN_RULES = 6; // 规则少于这么多条的需求不分组，一眼就能看完
 const MAX_GROUPS = 8;
 const MAX_NAME = 8; // 分类名最多几个字
 
-function read(treePath) {
+function read(dir) {
   try {
-    const v = JSON.parse(fs.readFileSync(store.metaFile(treePath, FILE), 'utf8'));
+    const v = JSON.parse(fs.readFileSync(store.metaFile(dir, FILE), 'utf8'));
     return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
   } catch { return {}; }
 }
@@ -30,13 +30,12 @@ function names(cats) {
   return [...out];
 }
 
-// 模型给的分组 [{ node, groups: [{ name, rules: [规则序号] }] }] → 写进 categories.json。序号是 promptTask 列出的、这个需求里第几条（从 1 起）；
-// 也认树里原文。2026-10-25：原来让模型抄原文，小猪进城记 285 条规则光输出就超过 300 秒，体检超时
+// 模型给的分组 [{ node, groups: [{ name, rules: [规则序号] }] }] → 写进 categories.json。序号是这个需求里第几条（从 1 起）；
+// 也认原文。2026-10-25：原来让模型抄原文，小猪进城记 285 条规则光输出就超过 300 秒，体检超时
 // 需求要在树里、规则够多；规则文字对不上的跳过；分类名太长截掉。模型这次分了的需求整个换掉，没分的保留原来的；
-// 树里已经没有的需求顺手删掉。返回分了组的需求 ID
-function save(treePath, text, list) {
-  const root = parse(text);
-  const cats = read(treePath);
+// 树里已经没有的需求顺手删掉。返回分了组的需求编号
+function save(dir, root, list) {
+  const cats = read(dir);
   const done = [];
   for (const item of Array.isArray(list) ? list : []) {
     if (!item || typeof item.node !== 'string' || !Array.isArray(item.groups)) continue;
@@ -58,20 +57,11 @@ function save(treePath, text, list) {
   }
   const ids = new Set([...walk(root)].map(n => n.id).filter(Boolean));
   for (const id of Object.keys(cats)) if (!ids.has(id)) delete cats[id];
-  if (done.length) store.writeJson(store.metaFile(treePath, FILE), cats);
+  if (done.length) store.writeJson(store.metaFile(dir, FILE), cats);
   return done;
 }
 
-// 体检提示词里的这一段：哪些需求要分组、已有的分类名。only：只给这几个需求分（规则变了的；没分过组的也算）
-function promptTask(text, cats, only = null) {
-  const big = [...walk(parse(text))].filter(n => n.id && n.rules.length >= MIN_RULES && (!only || only.has(n.id) || !(cats && cats[n.id])));
-  if (!big.length) return '';
-  const used = names(cats);
-  const clip = s => { const a = [...s]; return a.length > 60 ? a.slice(0, 60).join('') + '…' : s; };
-  return `
-另外给规则多的需求的规则分组，在面板上分类显示，不改规则本身。每个需求分 2–${MAX_GROUPS} 组，组名 2–4 个字，说清这组管什么（例：画风、写作、互动、练习、工作流、技术），用需求树的语言；同一个意思在全项目用同一个组名${used.length ? `，已有的组名尽量沿用：${used.join('、')}` : ''}。每条规则都放进一组，rules 里只写下面的序号，不抄原文。写进 categories。
-${big.map(n => `${n.id}：${n.rules.map((r, i) => `${i + 1}. ${clip(r.text)}`).join('  ')}`).join('\n')}
-`;
-}
+// 要分组的需求（规则够多），only：只要这几个（规则变了的；没分过组的也算）
+const needGroups = (root, cats, only = null) => [...walk(root)].filter(n => n.id && n.rules.length >= MIN_RULES && (!only || only.has(n.id) || !(cats && cats[n.id])));
 
-module.exports = { FILE, MIN_RULES, read, catOf, names, save, promptTask };
+module.exports = { FILE, MIN_RULES, MAX_GROUPS, read, catOf, names, save, needGroups };

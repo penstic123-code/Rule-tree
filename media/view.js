@@ -86,12 +86,11 @@
       if (p) { branch = new Set(p.map(n => n.key)); D.walkNodes([hit.n], n => branch.add(n.key)); }
     }
 
-    let html = data.files.map(f => D.alertsHtml(f, data.now)).join('');
-    const lastFile = data.files.filter(f => f.recorder && f.recorder.ok).sort((a, b) => b.recorder.time - a.recorder.time)[0];
-    const last = lastFile && lastFile.recorder;
-    const cfg = data.files[0].config || {};
-    const paused = cfg.recorder === 'off';
-    html += `<div class="statusbar"><span class="status" title="${T('v.recTip')}">${paused ? T('v.recPaused') : last ? esc(T('v.recLast', ago(last.time), D.recorderText(last, lastFile, showIds))) : T('v.recNever')}</span>
+    let html = data.files.map(f => D.alertsHtml(f)).join('');
+    // 状态栏：最近一次改规则的是谁、改了什么（AI 记规则后在这里一眼看到）
+    const lastFile = data.files.filter(f => f.changes && f.changes[0]).sort((a, b) => b.changes[0].time - a.changes[0].time)[0];
+    const last = lastFile && lastFile.changes[0];
+    html += `<div class="statusbar"><span class="status" title="${T('v.lastTip')}">${last ? esc(T('v.last', D.sourceName(last.source), ago(last.time), (D.changeLines(last, lastFile, showIds)[0] || ''))) : T('v.noChanges')}</span>
       <button class="ibtn mapbtn" data-act="checkup" title="${T('v.checkupTip')}">${D.icon('check', 14)}${T('v.checkup')}</button>
       <button class="ibtn mapbtn" data-act="openMap" title="${T('v.mapTip')}">${D.icon('map', 14)}${T('v.map')}</button>
       <button class="ibtn gear" data-act="settings" data-uri="${esc(data.files[0].uri)}" title="${T('v.settings')}" aria-label="${T('v.settings')}">${D.icon('gear', 15)}</button></div>`;
@@ -319,21 +318,10 @@
       { label: T('v.clearStatus'), data: { s: '' }, run: () => post({ type: 'edit', action: 'setStatus', uri, node: n.id, status: '' }) }], { label: T('d.status'), cls: 'st-menu' });
   }
 
-  // 设置菜单：只放真正需要用户取舍的开关。记下的要求一律直接生效，记错了在「最近改动」里撤销
+  // 设置菜单：显示方式、上下文用量、体检报告、停用。改动一律直接生效，记错了在「最近改动」里撤销
   function openSettings(anchor, uri) {
-    const cfg = data.files.find(f => f.uri === uri)?.config || {};
-    // 记录频率：每轮 / 每 3 轮（攒起来一起记）/ 暂停。设置只在这里改（写进项目的 .reqtree/config.json，hook 读那里）
-    const every = Number(cfg.recordEvery) || 1, off = cfg.recorder === 'off';
-    const flag = (key, label) => ({ label, checked: cfg[key] !== false, toggle: true, run: () => post({ type: 'setConfig', uri, patch: { [key]: cfg[key] === false } }) });
-    // 开关多了一级放不下：按管什么分成三组二级菜单，常用的报告和停用留在第一级
     D.showMenu(anchor, [
-      { label: T('v.grpRecorder'), sub: [
-        ...[[1, T('v.recTurn'), !off && every === 1], [3, T('v.recEvery', 3), !off && every === 3], [0, T('v.recOff'), off]]
-          .map(([n, label, on]) => ({ label, checked: on, radio: true, data: { v: String(n) }, run: () => post({ type: 'setConfig', uri, patch: n ? { recorder: 'turn', recordEvery: n } : { recorder: 'off' } }) })),
-        flag('aiFindings', T('v.aiFindings')),
-        flag('askUnsure', T('v.askUnsure')),
-        { label: T('v.questions'), run: () => post({ type: 'questions' }) }] },
-      { label: T('v.grpAi'), sub: [flag('codeMap', T('v.codeMap')), flag('principles', T('v.principles')), { label: T('ctx.menu'), run: () => openContext(uri) }] },
+      { label: T('ctx.menu'), run: () => openContext(uri) },
       // 跟随 AI 默认开着，开关放在设置里（以前在顶栏占一个大按钮，用户觉得没必要）
       { label: T('v.grpView'), sub: [
         { label: T('follow'), checked: follow, toggle: true, run: () => { follow = !follow; persist(); } },

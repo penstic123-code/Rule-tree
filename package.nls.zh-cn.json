@@ -1,6 +1,6 @@
 {
   "displayName": "需求树 RuleTree",
-  "description": "一套为 AI 编程设计的信息架构：规则、文档、代码地图各归其位，一直替你理好，AI 改哪个文件，就只读哪个文件的规则。",
+  "description": "规则文件就是需求树：每个需求一个文件，AI 改哪个文件，Claude Code 就只加载管这个文件的规则；面板上看、改、撤销。",
   "view.container": "需求树",
   "view.panel": "需求树",
   "cmd.create": "需求树：新建",
@@ -12,16 +12,10 @@
   "config.language.auto": "跟 VS Code 的显示语言走",
   "config.language.zh": "中文",
   "config.language.en": "英文",
-  "cmd.questions": "需求树：待回答的问题",
   "cmd.checkup": "需求树：体检",
-  "cmd.reorganize": "需求树：重新整理（AI）",
   "cmd.checkupReport": "需求树：查看体检报告",
-  "config.askQuestions": "你的新说法和一条「决定：」对不上时，先不动那条决定，问你。别的拿不准的按最可能的记下，不问。",
-  "config.askQuestions.notify": "弹通知问（不挡操作）",
-  "config.askQuestions.panel": "只在侧栏图标上显示个数，用「需求树：待回答的问题」回答",
-  "config.askQuestions.off": "不问，就按记录员的判断",
   "config.memoryMode": "需求树和 Claude Code 自动记忆怎么分工。",
-  "config.memoryMode.dedupe": "分工（默认）：项目的规则记在需求树；自动记忆只记和项目内容无关的事（你本人、工具和电脑环境、服务器账号等私人信息）。AI 把规则写进记忆时，记录员把它收进树；体检时删掉已在树里的记忆，其余的按分工挪到该去的地方",
-  "config.memoryMode.treeOnly": "关掉这个项目的自动记忆（在 .claude/settings.local.json 写 \"autoMemoryEnabled\": false），只用需求树。工具、电脑环境和私人信息这类笔记就没地方记了",
-  "cmd.disable": "需求树：在本项目停用"
+  "config.memoryMode.treeOnly": "关掉这个项目的自动记忆（在 .claude/settings.local.json 写 \"autoMemoryEnabled\": false），只用需求树",
+  "cmd.disable": "需求树：在本项目停用",
+  "config.memoryMode.keep": "默认：不动自动记忆。说明书已经告诉 AI 项目规则只记在需求树里，记忆只记和项目无关的事"
 }

@@ -1,20 +1,17 @@
 'use strict';
-// hook、记录员、编译、点名补规则都要用的几样小东西，只写一份
+// hook、命令行、插件都要用的几样小东西，只写一份
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// 会话状态、任务文件、hook.log、recorder.log 放在系统临时目录下的 reqtree/
-const tmpDir = () => path.join(os.tmpdir(), 'reqtree');
-
-// 最上层的需求（根节点 P 一类）：它的规则全局生效
-const isRoot = node => !node.parent || !node.parent.parent;
+// hook.log 放在系统临时目录下的 ruletree/
+const tmpDir = () => path.join(os.tmpdir(), 'ruletree');
 
 // 改文件的工具。只跟踪这几个，不跟踪 Bash（每条命令都启动一次 node 不划算）
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
 // git worktree 是同一个项目的另一份检出：根目录下的 .git 是个文件，写着「gitdir: <主仓库>/.git/worktrees/<名字>」。
-// 需求树.md 一般不进 git，worktree 里没有，要回主仓库找。dir 是 worktree 的根时返回主仓库目录，否则 null
+// 规则文件进 git，worktree 里有自己的一份；.ruletree/（改动记录、活动日志）不进 git，只在主仓库。dir 是 worktree 的根时返回主仓库目录，否则 null
 function worktreeMain(dir) {
   let t;
   try { t = fs.readFileSync(path.join(dir, '.git'), 'utf8'); } catch { return null; }
@@ -39,14 +36,17 @@ function worktreesOf(mainDir) {
   return out;
 }
 
-// 从 dir 往上找需求树，到 git 根为止（Claude Code 和 Codex 都可能在子目录里启动）；git 根是 worktree 时到主仓库找
-function findTreeUp(dir) {
-  const { findTree } = require('./store');
+// 从 dir 往上找用需求树的项目，到 git 根为止（Claude Code 和 Codex 都可能在子目录里启动）；git 根是 worktree 时回主仓库
+function findProjectUp(dir) {
+  const { isProject } = require('./store');
   for (let d = path.resolve(dir); ;) {
-    const t = findTree(d);
-    if (t) return t;
+    if (fs.existsSync(path.join(d, '.git'))) {
+      const main = worktreeMain(d);
+      if (main) return isProject(main) ? main : null;
+      return isProject(d) ? d : null;
+    }
+    if (isProject(d)) return d;
     const up = path.dirname(d);
-    if (fs.existsSync(path.join(d, '.git'))) { const main = worktreeMain(d); return main ? findTree(main) : null; }
     if (up === d) return null;
     d = up;
   }
@@ -79,4 +79,4 @@ function appendTmpLog(name, line) {
   } catch {}
 }
 
-module.exports = { tmpDir, isRoot, EDIT_TOOLS, findTreeUp, worktreeMain, worktreesOf, checkoutOf, projectRel, appendTmpLog };
+module.exports = { tmpDir, EDIT_TOOLS, findProjectUp, worktreeMain, worktreesOf, checkoutOf, projectRel, appendTmpLog };

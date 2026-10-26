@@ -69,14 +69,6 @@
 
   // 结构化的文字（{ k: 文字表的键, a: 参数 }）按当前语言写出来；没有、或者键不认识，就用存下来的旧文字（旧记录、命令行写的）
   const tx = (t, fallback) => (t && t.k && window.ReqStrings && t.k in window.ReqStrings.zh ? T(t.k, ...(t.a || [])) : fallback);
-  // 记录员的状态：新版本记了 parts（几段），按语言拼；旧版本只有 message
-  function recorderText(r, file, showIds) {
-    if (!r) return '';
-    if (!r.ok) return tx(r.t, r.message);
-    if (!Array.isArray(r.parts) || !r.parts.length || !r.parts.every(p => p && p.k && window.ReqStrings && p.k in window.ReqStrings.zh)) return r.message;
-    const name = nodeNamer(file, showIds);
-    return r.parts.map(p => ((p.k === 'rec.done' || p.k === 'rec.doing') ? T(p.k, (p.a[0] || []).map(name).map(x => x.trim()).join(T('rec.join')) + (T.lang === 'zh' && !/」$/.test(name((p.a[0] || []).slice(-1)[0]).trim()) ? ' ' : '')) : T(p.k, ...(p.a || []))).trim()).join(T('rec.sep'));
-  }
   // 提到某个需求时写它的名字（打开「显示编号」时写编号）；树里已经没有了（删掉的）就写编号
   function nodeNamer(file, showIds) {
     const byId = {};
@@ -85,7 +77,7 @@
     const bare = id => (T.lang === 'zh' ? ` ${id} ` : id);
     return id => (showIds || !byId[id] ? bare(id) : T('d.quote', byId[id].title));
   }
-  // 一次改动的说明：新旧版本都记了 ops（结构化），按当前语言重新写；认不出的（旧格式）用存下来的 summary
+  // 一次改动的说明：按 ops（结构化）用当前语言重新写；认不出的用存下来的 summary
   function changeLines(c, file, showIds) {
     if (c.event) { const t = tx(c.event, null); if (t) return [t]; }
     const name = nodeNamer(file, showIds);
@@ -102,33 +94,11 @@
         case 'add_docs': return T('op.add_docs', name(o.node), (o.docs || []).join(', '));
         case 'set_docs': return (o.docs || []).length ? T('op.set_docs', name(o.node), (o.docs || []).join(', ')) : T('op.clear_docs', name(o.node));
         case 'set_status': return T('op.set_status', name(o.node), st(o.status));
-        case 'rename_node': {
-          const old = (o.undo || []).find(u => u.op === 'rename_node');
-          return T('op.rename_node', old && !showIds ? T('d.quote', old.title) : name(o.node), o.title);
-        }
-        case 'delete_node': {
-          const head = ((o.undo || []).find(u => u.op === 'restore_node') || {}).lines;
-          const m = head && /^#+\s+\S+\s+(.+?)\s*(?:[\u2705\u{1F528}\u23F3\u2753]\uFE0F?)?\s*$/u.exec(head[0] || '');
-          return T('op.delete_node', m && !showIds ? T('d.quote', m[1]) : o.node);
-        }
+        case 'rename_node': return T('op.rename_node', o.old && !showIds ? T('d.quote', o.old) : name(o.node), o.title);
+        case 'delete_node': return T('op.delete_node', o.title && !showIds ? T('d.quote', o.title) : o.node);
         case 'override_rule': return T('op.override_rule', name(o.node), o.text, o.new);
-        // 删掉 Claude 自动记忆里和需求树重复的一句：写记忆文件名和那句话（太长的截短）
-        case 'memory_remove': {
-          const t = String(o.text || '');
-          return T('op.memory_remove', String(o.file || '').split(/[\\/]/).pop(), t.length > 60 ? t.slice(0, 59) + '…' : t, !!o.wholeFile);
-        }
-        // 体检从文档（CLAUDE.md、挂的背景文档）里删掉的一行
-        case 'doc_remove': {
-          const t = String(o.text || '');
-          return T('op.doc_remove', String(o.file || ''), t.length > 60 ? t.slice(0, 59) + '…' : t);
-        }
-        // 初始化整份写的文件（需求树、拆出来的文档、拆过的 CLAUDE.md）
-        case 'doc_write': return T('op.doc_write', String(o.file || ''));
-        // 体检按需求树改了文档里的一段话
-        case 'doc_replace': {
-          const cut = s => { s = String(s || ''); return s.length > 40 ? s.slice(0, 39) + '…' : s; };
-          return T('op.doc_replace', String(o.file || ''), cut(o.text), cut(o.new));
-        }
+        // 规则文件改了，但不是规则、状态、标题、范围、文档（比如说明文字）
+        case 'edit_file': return T('op.edit_file', name(o.node));
         default: return null;
       }
     };
@@ -139,14 +109,9 @@
     return c.summary || [];
   }
 
-  // 顶部红色提示：记录员出错、规则没有生成。出错不能静悄悄，否则用户以为规则在生效
-  function alertsHtml(file, now) {
-    let h = '';
-    const r = file.recorder;
-    if (r && !r.ok) h += `<div class="banner err" role="alert"><span>${esc(T('alert.recorder', ago(r.time, now), tx(r.t, r.message)))}</span></div>`;
-    const c = file.compile;
-    if (c && c.ok === false) h += `<div class="banner err" role="alert"><span>${esc(T('alert.compile', tx(c.t, c.message)))}</span></div>`;
-    return h;
+  // 顶部红色提示：规则文件之间对不上（编号重复、上级不存在、文件里没有编号）。出错不能静悄悄，否则用户以为规则在生效
+  function alertsHtml(file) {
+    return (file.problems || []).map(p => `<div class="banner err" role="alert"><span>${esc(p.k === 'dupId' ? T('alert.dupId', p.id, p.file, p.other) : p.k === 'noParent' ? T('alert.noParent', p.id, p.parent) : T('alert.noId', p.file))}</span></div>`).join('');
   }
 
   // 浮动菜单贴着按钮下方右对齐（align='left' 时左对齐），靠近窗口边缘时往里收
@@ -194,7 +159,7 @@
       let btns = '';
       if (g.self) btns = `<button class="ib" ${E('editRule', `data-text="${esc(r.text)}"`)} title="${T('d.editRule')}" aria-label="${T('d.editRule')}">${icon('edit', 13)}</button><button class="ib" ${E('deleteRule', `data-text="${esc(r.text)}"`)} title="${T('d.deleteRule')}" aria-label="${T('d.deleteRule')}">${icon('delete', 13)}</button>`;
       else if (kind !== 'overridden') btns = `<button class="ib wide" ${E('overrideRule', `data-text="${esc(r.text)}" data-from="${esc(g.ownerId)}"`)} title="${T('d.rewriteHereTip')}">${T('d.rewriteHere')}</button>`;
-      return `<li class="rule r-${kind}"${tip ? ` title="${esc(tip)}"` : ''}><span class="tx"><span class="rt">${esc(r.text)}</span>${tag ? `<span class="tag">${esc(tag)}</span>` : ''}</span><span class="rb">${btns}</span></li>`;
+      return `<li class="rule r-${kind}"${tip ? ` title="${esc(tip)}"` : ''}><span class="tx"><span class="rt">${esc(r.shown || r.text)}</span>${tag ? `<span class="tag">${esc(tag)}</span>` : ''}</span><span class="rb">${btns}</span></li>`;
     };
     // 体检给规则分过组（src/categories.js）的，按组显示：每组一个小标题，组的顺序照模型给的，没分到组的放最后「其他」
     const rules = (g, list) => {
@@ -218,12 +183,10 @@
     const statusBtn = `<button class="st-btn s-${st || 'none'}" data-act="statusMenu" data-node="${esc(n.id)}" data-status="${st}" ${U} aria-haspopup="menu" aria-expanded="false" aria-label="${esc(T('d.statusBtn', stLabel))}" title="${T('v.changeStatus')}">${dot(st, false)}<span class="st-l">${stLabel}</span>${icon('chevd', 12)}</button>`;
     let h = `<div class="sh">
         <div class="sh-title">${ids ? `<span class="sid">${esc(n.id)}</span>` : ''}<strong data-act="rename" data-node="${esc(n.id)}" ${U} tabindex="0" role="button" title="${esc(T('d.renameTip', n.id))}">${esc(n.title)}</strong><button class="ib pen" data-act="rename" data-node="${esc(n.id)}" ${U} title="${T('d.rename')}" aria-label="${T('d.rename')}">${icon('edit', 13)}</button>
-          <span class="sh-acts">${focusBtn}<button class="ib more" data-act="more" data-node="${esc(n.id)}" data-key="${esc(n.key)}" data-line="${n.line}" data-raw="${esc(n.raw)}" ${U} title="${T('d.more')}" aria-label="${T('d.more')}" aria-haspopup="menu">${icon('more', 16)}</button></span></div>
+          <span class="sh-acts">${focusBtn}<button class="ib more" data-act="more" data-node="${esc(n.id)}" data-key="${esc(n.key)}" data-line="${n.line}" data-raw="${esc(n.raw)}" data-file="${esc(n.file)}" ${U} title="${T('d.more')}" aria-label="${T('d.more')}" aria-haspopup="menu">${icon('more', 16)}</button></span></div>
         <div class="sh-meta">${statusBtn}${crumbs ? `<span class="sep" aria-hidden="true">·</span><span class="crumbs">${crumbs}</span>` : ''}</div>
       </div>`;
-    // 久未动的提示：同一件事已经作为问题在问用户（问题队列里有这个需求的久未动问题，还开着），就不在面板里重复说
-    const staleAsked = (file.questions || []).some(q => q && q.kind === 'stale' && q.node === n.id && (!q.status || q.status === 'open'));
-    if (n.stale && !staleAsked) h += `<div class="hint">${icon('stale', 14)}<span>${esc(T('d.stale', data.staleDays))}</span></div>`;
+    if (n.stale) h += `<div class="hint">${icon('stale', 14)}<span>${esc(T('d.stale', data.staleDays))}</span></div>`;
 
     // 本需求的规则
     const own = n.groups.find(g => g.self);
@@ -246,14 +209,13 @@
 
     h += recent;
 
-    // 生效范围：最下面一行。没写自己的就说和哪个上级相同
-    const from = [...path].reverse().find(x => x.files && x.files.length);
+    // 生效范围：最下面一行（规则文件开头的 paths）。根需求管全项目；别的需求没写范围，Claude Code 每次都会加载它的规则
+    const isTop = path.length === 1;
     const scope = n.files.length ? n.files.map(g => `<code>${esc(g)}</code>`).join(T('d.scopeJoin'))
-      : n.noScope ? `<span class="warn-t">${T('d.scopeNone')}</span>`
-      : from && from !== n ? `<span>${esc(T('d.scopeSame', from.title))}</span>` : `<span>${T('d.scopeSameAny')}</span>`;
+      : isTop ? `<span>${T('d.scopeRoot')}</span>` : `<span class="${n.global ? 'warn-t' : ''}">${T('d.scopeNone')}</span>`;
     // 挂的文档：AI 改到这个需求的文件时会被提醒先读；点开文档
     if (n.docs && n.docs.length) h += `<div class="files" title="${T('d.docsTip')}"><span class="fk">${T('d.docs')}</span><span class="fv">${n.docs.map(d => `<button class="lnk${d.ok ? '' : ' warn-t'}" data-act="openDoc" data-doc="${esc(d.path)}" ${U}${d.ok ? '' : ` title="${T('d.docGone')}"`}>${esc(d.path)}</button>`).join(T('d.scopeJoin'))}</span></div>`;
-    h += `<div class="files${n.noScope ? ' warn' : ''}" title="${T('d.scopeTip')}"><span class="fk">${T('d.scope')}</span><span class="fv">${scope}</span><span class="fsep" aria-hidden="true">·</span><button class="lnk" ${E('setFiles')}>${n.files.length || !n.noScope ? T('d.change') : T('d.set')}</button></div>`;
+    h += `<div class="files${n.global ? ' warn' : ''}" title="${T('d.scopeTip')}"><span class="fk">${T('d.scope')}</span><span class="fv">${scope}</span>${isTop ? '' : `<span class="fsep" aria-hidden="true">·</span><button class="lnk" ${E('setFiles')}>${n.files.length ? T('d.change') : T('d.set')}</button>`}</div>`;
     return h;
   }
 
@@ -268,7 +230,9 @@
       <div class="inh-body fold-body" id="${id}"${open ? '' : ' hidden'}>${body}</div></section>`;
   }
 
-  // 最近改动：记录员和你的改动都在这里，记错了点「撤销」。
+  // 改动是谁做的（store 里记的是中文）
+  const SOURCE = { 你: 'x.you', AI: 'x.aiName', 体检: 'x.checkupName', 其他: 'x.otherName', 升级: 'x.upgradeName', 新建: 'x.newName' };
+  // 最近改动：AI、体检和你的改动都在这里，记错了点「撤销」。
   // undoable === false 是旧版本留下、反操作已经翻译不了的改动：不给撤销按钮，免得点了没反应
   function recentHtml(file, now, showIds, data = {}) {
     const list = (file.changes || []).slice(0, 6);
@@ -276,7 +240,7 @@
     return foldSec('s-recent', 'recent', data, T('d.recent'), list.length, `<ul class="chgs">${list.map(c => {
       const fixed = !c.undone && c.undoable === false;
       return `<li class="chg${c.undone ? ' undone' : ''}">
-      <div class="cw"><span class="who">${esc(c.source === '你' ? T('x.you') : c.source === '记录员' ? T('x.recorderName') : c.source === '体检' ? T('x.checkupName') : c.source === '初始化' ? T('x.initName') : c.source === '整理' ? T('x.reorgName') : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
+      <div class="cw"><span class="who">${esc(SOURCE[c.source] ? T(SOURCE[c.source]) : c.source)}</span> · ${ago(c.time, now)}${c.undone ? ` · ${T('d.undone')}` : ''}${fixed ? ` · ${T('d.cantUndo')}` : ''}${c.undone || fixed ? '' : `<button class="lnk" data-act="undo" data-id="${esc(c.id)}" data-uri="${esc(file.uri)}">${T('d.undo')}</button>`}</div>
       ${changeLines(c, file, showIds).map(s => `<div class="cs">${esc(s)}</div>`).join('')}</li>`;
     }).join('')}</ul>`);
   }
@@ -354,16 +318,16 @@
     const pct = v => (total ? Math.max(v ? 1.5 : 0, (v / total) * 100) : 0).toFixed(1);
     h += `<div class="ctx-bar" role="img" aria-label="${esc(T('ctx.bar', num(s.resident), num(s.demand)))}"><span class="cb-r" style="width:${pct(s.resident)}%"></span><span class="cb-d" style="width:${pct(s.demand)}%"></span></div>
       <div class="ctx-nums"><span><i class="sw sw-r"></i>${T('ctx.resident')} <b>${num(s.resident)}</b> ${T('ctx.chars')}</span> <span class="dot-sep">·</span> <span><i class="sw sw-d"></i>${T('ctx.demand')} <b>${num(s.demand)}</b> ${T('ctx.chars')}</span></div>
-      ${s.reqtree ? `<div class="ctx-note">${T('ctx.note', num(s.reqtree))}</div>` : ''}`;
+      ${s.ruletree ? `<div class="ctx-note">${T('ctx.note', num(s.ruletree))}</div>` : ''}`;
     const row = f => {
       let name;
-      if (f.source === 'reqtree') {
+      if (f.source === 'ruletree') {
         const n = f.node && byId[f.node];
         name = n ? `<button class="lnk ctx-node" data-ctx="pick" data-key="${esc(n.key)}" title="${esc(T('ctx.ruleTip', n.id))}">${esc(T('ctx.rule', n.title))}</button>` : `<span class="ctx-name">${T('ctx.index')}</span>`;
       } else name = `<span class="ctx-name" title="${esc(f.file)}">${esc(f.file)}</span>`;
       let why = f.kind === 'resident'
         ? (f.reason === 'compact' && f.source !== 'claude-md' ? T('ctx.compact') : T('ctx.always'))
-        : f.reason === 'fallback' ? T('ctx.fallback') : f.trigger ? T('ctx.trigger', base(f.trigger)) : f.reason === 'nested_traversal' ? T('ctx.folder') : T('ctx.used');
+        : f.trigger ? T('ctx.trigger', base(f.trigger)) : f.reason === 'nested_traversal' ? T('ctx.folder') : T('ctx.used');
       if (f.loads > 1) why += T('ctx.loads', f.loads);
       if (f.agents > 1) why += T('ctx.agents', f.agents);
       return `<div class="ctx-row ctx-${f.kind}"><div class="ctx-main">${name}<span class="ctx-chars">${T('ctx.charsN', num(f.chars))}</span></div><div class="ctx-why">${esc(why)}</div></div>`;
@@ -504,6 +468,7 @@
     if (d.act === 'more') {
       if (openMenuEl) { closeMenu(); return {}; }
       showMenu(a, [
+        { label: T('menu.openFile'), run: () => post({ type: 'open', uri: d.uri, file: d.file, line: +d.line, expect: d.raw }) },
         { label: T('menu.copyId', d.node), run: () => copyText(d.node) },
         { label: T('menu.delete'), danger: true, run: () => post({ type: 'edit', uri: d.uri, action: 'delete', node: d.node }) },
       ]);
@@ -520,10 +485,10 @@
     switch (d.act) {
       case 'edit': return { type: 'edit', uri, action: d.a, node: d.node, text: d.text, from: d.from, status: d.status, file: d.file };
       case 'undo': return { type: 'undo', uri, id: d.id };
-      case 'open': return { type: 'open', uri, line: +d.line, expect: d.raw };
+      case 'open': return { type: 'open', uri, file: d.file, line: +d.line, expect: d.raw };
       case 'openDoc': return { type: 'openDoc', uri, doc: d.doc };
       default: return null;
     }
   }
-  window.ReqDetail = { T, tx, recorderText, changeLines, html, message, local, isEditing, showContext, refreshContext, closeContext, contextHtml, showMenu, closeMenu, dot, alertsHtml, placeMenu, icon, esc, ago, walkNodes, hasActive, staleSpan, STATUS_LABEL, STATUS_ORDER, pathTo, reducedMotion };
+  window.ReqDetail = { T, tx, changeLines, sourceName: s => (SOURCE[s] ? T(SOURCE[s]) : s), html, message, local, isEditing, showContext, refreshContext, closeContext, contextHtml, showMenu, closeMenu, dot, alertsHtml, placeMenu, icon, esc, ago, walkNodes, hasActive, staleSpan, STATUS_LABEL, STATUS_ORDER, pathTo, reducedMotion };
 })();

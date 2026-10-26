@@ -1,17 +1,17 @@
 {
-  "name": "reqtree",
+  "name": "ruletree",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "publisher": "shidipeng",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/penstic123-code/Vibe-Friend.git"
+    "url": "https://github.com/penstic123-code/Rule-tree.git"
   },
-  "homepage": "https://github.com/penstic123-code/Vibe-Friend#readme",
+  "homepage": "https://github.com/penstic123-code/Rule-tree#readme",
   "bugs": {
-    "url": "https://github.com/penstic123-code/Vibe-Friend/issues"
+    "url": "https://github.com/penstic123-code/Rule-tree/issues"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -21,7 +21,7 @@
   ],
   "main": "./extension.js",
   "bin": {
-    "reqtree": "./bin/reqtree.js"
+    "ruletree": "./bin/ruletree.js"
   },
   "files": [
     "bin/",
@@ -36,84 +36,70 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "workspaceContains:需求树.md",
-    "workspaceContains:*.tree.md"
+    "workspaceContains:.claude/rules/ruletree/*.md",
+    "workspaceContains:需求树.md"
   ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "reqtree",
+          "id": "ruletree",
           "title": "%view.container%",
           "icon": "$(type-hierarchy)"
         }
       ]
     },
     "views": {
-      "reqtree": [
+      "ruletree": [
         {
           "type": "webview",
-          "id": "reqtree.panel",
+          "id": "ruletree.panel",
           "name": "%view.panel%"
         }
       ]
     },
     "commands": [
       {
-        "command": "reqtree.create",
+        "command": "ruletree.create",
         "title": "%cmd.create%"
       },
       {
-        "command": "reqtree.enable",
+        "command": "ruletree.enable",
         "title": "%cmd.enable%"
       },
       {
-        "command": "reqtree.disable",
+        "command": "ruletree.disable",
         "title": "%cmd.disable%"
       },
       {
-        "command": "reqtree.refresh",
+        "command": "ruletree.refresh",
         "title": "%cmd.refresh%",
         "icon": "$(refresh)"
       },
       {
-        "command": "reqtree.openMap",
+        "command": "ruletree.openMap",
         "title": "%cmd.openMap%",
         "icon": "$(type-hierarchy-sub)"
       },
       {
-        "command": "reqtree.questions",
-        "title": "%cmd.questions%",
-        "icon": "$(question)"
-      },
-      {
-        "command": "reqtree.checkup",
+        "command": "ruletree.checkup",
         "title": "%cmd.checkup%"
       },
       {
-        "command": "reqtree.checkupReport",
+        "command": "ruletree.checkupReport",
         "title": "%cmd.checkupReport%"
-      },
-      {
-        "command": "reqtree.reorganize",
-        "title": "%cmd.reorganize%"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "reqtree.questions",
-          "when": "view == reqtree.panel && reqtree.hasQuestions",
+          "command": "ruletree.openMap",
+          "when": "view == ruletree.panel",
           "group": "navigation@0"
         },
         {
-          "command": "reqtree.openMap",
-          "when": "view == reqtree.panel",
-          "group": "navigation@0"
-        },
-        {
-          "command": "reqtree.refresh",
-          "when": "view == reqtree.panel",
+          "command": "ruletree.refresh",
+          "when": "view == ruletree.panel",
           "group": "navigation@1"
         }
       ]
@@ -121,7 +107,7 @@
     "configuration": {
       "title": "%config.title%",
       "properties": {
-        "reqtree.language": {
+        "ruletree.language": {
           "type": "string",
           "enum": [
             "auto",
@@ -136,30 +122,15 @@
           ],
           "description": "%config.language%"
         },
-        "reqtree.askQuestions": {
+        "ruletree.memoryMode": {
           "type": "string",
           "enum": [
-            "notify",
-            "panel",
-            "off"
-          ],
-          "default": "notify",
-          "enumDescriptions": [
-            "%config.askQuestions.notify%",
-            "%config.askQuestions.panel%",
-            "%config.askQuestions.off%"
-          ],
-          "description": "%config.askQuestions%"
-        },
-        "reqtree.memoryMode": {
-          "type": "string",
-          "enum": [
-            "dedupe",
+            "keep",
             "treeOnly"
           ],
-          "default": "dedupe",
+          "default": "keep",
           "enumDescriptions": [
-            "%config.memoryMode.dedupe%",
+            "%config.memoryMode.keep%",
             "%config.memoryMode.treeOnly%"
           ],
           "description": "%config.memoryMode%"

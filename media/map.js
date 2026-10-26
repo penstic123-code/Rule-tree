@@ -124,7 +124,7 @@
   let focusSub = null; // 每次排版前算好：聚焦这一支的 key 集合
   const inFocus = key => !!(focusSub && focusSub.has(key));
   const RULE_PX = 12, RULE_LH = 18, RULE_GAP = 7, PAD = 12;
-  const ruleBlocks = n => ownRules(n).slice(0, MAX_RULES).map(r => wrap2(r.text, W - PAD * 2 - (r.state === 'overrides' ? 0 : 0), RULE_PX));
+  const ruleBlocks = n => ownRules(n).slice(0, MAX_RULES).map(r => wrap2(r.shown || r.text, W - PAD * 2 - (r.state === 'overrides' ? 0 : 0), RULE_PX));
   const aiText = n => (n.active ? T('ai.editing', n.active.file.split('/').pop()) : '');
   const metaText = n => (n.children.length ? T('m.progress', n.children.filter(c => c.status === 'done').length, n.children.length) : '');
   const hasMeta = n => !!(metaText(n) || n.active);
@@ -157,7 +157,7 @@
       ty += 10 + 13;
       ruleBlocks(n).forEach((block, i) => {
         const r = rules[i];
-        const tip = r.state === 'overrides' ? T('m.overTip', r.text, r.ref) : r.text;
+        const tip = r.state === 'overrides' ? T('m.overTip', r.shown || r.text, r.ref) : r.text;
         s += `<text class="rl rl-${r.state}" x="${x + PAD}" y="${ty}"><title>${esc(tip)}</title>${block.map((line, j) => `<tspan x="${x + PAD}"${j ? ` dy="${RULE_LH}"` : ''}>${esc(line)}</tspan>`).join('')}</text>`;
         ty += block.length * RULE_LH + RULE_GAP;
       });
@@ -302,7 +302,7 @@
     const selNode = selected && findNode(selected);
     side.innerHTML = D.html(f, selNode, { ...data, folds, showIds, focusable: true, focusKey: focus, focusLabel: T('d.focusMap') });
     side.classList.toggle('none', !selNode); // 窄的时候详情在下面，没选中就收成一行
-    document.getElementById('alerts').innerHTML = D.alertsHtml(f, data.now);
+    document.getElementById('alerts').innerHTML = D.alertsHtml(f);
     renderSummary();
     renderFocusBar();
   }

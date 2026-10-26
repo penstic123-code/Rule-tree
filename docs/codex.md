@@ -1,5 +1,7 @@
 # 在 OpenAI Codex 里用需求树
 
+> 2026-10-26 重构成「规则文件就是需求树」以后，Codex 的支持还没跟上：`src/targets/` 和 `hooks/codex-hook.js` 改到一半，命令行和插件都不再装 Codex。下面是重构前的做法。
+
 需求树原本是给 Claude Code 做的。Codex（CLI、桌面版、IDE 插件）没有「改到哪个文件才加载哪条规则」的机制，所以换了一种送法，效果相同。
 
 ## 怎么启用

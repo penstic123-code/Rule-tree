@@ -1,25 +1,26 @@
 #!/usr/bin/env node
 'use strict';
 // 在浏览器里预览面板：用插件同一套 viewmodel 生成数据，模拟 VS Code 深色或浅色主题，输出一个独立 HTML。
-// 用法：node tools/preview.js <需求树.md> <输出.html> [dark|light|hc] [选中的 ID] [AI 正在改的 ID] [宽度=340] [side|map] [zh|en]
+// 用法：node tools/preview.js <规则文件夹 或 旧版需求树.md> <输出.html> [dark|light|hc] [选中的 ID] [AI 正在改的 ID] [宽度=340] [side|map] [zh|en]
 // 页面里的 window.__posted 记录面板发给插件的消息，window.__errors 记录脚本报错，测试用。
 const fs = require('fs');
 const path = require('path');
 const { viewData } = require('../src/viewmodel');
 
-// mode: 'side' 侧栏（默认）| 'map' 导图
-// compile：编译结果 { ok, message, time }（测「规则没有生成」提示）；deliver=false：不自动推数据，测试调 window.__deliver() 再推
+// 规则文件：treeFile 是规则文件夹就照读；是旧版的一整份 需求树.md 就先拆成规则文件（src/migrate.js），示例和测试的树都是这种
+function readRules(treeFile) {
+  if (fs.statSync(treeFile).isDirectory()) return new Map(fs.readdirSync(treeFile).filter(n => n.endsWith('.md')).map(n => [n, fs.readFileSync(path.join(treeFile, n), 'utf8')]));
+  return require('../src/migrate').convert(fs.readFileSync(treeFile, 'utf8')).files;
+}
+
+// mode: 'side' 侧栏（默认）| 'map' 导图；deliver=false：不自动推数据，测试调 window.__deliver() 再推
 // sinceDays：开始跟踪是几天前（默认 1 天，不会出现「久未动」；给 10 就能看到久未动的标记）
-// questions：还开着的问题 [{ kind: 'stale', node, status: 'open' }]
-function build({ state: extraState = {}, treeFile, theme = 'dark', selId, activeId, width = 340, height = 900, recorder = null, touched = {}, mode = 'side', changes = [], unmapped = [], compile, deliver = true, sinceDays = 1, context = [], lang = 'zh', questions = [] }) {
+function build({ state: extraState = {}, treeFile, files, theme = 'dark', selId, activeId, width = 340, height = 900, touched = {}, mode = 'side', changes = [], unmapped = [], deliver = true, sinceDays = 1, context = [], lang = 'zh' }) {
   const uri = 'file:///tree.md';
   const now = Date.now();
   const activity = activeId ? [{ node: activeId, file: 'DataScience/ch01-cholera.html', time: now }] : [];
-  const config = { recorder: 'turn' };
   const since = now - sinceDays * 86400000;
-  const data = viewData([{ uri, name: path.basename(treeFile), text: fs.readFileSync(treeFile, 'utf8'), activity, touched, since, recorder, config, changes, unmapped, compile, context: typeof context === 'function' ? context(now) : context, questions }], now);
-  // 还开着的问题（插件从 src/questions.js 读）：viewmodel 没带过去时这里补上，面板据此不重复提示久未动
-  for (const f of data.files) if (!f.questions) f.questions = questions;
+  const data = viewData([{ uri, name: treeFile ? path.basename(treeFile) : 'rules', files: files || readRules(treeFile), activity, touched, since, changes, unmapped, context: typeof context === 'function' ? context(now) : context }], now);
 
   // VS Code 默认 Dark Modern / Light Modern 的主要颜色
   const THEMES = {
@@ -63,22 +64,22 @@ if (require.main === module) {
   fs.writeFileSync(out, build({ treeFile, theme, selId, activeId, width: +width || 340, mode, lang }));
   console.log('已生成', out);
 }
-// 假的上下文用量记录（.reqtree/context.jsonl 的格式），给 example/需求树.md 用：两个会话，第一个有子 agent
+// 假的上下文用量记录（.ruletree/context.jsonl 的格式），给 example/需求树.md 用：两个会话，第一个有子 agent
 function fakeContext(now = Date.now()) {
   const m = 60000, S1 = 'sess-a', S2 = 'sess-b';
   const r = (session, agent, ago, file, chars, reason, source, node = null, trigger = null) => ({ session, agent, file, chars, reason, source, node, trigger, parent: null, time: now - ago * m });
   return [
     r(S1, null, 42, 'CLAUDE.md', 8640, 'session_start', 'claude-md'),
     r(S1, null, 42, 'DataScience/CLAUDE.md', 1420, 'session_start', 'claude-md'),
-    r(S1, null, 42, '.claude/rules/reqtree/_index.md', 310, 'session_start', 'reqtree'),
-    r(S1, null, 42, '.claude/rules/reqtree/P.md', 860, 'session_start', 'reqtree', 'P'),
-    r(S1, null, 30, '.claude/rules/reqtree/R3.md', 420, 'path_glob_match', 'reqtree', 'R3', 'DataScience/ch01-cholera.html'),
-    r(S1, 'agent-1', 25, '.claude/rules/reqtree/R3.md', 420, 'path_glob_match', 'reqtree', 'R3', 'DataScience/ch01-cholera.html'),
-    r(S1, 'agent-1', 24, '.claude/rules/reqtree/R1.md', 355, 'path_glob_match', 'reqtree', 'R1', 'DataScience/index.html'),
+    r(S1, null, 42, '.claude/rules/ruletree/_guide.md', 310, 'session_start', 'ruletree'),
+    r(S1, null, 42, '.claude/rules/ruletree/_root.md', 860, 'session_start', 'ruletree', 'P'),
+    r(S1, null, 30, '.claude/rules/ruletree/R3.md', 420, 'path_glob_match', 'ruletree', 'R3', 'DataScience/ch01-cholera.html'),
+    r(S1, 'agent-1', 25, '.claude/rules/ruletree/R3.md', 420, 'path_glob_match', 'ruletree', 'R3', 'DataScience/ch01-cholera.html'),
+    r(S1, 'agent-1', 24, '.claude/rules/ruletree/R1.md', 355, 'path_glob_match', 'ruletree', 'R1', 'DataScience/index.html'),
     r(S1, null, 12, '.claude/rules/style.md', 400, 'path_glob_match', 'rules', null, 'DataScience/css/style.css'),
     r(S2, null, 300, 'CLAUDE.md', 8640, 'session_start', 'claude-md'),
-    r(S2, null, 300, '.claude/rules/reqtree/P.md', 860, 'session_start', 'reqtree', 'P'),
-    r(S2, null, 280, '.claude/rules/reqtree/R4.md', 210, 'path_glob_match', 'reqtree', 'R4', 'DataScience/ch02-intro.html'),
+    r(S2, null, 300, '.claude/rules/ruletree/_root.md', 860, 'session_start', 'ruletree', 'P'),
+    r(S2, null, 280, '.claude/rules/ruletree/R4.md', 210, 'path_glob_match', 'ruletree', 'R4', 'DataScience/ch02-intro.html'),
   ];
 }
 module.exports = { build, fakeContext };

@@ -1,6 +1,6 @@
 {
   "displayName": "RuleTree",
-  "description": "A well-designed information architecture for AI coding: rules, docs and code maps each in their place, kept tidy for you, and the AI reads only the rules for the file it's editing.",
+  "description": "The rule files are the requirement tree: one file per requirement, and when the AI edits a file, Claude Code loads only the rules that cover it. View, edit and undo them in a panel.",
   "view.container": "RuleTree",
   "view.panel": "Requirement tree",
   "cmd.create": "RuleTree: Create",
@@ -12,16 +12,10 @@
   "config.language.auto": "Follow the VS Code display language",
   "config.language.zh": "Chinese",
   "config.language.en": "English",
-  "cmd.questions": "RuleTree: Questions waiting for you",
   "cmd.checkup": "RuleTree: Check-up",
-  "cmd.reorganize": "RuleTree: Reorganize the tree (AI)",
   "cmd.checkupReport": "RuleTree: Last check-up report",
-  "config.askQuestions": "When something you said doesn't fit one of your Decisions (rules starting with \"Decision:\"), RuleTree leaves the Decision as it is and asks you. Other unclear cases are recorded the most likely way, without asking.",
-  "config.askQuestions.notify": "Ask with a notification (it does not block you)",
-  "config.askQuestions.panel": "Only show the count on the side bar icon; answer with \"RuleTree: Questions waiting for you\"",
-  "config.askQuestions.off": "Don't ask; keep the recorder's choice",
   "config.memoryMode": "How RuleTree and Claude Code's auto memory divide the work.",
-  "config.memoryMode.dedupe": "Divide the work (default): the tree holds the project's rules; auto memory keeps only things unrelated to the project's content (you, your tools and machine, private details such as servers and accounts). The recorder moves rules the AI writes into memory into the tree, and the check-up deletes notes already in the tree and moves the rest where they belong",
   "config.memoryMode.treeOnly": "Turn off auto memory for this project (writes \"autoMemoryEnabled\": false to .claude/settings.local.json); the tree is the only record. Notes about your tools, machine and private details then have nowhere to go",
-  "cmd.disable": "RuleTree: Disable in this project"
+  "cmd.disable": "RuleTree: Disable in this project",
+  "config.memoryMode.keep": "Default: leave auto memory alone. The guide already tells the AI to keep project rules in the tree and only unrelated notes in memory"
 }

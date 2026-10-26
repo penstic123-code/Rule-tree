@@ -1,91 +1,52 @@
 'use strict';
-// 需求树文件的存取：找树文件、加锁原子写、编辑中排队、程序状态（记录员、编译、需求最后改动时间）。
-// hook、记录员、命令行、插件都只通过这里写树，避免互相覆盖。
+// 需求树的存取：读写 .claude/rules/ruletree/ 里的规则文件、改动记录和撤销、程序状态、日志。
+// hook、命令行、插件都只通过这里写规则文件，避免互相覆盖。所有函数都以项目根目录 dir 为准。
 //
-// .reqtree/ 里的文件
-//   长期保存
-//     config.json     用户开关（面板 ⚙），键和默认值见 DEFAULT_CONFIG
-//     state.json      程序状态：{ recorder 记录员上次结果, compile 上次编译结果, since 开始跟踪的时间, touched {需求ID: 最后被 AI 改的时间} }
-//     activity.jsonl  AI 改了哪些文件（只追加）
-//     context.jsonl   每个会话加载了哪些规则文件、各多少字（只追加，给上下文用量表）
-//     changes.jsonl   改动记录，每条带反操作，可以撤销（只追加）
-//     questions.jsonl 拿不准、要问用户的事（只追加；回答、关掉也追加一行，见 src/questions.js）
-//   临时（用完即删，进程崩溃留下的也会按时间判定失效）
-//     tree.lock   写树的锁         state.lock  读改写 state.json / config.json 的锁
-//     queue.lock  读改写队列的锁   queue.json  用户编辑中时记录员的改动排队
-//     editing     用户有未保存改动的标记       *.tmp  原子写的中间文件
+// .ruletree/ 里的文件（不进 git）
+//   snapshot.json   每个规则文件上次记下的内容：和磁盘对不上就是有人改了（AI 用编辑工具改的由 hook 记成「AI」）
+//   changes.jsonl   改动记录，每条带改动的文件改前改后，可以撤销（只追加）
+//   state.json      { since 开始跟踪的时间, touched {需求编号: AI 最后改它的文件的时间} }
+//   activity.jsonl  AI 改了哪些文件（只追加）；context.jsonl  每个会话加载了哪些规则文件、多少字（只追加）
+//   categories.json 体检给规则分的组（只改面板显示）；checkup-report.md  上次体检的报告
+//   rules.lock / state.lock  锁（用完即删，进程崩溃留下的按时间判定失效）
 const fs = require('fs');
 const path = require('path');
-const { applyOps, parse, STATUS_LABEL } = require('./parser');
-const { compile, ensureCompiled } = require('./compile');
+const T = require('./tree');
 
-// 只认项目根目录：优先 需求树.md，其次第一个 *.tree.md
-function findTree(dir) {
+const RULES_DIR = path.join('.claude', 'rules', 'ruletree');
+const META_DIR = '.ruletree';
+const rulesDir = dir => path.join(dir, RULES_DIR);
+const metaFile = (dir, name) => path.join(dir, META_DIR, name);
+
+// Windows 和 macOS 的文件系统默认不分大小写
+const caseInsensitive = () => process.platform === 'win32' || process.platform === 'darwin';
+const pathKey = p => (caseInsensitive() ? p.toLowerCase() : p);
+const samePath = (a, b) => pathKey(path.resolve(a)) === pathKey(path.resolve(b));
+
+// 旧版的一整份树文件（需求树.md、*.tree.md），升级时拆成规则文件（src/migrate.js）
+function legacyTree(dir) {
   let names;
   try { names = fs.readdirSync(dir); } catch { return null; }
   const name = names.find(n => n === '需求树.md') || names.filter(n => n.endsWith('.tree.md')).sort()[0];
   return name ? path.join(dir, name) : null;
 }
+const hasRules = dir => { try { return fs.readdirSync(rulesDir(dir)).some(T.isRuleFile); } catch { return false; } };
+// 这个文件夹是不是用需求树的项目（有规则文件，或者还没升级的旧树文件）
+const isProject = dir => hasRules(dir) || !!legacyTree(dir);
 
-// Windows 和 macOS 的文件系统默认不分大小写：C:\ 和 c:\、/Users/A 和 /users/a 是同一个文件。Linux 区分
-const caseInsensitive = () => process.platform === 'win32' || process.platform === 'darwin';
-// 比较或当键用的路径：不分大小写的系统统一成小写
-const pathKey = p => (caseInsensitive() ? p.toLowerCase() : p);
-const samePath = (a, b) => pathKey(a) === pathKey(b);
+// ---------- 小工具 ----------
 
-// 新建需求树时的模板（命令行 init 和插件共用）
-const TEMPLATE = `# P 项目名
-- [语气] 全项目通用的规则写在这里，子节点用同一个键可以覆盖
-
-## R1 第一个需求 🔨
-> 文件：src/**
-- 只管这个需求的规则
-
-### R1.1 子需求 ⏳
-- 子需求自己的规则
-`;
-
-// 新项目的第一棵树：按项目最上一层的文件夹生成需求，每个文件夹一个，带上它的文件范围，不是一份空模板。
-// 文件跟着 .gitignore（不是 git 仓库就遍历，跳过依赖、构建产物和隐藏文件夹）；文件夹太多只取文件最多的 INIT_MAX 个。
-// 所有文件都在根目录、没有子文件夹时，退回模板
-const INIT_MAX = 12;
-// 按文件夹生成的树开头的说明。AI 初始化（src/init.js）认这句：还在，说明这棵树还没真正初始化过
-const FOLDER_INTRO = '这棵树按项目的文件夹自动生成，每个文件夹一个需求。改名、合并、删掉都行；你和 AI 聊天时提的长期要求，会自动记到对应的需求下面。';
-function initialTree(dir) {
-  let files = [];
-  try { files = require('./codemap').listFiles(dir, { any: true }); } catch {}
-  const count = new Map();
-  for (const f of files) {
-    const i = f.indexOf('/');
-    if (i < 0) continue;
-    const top = f.slice(0, i);
-    if (top.startsWith('.') || /^(node_modules|dist|build|out|target|coverage|vendor)$/i.test(top)) continue;
-    count.set(top, (count.get(top) || 0) + 1);
-  }
-  const tops = [...count].sort((a, b) => b[1] - a[1]).slice(0, INIT_MAX).map(([t]) => t);
-  if (!tops.length) return TEMPLATE;
-  const lines = [`# P ${path.basename(dir)}`, FOLDER_INTRO, ''];
-  tops.forEach((t, i) => lines.push(`## R${i + 1} ${t}`, `> 文件：${t}/**`, ''));
-  return lines.join('\n');
-}
-
-const metaDir = treePath => path.join(path.dirname(treePath), '.reqtree');
-const metaFile = (treePath, name) => path.join(metaDir(treePath), name);
-
-// 先写临时文件再改名：别的进程读到的要么是旧的、要么是完整的新内容
 function atomicWrite(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, file);
 }
-
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 const writeJson = (file, value) => atomicWrite(file, JSON.stringify(value, null, 2));
-
-// 只读文件末尾 bytes 字节（日志再长也快）；从中间截断时丢掉第一行残缺的内容
+// 只读文件末尾 bytes 字节；从中间截断时丢掉第一行残缺的内容
 function readTail(file, bytes) {
   const fd = fs.openSync(file, 'r');
   try {
@@ -98,18 +59,10 @@ function readTail(file, bytes) {
 }
 
 // ---------- 锁 ----------
-// 锁文件用 'wx' 独占创建。hook、记录员、命令行是短命的独立进程，同步等锁没问题；
-// 插件宿主里同步等会卡住整个 VS Code 的插件，所以插件写树走 updateTreeAsync：每次只试一下（waitMs 0），拿不到就异步等一会再试。
-// state.lock 只在读写一个小 JSON 的一瞬间被占着，插件同步等也只是几毫秒。
-// 加锁顺序固定为 tree.lock → state.lock（编译在写树的锁里记编译结果），反过来的嵌套不存在，不会死锁。
-// 进程被杀时锁会留下来，超过 staleMs 没动就当它失效删掉。state.lock 的失效时间必须比等待时间短，
-// 不然留下的锁在失效前会让每次写状态都等满再报「被占用」；写树要编译、可能慢，tree.lock 放宽些。
+// 'wx' 独占创建锁文件。hook、命令行是短命的独立进程，同步等锁没问题；插件宿主里同步等会卡住 VS Code，插件走 *Async（每次只试一下，拿不到就异步等）。
+// 加锁顺序固定为 rules.lock → state.lock，不会死锁。进程被杀留下的锁超过 staleMs 没动就当它失效
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-const LOCK_STALE_MS = 10 * 1000;
-const LOCK_WAIT_MS = 5000;
-const STATE_STALE_MS = 1500;
-const STATE_WAIT_MS = 3000;
-
+const LOCK_WAIT_MS = 5000, LOCK_STALE_MS = 10000, STATE_WAIT_MS = 3000, STATE_STALE_MS = 1500;
 function withLock(lock, fn, waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS) {
   fs.mkdirSync(path.dirname(lock), { recursive: true });
   let fd = null;
@@ -123,197 +76,115 @@ function withLock(lock, fn, waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS) {
   }
   if (fd === null) {
     const e = new Error(`需求树被占用，${Math.round(waitMs / 1000)} 秒内没拿到锁`);
-    e.code = 'REQTREE_BUSY';
-    e.t = { k: 'err.busy', a: [Math.round(waitMs / 1000)] }; // 给界面按语言显示（strings.js），message 留给命令行和旧版本
+    e.code = 'RULETREE_BUSY';
+    e.t = { k: 'err.busy', a: [Math.round(waitMs / 1000)] };
     throw e;
   }
-  try { return fn(); }
-  finally {
-    fs.closeSync(fd);
-    try { fs.unlinkSync(lock); } catch {}
-  }
+  try { return fn(); } finally { fs.closeSync(fd); try { fs.unlinkSync(lock); } catch {} }
 }
-const treeLock = treePath => metaFile(treePath, 'tree.lock');
-const stateLock = treePath => metaFile(treePath, 'state.lock');
-
-// ---------- 用户开关：config.json ----------
-// 开关 recorder，补漏间隔 sweepEvery（每 N 轮把最近 N 句用户原话再交给记录员查一遍漏记，0 关掉）。只认 DEFAULT_CONFIG 里有的键，面板传来别的键也不写。
-// aiFindings：AI 在回复里说出的、以后还用得上的做法和坑也记成规则（开头标「（AI 发现）」），默认开
-// principles：总目录里写「动手原则」（遇到 bug 先找根因、写新东西前先看项目里有没有），默认开
-// recordEvery：每几轮交给记录员一次（1 = 每轮；N 轮攒起来一起记，省调用）；codeMap：生成代码地图
-// askUnsure：记录员、体检拿不准的也问用户（先按最可能的做法写进去，用户改选再换），默认开
-const DEFAULT_CONFIG = { recorder: 'turn', recordEvery: 1, sweepEvery: 8, aiFindings: true, principles: true, codeMap: true, askUnsure: true };
-const pickConfig = c => Object.fromEntries(Object.keys(DEFAULT_CONFIG).map(k => [k, c[k] === undefined ? DEFAULT_CONFIG[k] : c[k]]));
-const rawConfig = treePath => readJson(metaFile(treePath, 'config.json'), null);
-const readConfig = treePath => pickConfig(rawConfig(treePath) || {});
-function writeConfig(treePath, patch) {
-  return withLock(stateLock(treePath), () => {
-    const next = pickConfig({ ...readConfig(treePath), ...patch });
-    writeJson(metaFile(treePath, 'config.json'), next);
-    return next;
-  }, STATE_WAIT_MS, STATE_STALE_MS);
-}
-
-// ---------- 程序状态：state.json ----------
-// 多个 hook 进程（后台的记录员、PostToolUse、插件）会同时写，读改写都在 state.lock 里做
-const STATE_FILE = 'state.json';
-const DEFAULT_STATE = { recorder: null, compile: null, since: null, touched: {} };
-
-function readState(treePath) {
-  const cur = readJson(metaFile(treePath, STATE_FILE), null) || {};
-  const set = Object.fromEntries(Object.entries(cur).filter(([, v]) => v != null));
-  return { ...DEFAULT_STATE, ...set, touched: { ...(cur.touched || {}) } };
-}
-
-// 内容没变不写：插件监视 .reqtree/*.json，每写一次就刷新一次
-function writeStateUnlocked(treePath, state) {
-  const file = metaFile(treePath, STATE_FILE);
-  const text = JSON.stringify(state, null, 2);
-  let old = null;
-  try { old = fs.readFileSync(file, 'utf8'); } catch {}
-  if (old !== text) atomicWrite(file, text);
-}
-
-// 加锁读-改-写 state。fn(state) 返回新的 state
-function updateState(treePath, fn) {
-  return withLock(stateLock(treePath), () => {
-    const next = fn(readState(treePath));
-    writeStateUnlocked(treePath, next);
-    return next;
-  }, STATE_WAIT_MS, STATE_STALE_MS);
-}
-
-// 读状态，没记过开始跟踪的时间就记下现在：判断 🔨 久未动时，没被跟踪过的需求从这一刻算起，免得刚装好就满屏误报。
-// 只给 init 和插件用；check 这类只读命令用 readState，不能有副作用
-function ensureTracking(treePath) {
-  const s = readState(treePath);
-  if (s.since) return s;
-  return updateState(treePath, st => (st.since ? st : { ...st, since: Date.now() }));
-}
-
-// 记录员最近一次运行的结果，给面板显示：{ ok, time, message, parts }
-const writeRecorderStatus = (treePath, status) => updateState(treePath, s => ({ ...s, recorder: { ...status, time: Date.now() } }));
-const readRecorderStatus = treePath => readState(treePath).recorder || null;
-const readCompileStatus = treePath => readState(treePath).compile || null;
-
-// 每个需求最后一次被 AI 改动的时间，用来提示"🔨 很久没动了"
-function touch(treePath, ids) {
-  const now = Date.now();
-  updateState(treePath, s => ({ ...s, touched: { ...s.touched, ...Object.fromEntries(ids.map(id => [id, now])) } }));
-}
-const readTouched = treePath => readState(treePath).touched || {};
-
-// ---------- 编译 ----------
-// 编译必须和写树在同一把锁里：不然两个写入方各自编译时，拿旧内容的那个可能后写，
-// 盖掉新规则、删掉新节点的 .md，而时间戳已经刷新，之后也不会再重编。
-// 结果记进 state.json 的 compile（{ ok, message, time }），面板据此提示「规则没有生成」。
-// t：结构化的错误（{ k: 文字表的键, a: 参数 }），界面按当前语言显示；没有就显示 message
-function setCompileStatus(treePath, ok, message, t = null) {
-  const prev = readState(treePath).compile;
-  // 成功时只在之前没记过或失败过才写；同样的错误不重写：插件监视 .reqtree/*.json，每写一次就刷新、刷新又会重试编译，会转圈
-  if (prev && (ok ? prev.ok : !prev.ok && prev.message === message)) return;
-  // 不开面板的人看不到 state.json：新的失败也写进 hook.log（hook 在下一句用户的话时还会告诉 AI 一次）
-  if (!ok) require('./common').appendTmpLog('hook.log', JSON.stringify({ t: new Date().toISOString(), ev: 'compile', tree: treePath, compileError: `编译失败：${message}` }));
-  // 编译结果只是给面板看的提示，记不下来不能影响写树
-  try { updateState(treePath, s => ({ ...s, compile: { ok, message, ...(t ? { t } : {}), time: Date.now() } })); } catch {}
-}
-
-function compileUnlocked(treePath, force) {
-  try {
-    const r = force ? compile(treePath) : ensureCompiled(treePath);
-    // 规则文件写了，但有一部分没更新（Codex 的 AGENTS.md 托管块不完整）：也算失败，面板和 hook 会提醒
-    if (r && r.errors && r.errors.length) setCompileStatus(treePath, false, r.errors.join('；'));
-    else setCompileStatus(treePath, true, '');
-    return r;
-  } catch (e) {
-    setCompileStatus(treePath, false, e.message, e.t || null);
-    return null;
-  }
-}
-
-// 加锁编译。wait=false 时拿不到锁就跳过：拿着锁的一方正在写树，它释放前会编译
-function compileTree(treePath, { force = false, wait = true } = {}) {
-  try {
-    return withLock(treeLock(treePath), () => compileUnlocked(treePath, force), wait ? LOCK_WAIT_MS : 0);
-  } catch (e) { if (e.code === 'REQTREE_BUSY' && !wait) return null; throw e; }
-}
-
-// 加锁读-改-写。fn(text) 返回新文本；返回值相同就不写。谁写了树，谁就在锁里顺手重新编译成原生规则
-function updateTree(treePath, fn, { waitMs = LOCK_WAIT_MS } = {}) {
-  return withLock(treeLock(treePath), () => {
-    const before = fs.readFileSync(treePath, 'utf8');
-    const after = fn(before);
-    if (after !== before) atomicWrite(treePath, after);
-    compileUnlocked(treePath, after !== before);
-    return after;
-  }, waitMs);
-}
-
+const rulesLock = dir => metaFile(dir, 'rules.lock');
+const stateLock = dir => metaFile(dir, 'state.lock');
 // 插件用：不在宿主线程里同步等锁
-async function updateTreeAsync(treePath, fn) {
+async function retryBusy(fn) {
   for (const until = Date.now() + LOCK_WAIT_MS; ;) {
-    try { return updateTree(treePath, fn, { waitMs: 0 }); }
-    catch (e) {
-      if (e.code !== 'REQTREE_BUSY' || Date.now() >= until) throw e;
+    try { return fn(0); } catch (e) {
+      if (e.code !== 'RULETREE_BUSY' || Date.now() >= until) throw e;
       await new Promise(r => setTimeout(r, 30));
     }
   }
 }
 
-// ---------- 只追加的日志：多个 hook 同时写也不会互相覆盖 ----------
-// activity.jsonl  AI 改了哪些文件，每行 { node, file, time, session, agent }；node 为 null 表示这个文件还没归属任何需求
-// context.jsonl   Claude Code 往上下文里加载了哪些规则文件（InstructionsLoaded hook），
-//                 每行 { session, agent, file, chars, reason, memory, source, node, trigger, parent, time }
-function appendLog(treePath, name, entry) {
-  fs.mkdirSync(metaDir(treePath), { recursive: true });
-  fs.appendFileSync(metaFile(treePath, name), JSON.stringify(entry) + '\n');
+// ---------- 规则文件 ----------
+
+// 文件夹里的规则文件：Map 文件名 → 文本（不含工具生成的 _guide.md）
+function readFiles(dir) {
+  const files = new Map();
+  let names = [];
+  try { names = fs.readdirSync(rulesDir(dir)); } catch {}
+  for (const n of names.filter(T.isRuleFile)) try { files.set(n, fs.readFileSync(path.join(rulesDir(dir), n), 'utf8')); } catch {}
+  return files;
+}
+const readTree = dir => T.build(readFiles(dir));
+
+// 把 after 写到磁盘：比 before 多的、变了的写，少了的删。返回改动 [{ name, before, after }]（null 表示没有这个文件）
+function writeFiles(dir, before, after) {
+  const out = [];
+  // 只改了大小写的改名（R1-Foo.md → R1-foo.md）：不分大小写的系统上两个名字是同一个文件，先写新的再删旧的会把它删掉。先改名
+  if (caseInsensitive()) {
+    for (const name of before.keys()) {
+      if (after.has(name)) continue;
+      const to = [...after.keys()].find(n => !before.has(n) && n.toLowerCase() === name.toLowerCase());
+      if (to) try { fs.renameSync(path.join(rulesDir(dir), name), path.join(rulesDir(dir), to)); } catch {}
+    }
+  }
+  const renamedTo = name => caseInsensitive() && [...after.keys()].some(n => n !== name && n.toLowerCase() === name.toLowerCase());
+  for (const [name, text] of after) {
+    if (before.get(name) === text) continue;
+    atomicWrite(path.join(rulesDir(dir), name), text);
+    out.push({ name, before: before.has(name) ? before.get(name) : null, after: text });
+  }
+  for (const [name, text] of before) {
+    if (after.has(name)) continue;
+    if (!renamedTo(name)) try { fs.unlinkSync(path.join(rulesDir(dir), name)); } catch {}
+    out.push({ name, before: text, after: null });
+  }
+  return out;
 }
 
-// 读最近 sinceMs 毫秒内的记录（只读文件末尾一段，日志再长也快）
-function readLog(treePath, name, sinceMs, tailBytes = 256 * 1024) {
-  let text;
-  try { text = readTail(metaFile(treePath, name), tailBytes); } catch { return []; }
-  const cutoff = Date.now() - sinceMs;
-  return text.split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } })
-    .filter(e => e && e.time >= cutoff);
+// ---------- 快照和改动记录 ----------
+// 快照记着每个规则文件上次见到的内容。谁改了文件，谁就对一下快照记一条改动：面板、体检在写的时候记；
+// AI 用编辑工具改的，PostToolUse hook 记（syncFiles）；别的途径（命令行、git、手动）改的，插件刷新时补记成「其他」
+const SNAPSHOT = 'snapshot.json';
+const readSnapshot = dir => readJson(metaFile(dir, SNAPSHOT), null);
+const writeSnapshot = (dir, snap) => writeJson(metaFile(dir, SNAPSHOT), snap);
+const newChangeId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+function logChange(dir, entry) {
+  fs.mkdirSync(path.join(dir, META_DIR), { recursive: true });
+  fs.appendFileSync(metaFile(dir, 'changes.jsonl'), JSON.stringify(entry) + '\n');
 }
 
-// 日志太长就只留最近 2000 行（每轮结束时调用一次）
-function trimLog(treePath, name) {
-  const f = metaFile(treePath, name);
-  try {
-    if (fs.statSync(f).size < 512 * 1024) return;
-    atomicWrite(f, fs.readFileSync(f, 'utf8').trim().split('\n').slice(-2000).join('\n') + '\n');
-  } catch {}
+// 一组文件改动 → 给人看的操作列表（和编辑操作同样的名字，面板按语言写成句子）。
+// 文件改名（同一个编号，旧文件没了、新文件有了）算同一个需求改了标题
+function describeChange(diffs) {
+  const byId = new Map();
+  const idOf = (name, text) => T.parseFile(name, text || '').id;
+  const items = diffs.map(d => ({ ...d, id: idOf(d.name, d.after != null ? d.after : d.before) }));
+  const merged = [];
+  for (const d of items) {
+    const pair = byId.get(d.id);
+    if (pair && ((pair.before == null) !== (d.before == null))) {
+      const [gone, made] = pair.before != null ? [pair, d] : [d, pair];
+      Object.assign(pair, { name: made.name, before: gone.before, after: made.after });
+      continue;
+    }
+    byId.set(d.id, d);
+    merged.push(d);
+  }
+  const ops = [];
+  for (const d of merged) {
+    if (d.before == null) { const n = T.parseFile(d.name, d.after); ops.push({ op: 'add_node', node: n.id, id: n.id, title: n.title }); continue; }
+    if (d.after == null) { const n = T.parseFile(d.name, d.before); ops.push({ op: 'delete_node', node: n.id, title: n.title }); continue; }
+    const b = T.parseFile(d.name, d.before), a = T.parseFile(d.name, d.after);
+    const id = a.id, start = ops.length;
+    if (b.title !== a.title) ops.push({ op: 'rename_node', node: id, title: a.title, old: b.title });
+    if (b.status !== a.status) ops.push({ op: 'set_status', node: id, status: a.status });
+    if (b.files.join('\n') !== a.files.join('\n')) ops.push({ op: 'set_files', node: id, globs: a.files });
+    if (b.docs.join('\n') !== a.docs.join('\n')) ops.push({ op: 'set_docs', node: id, docs: a.docs });
+    const left = a.rules.map(r => r.text);
+    const removed = [];
+    for (const r of b.rules) { const i = left.indexOf(r.text); if (i >= 0) left.splice(i, 1); else removed.push(r.text); }
+    if (removed.length === left.length) removed.forEach((old, i) => ops.push({ op: 'replace_rule', node: id, old, text: left[i] }));
+    else {
+      removed.forEach(text => ops.push({ op: 'remove_rule', node: id, text }));
+      left.forEach(text => ops.push({ op: 'add_rule', node: id, text }));
+    }
+    if (ops.length === start) ops.push({ op: 'edit_file', node: id, file: d.name });
+  }
+  return ops;
 }
 
-// AI 写了这个项目的自动记忆（PostToolUse 记，Stop 时交给记录员看是不是该收进树）：{ dir, file, time, session }
-const appendMemoryWrite = (treePath, entry) => appendLog(treePath, 'memory-writes.jsonl', entry);
-const readMemoryWrites = (treePath, sinceMs) => readLog(treePath, 'memory-writes.jsonl', sinceMs);
-const trimMemoryWrites = treePath => trimLog(treePath, 'memory-writes.jsonl');
-const appendActivity = (treePath, entry) => appendLog(treePath, 'activity.jsonl', entry);
-const readActivity = (treePath, sinceMs) => readLog(treePath, 'activity.jsonl', sinceMs);
-const trimActivity = treePath => trimLog(treePath, 'activity.jsonl');
-const appendContext = (treePath, entry) => appendLog(treePath, 'context.jsonl', entry);
-// 一个会话开头一次加载几十个文件，多读一些
-const readContext = (treePath, sinceMs) => readLog(treePath, 'context.jsonl', sinceMs, 512 * 1024);
-const trimContext = treePath => trimLog(treePath, 'context.jsonl');
-
-// 插件在用户有未保存改动时写这个标记；记录员看到就排队，不去碰文件
-const EDITING_STALE_MS = 30 * 60 * 1000;
-function isEditing(treePath) {
-  try { return Date.now() - fs.statSync(metaFile(treePath, 'editing')).mtimeMs < EDITING_STALE_MS; }
-  catch { return false; }
-}
-function setEditing(treePath, on) {
-  const f = metaFile(treePath, 'editing');
-  if (on) { fs.mkdirSync(metaDir(treePath), { recursive: true }); fs.writeFileSync(f, String(Date.now())); }
-  else try { fs.unlinkSync(f); } catch {}
-}
-
-// ---------- 改动记录：记录员和面板的每次改动都记一条，带反操作，可以撤销 ----------
-// 每行 { id, time, source, summary, ops: [applied 带 undo] } 或 { undone: id, time }。
-// summary 是中文说明（命令行和旧版本用）；界面按 ops（结构化）用当前语言重新写，特殊的一条带 event: { k, a }
+// 改动记录的中文说明（命令行用；面板按 ops 用当前语言重新写）
 function describeOp(o) {
   const q = s => `「${s}」`;
   switch (o.op) {
@@ -321,188 +192,291 @@ function describeOp(o) {
     case 'replace_rule': return `把 ${o.node} 的${q(o.old)}改成${q(o.text)}`;
     case 'remove_rule': return `删掉 ${o.node} 的规则${q(o.text)}`;
     case 'add_node': return `新需求 ${o.id} ${o.title}`;
-    case 'add_files': return `${o.node} 对应文件 ${o.globs.join(', ')}`;
-    case 'set_files': return o.globs.length ? `${o.node} 的文件改成 ${o.globs.join(', ')}` : `清空 ${o.node} 的文件对应`;
-    case 'add_docs': return `${o.node} 挂上文档 ${o.docs.join(', ')}`;
-    case 'set_docs': return o.docs.length ? `${o.node} 的文档改成 ${o.docs.join(', ')}` : `清空 ${o.node} 挂的文档`;
-    case 'set_status': return `${o.node} 标为${STATUS_LABEL[o.status] || '无状态'}`;
+    case 'delete_node': return `删除需求 ${o.node} ${o.title || ''}`.trim();
     case 'rename_node': return `${o.node} 改名为${q(o.title)}`;
-    case 'delete_node': return `删除需求 ${o.node}`;
-    case 'override_rule': return `在 ${o.node} 里把上级的${q(o.text)}改成${q(o.new)}`;
-    case 'memory_remove': return o.wholeFile ? `删掉记忆文件 ${o.file}（${q(o.text)}）` : `删掉记忆 ${o.file} 里的${q(o.text)}`;
-    case 'doc_remove': return `从 ${o.file} 里删掉${q(o.text)}`;
-    case 'doc_write': return `写入 ${o.file}`;
-    case 'doc_replace': return `把 ${o.file} 里的${q(o.text)}改成${q(o.new)}`;
-    default: return o.op;
+    case 'set_status': return `${o.node} 标为${T.STATUS_LABEL[o.status] || '无状态'}`;
+    case 'set_files': return o.globs.length ? `${o.node} 的文件改成 ${o.globs.join(', ')}` : `清空 ${o.node} 的文件范围`;
+    case 'set_docs': return o.docs.length ? `${o.node} 的文档改成 ${o.docs.join(', ')}` : `清空 ${o.node} 挂的文档`;
+    default: return `改了 ${o.file || o.node}`;
   }
 }
 
-const newChangeId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-
-function logChange(treePath, entry) {
-  fs.mkdirSync(metaDir(treePath), { recursive: true });
-  fs.appendFileSync(metaFile(treePath, 'changes.jsonl'), JSON.stringify(entry) + '\n');
+// 记一条改动，返回它（没有改动返回 null）
+function record(dir, diffs, source, extra = {}) {
+  if (!diffs.length) return null;
+  const ops = describeChange(diffs);
+  const entry = { id: newChangeId(), time: Date.now(), source, summary: ops.map(describeOp), ops, files: diffs, ...extra };
+  logChange(dir, entry);
+  return entry;
 }
 
-// 反操作里会出现的操作（applyOps 认的）
-const UNDO_OPS = new Set(['add_rule', 'replace_rule', 'remove_rule', 'add_node', 'add_files', 'set_files', 'add_docs', 'set_docs', 'set_status', 'rename_node', 'delete_node', 'override_rule', 'restore_node', 'set_key', 'memory_restore', 'doc_restore', 'doc_put_back', 'doc_replace']);
-// 改文件、不改树的操作：记忆（src/memory.js）和文档（src/docs.js）
-const isFileOp = o => require('./memory').isMemoryOp(o) || require('./docs').isDocOp(o);
-const undoable = e => e.ops.every(o => (o.undo || []).every(u => UNDO_OPS.has(u.op)));
+// 快照里这些文件换成磁盘上现在的样子（删掉的去掉）
+function snapTo(snap, dir, names) {
+  for (const n of names) {
+    let t = null;
+    try { t = fs.readFileSync(path.join(rulesDir(dir), n), 'utf8'); } catch {}
+    if (t == null) delete snap[n]; else snap[n] = t;
+  }
+  return snap;
+}
+const filesOf = dir => Object.fromEntries(readFiles(dir));
 
-// 最近的改动（新的在前），标出已撤销的；撤销不了的（反操作不认识）标 undoable: false，面板不给撤销按钮
-function readChanges(treePath, limit = 20) {
-  let lines = [];
-  try { lines = fs.readFileSync(metaFile(treePath, 'changes.jsonl'), 'utf8').trim().split('\n').slice(-500); } catch {}
-  const entries = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+// 在规则文件上做编辑操作（面板、体检）：加锁、写文件、记一条改动、更新快照。
+// 返回做成的操作（数组，上面挂 skipped：没做成的和原因，见 tree.applyOps；entry：这条改动记录）
+function commitUnlocked(dir, ops, source) {
+  const before = readFiles(dir);
+  const r = T.applyOps(before, ops);
+  const snap = readSnapshot(dir) || filesOf(dir);
+  // 要改的文件和快照对不上：别人（多半是 AI，它的 hook 还没跑到）刚改过，还没记。先单独记一条，免得并进这次、撤销时一起没了
+  const touched = new Set([...r.files.keys(), ...before.keys()].filter(n => r.files.get(n) !== before.get(n)));
+  recordDrift(dir, snap, before, [...touched]);
+  const diffs = writeFiles(dir, before, r.files);
+  const entry = record(dir, diffs, source);
+  writeSnapshot(dir, snapTo(snap, dir, diffs.map(d => d.name)));
+  const out = r.applied;
+  out.skipped = r.skipped;
+  out.entry = entry;
+  return out;
+}
+const commit = (dir, ops, { source = '你' } = {}) => withLock(rulesLock(dir), () => commitUnlocked(dir, ops, source));
+const commitAsync = (dir, ops, { source = '你' } = {}) => retryBusy(w => withLock(rulesLock(dir), () => commitUnlocked(dir, ops, source), w));
+
+// 整份写入一组规则文件（升级、新建项目）：files 是要有的全部规则文件，原来有、这里没有的删掉
+const replaceAll = (dir, files, { source }) => withLock(rulesLock(dir), () => {
+  const diffs = writeFiles(dir, readFiles(dir), files);
+  const entry = record(dir, diffs, source);
+  writeSnapshot(dir, filesOf(dir));
+  return entry;
+});
+
+// 快照和 known（Map 文件名 → 文本，null 是没有这个文件）对不上的文件：记成「其他」的一条，快照跟上 known
+function recordDrift(dir, snap, known, names) {
+  const diffs = [];
+  for (const n of names) {
+    const was = n in snap ? snap[n] : null, now = known.has(n) ? known.get(n) : null;
+    if (was !== now) diffs.push({ name: n, before: was, after: now });
+  }
+  if (!diffs.length) return null;
+  for (const d of diffs) { if (d.after == null) delete snap[d.name]; else snap[d.name] = d.after; }
+  return record(dir, diffs, '其他');
+}
+
+// 对一下快照，把这些文件（names 为空：全部）的改动记成 source 的一条。第一次（还没有快照）只建快照不记。
+// minAgeMs：最近这么久内改过的先不记（可能是 AI 刚改的，hook 马上会以「AI」记）。
+// known：Map 文件名 → 这次改动之前的内容（hook 从 Edit 的参数里推出来的）。快照和它对不上的部分是别人改的，先单独记成「其他」，
+// 不然 git pull 下来的需求会算成 AI 新建的，撤销 AI 那次就把整个文件删了
+function syncFiles(dir, names, source, { minAgeMs = 0, known = null } = {}) {
+  if (!hasRules(dir) && !readSnapshot(dir)) return null;
+  return withLock(rulesLock(dir), () => syncUnlocked(dir, names, source, { minAgeMs, known }));
+}
+const syncFilesAsync = (dir, names, source, opts = {}) => (!hasRules(dir) && !readSnapshot(dir) ? Promise.resolve(null)
+  : retryBusy(w => withLock(rulesLock(dir), () => syncUnlocked(dir, names, source, opts), w)));
+function syncUnlocked(dir, names, source, { minAgeMs = 0, known = null } = {}) {
+  {
+    const snap = readSnapshot(dir);
+    if (!snap) { writeSnapshot(dir, filesOf(dir)); return null; }
+    if (known) recordDrift(dir, snap, known, [...known.keys()]);
+    const disk = readFiles(dir);
+    const list = names && names.length ? names : [...new Set([...Object.keys(snap), ...disk.keys()])];
+    const diffs = [];
+    for (const name of list) {
+      if (!T.isRuleFile(name)) continue;
+      const before = name in snap ? snap[name] : null, after = disk.has(name) ? disk.get(name) : null;
+      if (before === after) continue;
+      if (minAgeMs && after != null) { try { if (Date.now() - fs.statSync(path.join(rulesDir(dir), name)).mtimeMs < minAgeMs) continue; } catch {} }
+      diffs.push({ name, before, after });
+    }
+    const entry = record(dir, diffs, source);
+    if (diffs.length || known) writeSnapshot(dir, snapTo(snap, dir, diffs.map(d => d.name)));
+    return entry;
+  }
+}
+
+// ---------- 撤销：按行反着打补丁 ----------
+
+// 两份文本的不同之处（按行，最长公共子序列）：[{ a, aEnd, b, bEnd }] 表示 A[a..aEnd) 换成了 B[b..bEnd)
+function diffLines(A, B) {
+  const n = A.length, m = B.length;
+  const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const hunks = [];
+  let i = 0, j = 0, cur = null;
+  const flush = () => { if (cur) { cur.aEnd = i; cur.bEnd = j; hunks.push(cur); cur = null; } };
+  while (i < n || j < m) {
+    if (i < n && j < m && A[i] === B[j]) { flush(); i++; j++; continue; }
+    if (!cur) cur = { a: i, b: j };
+    if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) j++; else i++;
+  }
+  flush();
+  return hunks;
+}
+
+// 把 before → after 这次改动从 current 里撤掉（current 之后可能又被改过）。返回新文本，一处都撤不掉返回 null。
+// 每一处：after 里的那几行在 current 里找得到（离原位最近的一处）就换回 before 的；纯删除的按前后的行找回原位插回去
+function reversePatch(current, before, after) {
+  const nl = T.lineEnding(current);
+  const B = T.splitLines(before), A = T.splitLines(after);
+  const cur = T.splitLines(current);
+  let done = 0;
+  for (const h of diffLines(B, A).reverse()) {
+    const want = A.slice(h.b, h.bEnd), put = B.slice(h.a, h.aEnd);
+    let at = -1;
+    if (want.length) {
+      const hits = [];
+      for (let k = 0; k + want.length <= cur.length; k++) if (want.every((l, x) => cur[k + x] === l)) hits.push(k);
+      if (hits.length) at = hits.reduce((best, k) => (Math.abs(k - h.b) < Math.abs(best - h.b) ? k : best));
+    } else {
+      const prev = h.b > 0 ? A[h.b - 1] : null, next = h.b < A.length ? A[h.b] : null;
+      const near = (line, off) => { const hits = cur.map((l, k) => (l === line ? k + off : -1)).filter(k => k >= 0); return hits.length ? hits.reduce((best, k) => (Math.abs(k - h.b) < Math.abs(best - h.b) ? k : best)) : -1; };
+      at = prev != null ? near(prev, 1) : next != null ? near(next, 0) : 0;
+    }
+    if (at < 0) continue;
+    cur.splice(at, want.length, ...put);
+    done++;
+  }
+  return done ? cur.join(nl) : null;
+}
+
+// 最近的改动（新的在前），标出已撤销的
+function readChanges(dir, limit = 20) {
+  let text = '';
+  try { text = readTail(metaFile(dir, 'changes.jsonl'), 4 << 20); } catch {}
+  const entries = text.split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   const undone = new Set(entries.filter(e => e.undone).map(e => e.undone));
-  // 整棵树换过（初始化整份写入、撤销初始化整份放回）以后，更早的改树的改动不能再撤：反操作按需求 ID 找，
-  // 新树里同号的是另一个需求（模板和初始化都从 R1 编起），撤销会把规则加到别处（2026-10-25 测出）
-  const whole = new Set(entries.filter(e => e.id && Array.isArray(e.ops) && e.ops.some(o => o.op === 'doc_write' && samePath(path.resolve(path.dirname(treePath), o.file), treePath))).map(e => e.id));
-  const replaced = Math.max(0, ...entries.filter(e => whole.has(e.id) || whole.has(e.undone)).map(e => e.time || 0));
-  const touchesTree = e => e.ops.some(o => !isFileOp(o)) || whole.has(e.id);
-  return entries.filter(e => e.id && Array.isArray(e.ops))
-    .map(e => ({ ...e, undone: undone.has(e.id), undoable: undoable(e) && !(e.time < replaced && touchesTree(e)) })).reverse().slice(0, limit);
+  return entries.filter(e => e.id && Array.isArray(e.files))
+    .map(e => ({ ...e, undone: undone.has(e.id), undoable: !undone.has(e.id) })).reverse().slice(0, limit);
 }
+// 给面板的：不带文件全文（太大）
+const changeSummaries = (dir, limit) => readChanges(dir, limit).map(({ files, ...e }) => e);
 
-// 写入 + 写完之后的收尾。没给 write 就加锁同步写；给了（插件的 writeTree，异步）就交给它，返回 Promise。
-// 插件要自己写，是因为用户可能在编辑器里有没保存的改动：直接写磁盘的话，用户一保存就把这次改动盖掉。
-function writeThen(treePath, update, write, after) {
-  if (!write) { updateTree(treePath, update); return after(); }
-  return Promise.resolve(write(treePath, update)).then(after);
-}
-
-// 改树的唯一入口：加锁写入、自动编译、记一条改动。source：'记录员' | '你' | '体检' | '初始化' | '整理'。
-// id：这条改动记录用的编号（问题要记下默认做法是哪条改动，之后好撤销）；不给就新起一个。
-// 返回生效的改动（数组），数组上另挂 skipped：没做成的改动和原因（见 parser.applyOps）
-// 改记忆文件、文档的操作（memory_*，见 src/memory.js；doc_*，见 src/docs.js）不改树，和树的改动记成同一条。
-// 它们放在树写成功之后才改：同一批里树的改动没写进去（找不到需求、找不到规则……，「已经有了」不算），
-// 或者写树出错，记忆和文档都不动，免得规则从记忆、文档里删了，树里却没加上
-function applyChange(treePath, ops, { source, write, id } = {}) {
-  const mem = require('./memory'), Docs = require('./docs');
-  const fileOps = (ops || []).filter(isFileOp);
-  const treeOps = (ops || []).filter(o => !isFileOp(o));
-  let applied = [], skipped = [];
-  const update = text => { const r = applyOps(text, treeOps); applied = r.applied; skipped = r.skipped; return r.text; };
-  const after = () => {
-    const blocked = skipped.some(s => s.reason !== 'duplicate' && s.reason !== 'same');
-    for (const o of fileOps) {
-      let a = null;
-      if (!blocked) try { a = o.op === 'memory_remove' ? mem.removeMemory(treePath, o) : Docs.isDocOp(o) ? Docs.doDoc(treePath, o) : null; } catch {}
-      if (a) applied.push(a); else skipped.push({ op: o, reason: blocked ? 'blocked' : 'no-rule' });
-    }
-    if (applied.length) {
-      logChange(treePath, { id: id || newChangeId(), time: Date.now(), source, summary: applied.map(describeOp), ops: applied });
-    }
-    applied.skipped = skipped;
-    return applied;
-  };
-  if (!treeOps.length) return write ? Promise.resolve(after()) : after();
-  return writeThen(treePath, update, write, after);
-}
-
-// 撤销某次改动：反操作倒着执行。一条都没生效（已经撤销过，或者内容早被改掉了）返回 false，也不记成已撤销
-function undoChange(treePath, id, { write } = {}) {
-  const entry = readChanges(treePath, 500).find(e => e.id === id);
-  if (!entry || entry.undone || !entry.undoable) return write ? Promise.resolve(false) : false;
-  const all = entry.ops.slice().reverse().flatMap(o => o.undo || []);
-  // 记忆文件、文档的反操作（memory_restore、doc_restore）不改树，直接做
-  const mem = require('./memory'), Docs = require('./docs');
-  // 整棵树放回（撤销初始化）时，之后的改动记进树的规则会跟着消失（体检可能已经把它们从文档里删了）：
-  // 先收起来，放回后加到根上，不丢
-  const wholeTree = all.some(u => u.op === 'doc_put_back' && samePath(path.resolve(path.dirname(treePath), u.file), treePath));
-  const kept = wholeTree ? readChanges(treePath, 500).filter(e => e.time > entry.time && !e.undone)
-    .flatMap(e => e.ops).filter(o => /^(add|replace|override)_rule$/.test(o.op)).map(o => (o.op === 'override_rule' ? o.new : o.text)).filter(Boolean) : [];
+// 撤销一条改动：每个文件反着打补丁。一处都没撤成（早被改掉了）返回 false，也不记成已撤销
+function undoUnlocked(dir, id) {
+  const entry = readChanges(dir, 500).find(e => e.id === id);
+  if (!entry || entry.undone) return false;
+  const disk = readFiles(dir);
+  const next = new Map(disk);
+  const idOf = f => T.parseFile(f.name, f.after != null ? f.after : f.before).id;
+  // 改名（同一个编号，新文件建了、旧文件删了）：新文件后来又被改过、删不掉时，旧文件也不放回，不然有两个同编号的需求
+  const stuck = new Set(entry.files.filter(f => f.before == null && f.after != null && disk.has(f.name) && disk.get(f.name) !== f.after).map(idOf));
   let count = 0;
-  for (const u of all.filter(isFileOp)) { try { if (Docs.isDocOp(u) ? Docs.undoDoc(treePath, u) : mem.restoreMemory(u)) count++; } catch {} }
-  if (kept.length && fs.existsSync(treePath)) {
-    const top = parse(fs.readFileSync(treePath, 'utf8')).children[0];
-    if (top) all.push(...kept.map(text => ({ op: 'add_rule', node: top.id, text })));
+  for (const f of entry.files) {
+    const cur = disk.has(f.name) ? disk.get(f.name) : null;
+    if (f.after == null) { if (cur == null && !stuck.has(idOf(f))) { next.set(f.name, f.before); count++; } continue; }
+    if (cur === f.after) { if (f.before == null) next.delete(f.name); else next.set(f.name, f.before); count++; continue; }
+    if (f.before == null || cur == null) continue; // 新建的文件后来又改过、或已经删了：不动
+    const t = reversePatch(cur, f.before, f.after);
+    if (t != null) { next.set(f.name, t); count++; }
   }
-  const undo = all.filter(u => !isFileOp(u));
-  // 只有文件的反操作（初始化：需求树本身也是整份放回的）：不再写树，放回的树重新编译
-  if (!undo.length) {
-    if (count) {
-      logChange(treePath, { undone: id, time: Date.now() });
-      if (all.some(u => u.op === 'doc_put_back') && fs.existsSync(treePath)) compileTree(treePath, { force: true });
-    }
-    return write ? Promise.resolve(count > 0) : count > 0;
-  }
-  const update = text => { const r = applyOps(text, undo); count += r.applied.length; return r.text; };
-  return writeThen(treePath, update, write, () => {
-    if (count) logChange(treePath, { undone: id, time: Date.now() });
-    return count > 0;
-  });
+  if (!count) return false;
+  const diffs = writeFiles(dir, disk, next);
+  logChange(dir, { undone: id, time: Date.now() });
+  const snap = readSnapshot(dir) || {};
+  writeSnapshot(dir, snapTo(snap, dir, diffs.map(d => d.name)));
+  // 有的文件后来又被改过、撤不回去：返回 'partial'，插件提醒用户（这条也算撤销过了，不能再撤）
+  return count < entry.files.length ? 'partial' : true;
+}
+const undoChange = (dir, id) => withLock(rulesLock(dir), () => undoUnlocked(dir, id));
+const undoChangeAsync = (dir, id) => retryBusy(w => withLock(rulesLock(dir), () => undoUnlocked(dir, id), w));
+
+// 改动记录只留最近 500 条（每条带文件全文）
+function trimChanges(dir) {
+  const f = metaFile(dir, 'changes.jsonl');
+  try {
+    if (fs.statSync(f).size < 2 << 20) return;
+    withLock(rulesLock(dir), () => atomicWrite(f, fs.readFileSync(f, 'utf8').trim().split('\n').slice(-500).join('\n') + '\n'));
+  } catch {}
 }
 
-// ---------- 排队：用户正在编辑需求树时，记录员的改动先放进 queue.json ----------
-// 记录员（后台进程）往里加、hook 和插件往外取，读改写要加锁，否则会丢条目
-const queueLock = treePath => metaFile(treePath, 'queue.lock');
-
-// qid：这组改动是某个问题的默认做法。排队时每条带上 qid，写入时单独记成一条改动，再把改动编号补进问题（见 flushQueue）。
-// 返回 { queued 排队条数, applied, skipped 没做成的, id 改动编号（一条都没生效或在排队时为 null） }
-function submitOps(treePath, ops, { qid } = {}) {
-  const queued = withLock(queueLock(treePath), () => {
-    if (!isEditing(treePath)) return 0;
-    const q = metaFile(treePath, 'queue.json');
-    writeJson(q, [...readJson(q, []), ...ops.map(o => (qid ? { ...o, qid } : o))]);
-    return ops.length;
-  });
-  if (queued) return { queued, applied: [], skipped: [], id: null };
-  const id = newChangeId();
-  const applied = applyChange(treePath, ops, { source: '记录员', id });
-  return { queued: 0, applied, skipped: applied.skipped || [], id: applied.length ? id : null };
+// ---------- 程序状态：state.json ----------
+const DEFAULT_STATE = { since: null, touched: {} };
+function readState(dir) {
+  const cur = readJson(metaFile(dir, 'state.json'), null) || {};
+  return { ...DEFAULT_STATE, since: cur.since || null, touched: { ...(cur.touched || {}) } };
+}
+function updateState(dir, fn) {
+  return withLock(stateLock(dir), () => {
+    const next = fn(readState(dir));
+    const file = metaFile(dir, 'state.json'), text = JSON.stringify(next, null, 2);
+    let old = null;
+    try { old = fs.readFileSync(file, 'utf8'); } catch {}
+    if (old !== text) atomicWrite(file, text); // 内容没变不写：插件监视 .ruletree/*.json，每写一次就刷新一次
+    return next;
+  }, STATE_WAIT_MS, STATE_STALE_MS);
+}
+// 开始跟踪的时间：判断「🔨 很久没动」时，没被跟踪过的需求从这一刻算起（刚装好不误报）
+function ensureTracking(dir) {
+  const s = readState(dir);
+  return s.since ? s : updateState(dir, st => (st.since ? st : { ...st, since: Date.now() }));
+}
+function touch(dir, ids) {
+  const now = Date.now();
+  updateState(dir, s => ({ ...s, touched: { ...s.touched, ...Object.fromEntries(ids.map(id => [id, now])) } }));
 }
 
-// 问题的默认做法还在排队（用户在编辑、没保存）时，用户已经选了别的：把这个问题的那几条从队列里拿掉。返回拿掉了几条
-function dropQueued(treePath, qid) {
-  return withLock(queueLock(treePath), () => {
-    const q = metaFile(treePath, 'queue.json');
-    const list = readJson(q, []);
-    const rest = list.filter(o => o.qid !== qid);
-    if (rest.length === list.length) return 0;
-    if (rest.length) writeJson(q, rest); else try { fs.unlinkSync(q); } catch {}
-    return list.length - rest.length;
-  });
+// ---------- 只追加的日志 ----------
+// activity.jsonl  AI 改了哪些文件 { node, file, time, session, agent }；node 为 null 表示这个文件不属于任何需求
+// context.jsonl   Claude Code 往上下文里加载了哪些规则文件 { session, agent, file, chars, reason, source, node, trigger, parent, time }
+function appendLog(dir, name, entry) {
+  fs.mkdirSync(path.join(dir, META_DIR), { recursive: true });
+  fs.appendFileSync(metaFile(dir, name), JSON.stringify(entry) + '\n');
+}
+function readLog(dir, name, sinceMs, tailBytes = 256 * 1024) {
+  let text;
+  try { text = readTail(metaFile(dir, name), tailBytes); } catch { return []; }
+  const cutoff = Date.now() - sinceMs;
+  return text.split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(e => e && e.time >= cutoff);
+}
+// 日志太长就只留最近 2000 行
+function trimLog(dir, name) {
+  const f = metaFile(dir, name);
+  try {
+    if (fs.statSync(f).size < 512 * 1024) return;
+    atomicWrite(f, fs.readFileSync(f, 'utf8').trim().split('\n').slice(-2000).join('\n') + '\n');
+  } catch {}
+}
+const appendActivity = (dir, e) => appendLog(dir, 'activity.jsonl', e);
+const readActivity = (dir, sinceMs) => readLog(dir, 'activity.jsonl', sinceMs);
+const appendContext = (dir, e) => appendLog(dir, 'context.jsonl', e);
+const readContext = (dir, sinceMs) => readLog(dir, 'context.jsonl', sinceMs, 512 * 1024);
+
+// .ruletree/ 不进 git（规则文件进）。返回改了没有
+function ensureGitignore(dir) {
+  const gi = path.join(dir, '.gitignore');
+  let text = '';
+  try { text = fs.readFileSync(gi, 'utf8'); } catch {}
+  if (/^\.ruletree\/?$/m.test(text)) return false;
+  fs.writeFileSync(gi, text + (text && !text.endsWith('\n') ? '\n' : '') + '.ruletree/\n');
+  return true;
 }
 
-// 用户保存后（或下一次 hook 时）把队列写进去。插件传 write，返回 Promise。
-// 队列锁只在读写一个小 JSON 的一瞬间被占着，插件这边只同步等很短的时间
-function flushQueue(treePath, { write } = {}) {
-  const ops = withLock(queueLock(treePath), () => {
-    if (isEditing(treePath)) return [];
-    const q = metaFile(treePath, 'queue.json');
-    const list = readJson(q, []);
-    if (list.length) try { fs.unlinkSync(q); } catch {}
-    return list;
-  }, write ? 300 : LOCK_WAIT_MS);
-  if (!ops.length) return write ? Promise.resolve([]) : [];
-  // 带 qid 的是某个问题的默认做法：每个问题单独记一条改动，把编号补进 questions.jsonl，用户改选别的时才撤得掉
-  const groups = new Map();
-  for (const { qid, ...o } of ops) {
-    const k = qid || '';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(o);
+// ---------- 新项目 ----------
+// 第一棵树：根需求 + 按项目最上一层的文件夹各建一个需求（带上文件范围）。文件跟着 .gitignore；文件夹太多只取文件最多的 INIT_MAX 个
+const INIT_MAX = 12;
+const ROOT_INTRO = '这里是全项目都要守的规则。每个需求一个文件，在同一个文件夹里；改名、合并、删掉都行。';
+function initialFiles(dir) {
+  const files = new Map([[T.ROOT_FILE, `# P ${path.basename(dir)}\n${ROOT_INTRO}\n`]]);
+  let list = [];
+  try { list = require('./files').listFiles(dir); } catch {}
+  const count = new Map();
+  for (const f of list) {
+    const i = f.indexOf('/');
+    if (i < 0) continue;
+    const top = f.slice(0, i);
+    if (top.startsWith('.') || /^(node_modules|dist|build|out|target|coverage|vendor)$/i.test(top)) continue;
+    count.set(top, (count.get(top) || 0) + 1);
   }
-  const all = [];
-  const steps = [...groups].map(([qid, list]) => () => {
-    const id = newChangeId();
-    const done = applied => {
-      all.push(...applied);
-      if (qid && applied.length) appendLog(treePath, 'questions.jsonl', { update: qid, changeId: id, time: Date.now() });
-    };
-    const r = applyChange(treePath, list, { source: '记录员', write, id });
-    return write ? r.then(done) : done(r);
+  [...count].sort((a, b) => b[1] - a[1]).slice(0, INIT_MAX).forEach(([t], i) => {
+    files.set(T.fileName(`R${i + 1}`, t), T.newFile({ id: `R${i + 1}`, title: t, globs: [`${t}/**`] }));
   });
-  if (!write) { steps.forEach(s => s()); return all; }
-  return steps.reduce((p, s) => p.then(s), Promise.resolve()).then(() => all);
+  return files;
 }
 
 module.exports = {
-  findTree, samePath, pathKey, caseInsensitive, TEMPLATE, FOLDER_INTRO, initialTree, metaFile, readJson, writeJson, readTail,
-  updateTree, updateTreeAsync, compileTree, readCompileStatus,
-  isEditing, setEditing, submitOps, flushQueue, dropQueued, appendLog, newChangeId, describeOp,
-  readState, updateState, writeRecorderStatus, readRecorderStatus, touch, readTouched,
-  appendActivity, readActivity, trimActivity, appendMemoryWrite, readMemoryWrites, trimMemoryWrites, appendContext, readContext, trimContext, readConfig, writeConfig, ensureTracking,
-  applyChange, undoChange, readChanges,
+  RULES_DIR, META_DIR, rulesDir, metaFile, legacyTree, hasRules, isProject, samePath, pathKey, caseInsensitive,
+  atomicWrite, readJson, writeJson, readTail, withLock,
+  readFiles, readTree, commit, commitAsync, replaceAll, syncFiles, syncFilesAsync, readChanges, changeSummaries, undoChange, undoChangeAsync, trimChanges,
+  describeChange, describeOp, diffLines, reversePatch,
+  readState, updateState, ensureTracking, touch,
+  appendLog, readLog, trimLog, appendActivity, readActivity, appendContext, readContext,
+  initialFiles, ROOT_INTRO, ensureGitignore,
 };

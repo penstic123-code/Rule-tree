@@ -2,120 +2,86 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { parse, walk, findById, pathOf, relocate, nodeForFile, splitGlobs } = require('./src/parser');
+const T0 = require('./src/tree');
 const store = require('./src/store');
 const { samePath } = store;
 const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./src/viewmodel');
 const { suggest } = require('./src/guess');
-const reqtree = require('./bin/reqtree');
-const Q = require('./src/questions');
-const { runCheckup, checkPlan } = require('./src/checkup');
-const CHECK_PICK_KEY = 'reqtree.checkupParts';
+const { ensureGuide } = require('./src/guide');
+const cli = require('./bin/ruletree');
 const memory = require('./src/memory');
 const STRINGS = require('./media/strings');
 
-// 界面语言：设置 reqtree.language（auto / zh / en）。auto：VS Code 是中文界面就用中文；英文界面时看需求树写的是什么语言
-// （不少中文用户的 VS Code 是英文界面，需求树却是中文写的，通知和面板该跟着树走）。插件的提示和网页用同一张文字表
+// 界面语言：设置 ruletree.language（auto / zh / en）。auto：VS Code 是中文界面就用中文；英文界面时看规则文件写的是什么语言
+// （不少中文用户的 VS Code 是英文界面，规则却是中文写的，通知和面板该跟着规则走）
 let treeLangCache = null;
 function treeLang() {
   if (treeLangCache && Date.now() - treeLangCache.at < 60000) return treeLangCache.lang;
   let l = null;
   try {
-    const t = findTrees()[0];
-    if (t) {
-      const s = fs.readFileSync(t, 'utf8').slice(0, 20000);
+    const p = findProjects()[0];
+    if (p) {
+      const s = [...store.readFiles(p).values()].join('\n').slice(0, 20000);
       const cjk = (s.match(/[一-鿿]/g) || []).length, latin = (s.match(/[A-Za-z]+/g) || []).length;
-      l = cjk > latin ? 'zh' : 'en';
+      if (s.trim()) l = cjk > latin ? 'zh' : 'en';
     }
   } catch {}
   treeLangCache = { at: Date.now(), lang: l };
   return l;
 }
+const setting = (k, d) => { const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('ruletree') : null; return cfg ? cfg.get(k, d) : d; };
 function lang() {
-  const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('reqtree') : null;
-  const setting = cfg ? cfg.get('language', 'auto') : 'auto';
+  const s = setting('language', 'auto');
   const display = vscode.env && vscode.env.language;
-  if (setting === 'auto' && !/^zh/i.test(display || '') && treeLang() === 'zh') return 'zh';
-  return STRINGS.pick(setting, display);
+  if (s === 'auto' && !/^zh/i.test(display || '') && treeLang() === 'zh') return 'zh';
+  return STRINGS.pick(s, display);
 }
 const T = (k, ...a) => STRINGS.make(lang())(k, ...a);
-// 出错文字：带结构化 t（{ k, a }）的按当前语言写，没有就用 message（Node 自己的错误本来就是英文）
+// 出错文字：带结构化 t（{ k, a }）的按当前语言写，没有就用 message
 const errText = e => (e && e.t && e.t.k in STRINGS.zh ? T(e.t.k, ...(e.t.a || [])) : (e && e.message) || String(e));
 
-// ---------- 拿不准就问（src/questions.js） ----------
-// 设置 reqtree.askQuestions：notify 弹通知问（默认）| panel 只在侧栏图标上显示个数 | off 不问，记录员的默认做法直接算数
-const askMode = () => {
-  const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('reqtree') : null;
-  const v = cfg ? cfg.get('askQuestions', 'notify') : 'notify';
-  return v === 'panel' || v === 'off' ? v : 'notify';
-};
-// 问题和选项的文字：程序生成的（久未动）带结构化 t，按界面语言显示；记录员和体检的按用户的语言写好了
-const tx = (t, fallback) => (t && t.k in STRINGS.zh ? T(t.k, ...(t.a || [])) : fallback);
-const qText = q => tx(q.t, q.text);
-const optLabel = o => tx(o.t, o.label);
-// 同时最多弹几个问题通知，其余的等前面的答完（或在「待回答的问题」里答）
-const NOTIFY_MAX = 3;
-
-// 设置 reqtree.memoryMode：dedupe（默认）留着 Claude Code 的自动记忆，体检时查和需求树重复的；
-// treeOnly 在项目的 .claude/settings.local.json 写 "autoMemoryEnabled": false 关掉自动记忆（键名见官方文档 code.claude.com/docs/en/memory）
-const memoryMode = () => {
-  const cfg = vscode.workspace.getConfiguration ? vscode.workspace.getConfiguration('reqtree') : null;
-  return cfg && cfg.get('memoryMode', 'dedupe') === 'treeOnly' ? 'treeOnly' : 'dedupe';
-};
-// 按设置开关每个项目的自动记忆。改了文件才提示一次（新开会话后生效）
-// changed：用户刚在设置里改了 memoryMode。启动时只在 treeOnly 下关掉自动记忆；默认模式下不碰设置——
-// 不然用户自己在 Claude Code 里关掉的自动记忆，每次启动都会被悄悄打开（评审发现的 bug）
+// 设置 ruletree.memoryMode：keep（默认）不碰 Claude Code 的自动记忆；treeOnly 在项目的 .claude/settings.local.json 写 "autoMemoryEnabled": false。
+// changed：用户刚在设置里改了。启动时只在 treeOnly 下关掉；默认模式下不碰（不然用户自己关掉的自动记忆每次启动都会被打开）
+const memoryMode = () => (setting('memoryMode', 'keep') === 'treeOnly' ? 'treeOnly' : 'keep');
 function applyMemoryMode(changed = false) {
   const off = memoryMode() === 'treeOnly';
   if (!off && !changed) return;
-  for (const f of (vscode.workspace.workspaceFolders || []).filter(x => x.uri.scheme === 'file')) {
-    const dir = f.uri.fsPath;
-    if (!store.findTree(dir)) continue;
+  for (const dir of findProjects()) {
     try { if (memory.setAutoMemory(dir, !off)) vscode.window.showInformationMessage(T(off ? 'mem.off' : 'mem.on')); }
     catch (e) { vscode.window.showWarningMessage(T('mem.fail', errText(e))); }
   }
 }
-const SNOOZE_KEY = 'reqtree.snoozedQuestions';
 
-// 和 hook 用同一个规则：每个工作区文件夹根目录下的 需求树.md / *.tree.md
-function findTrees() {
-  return (vscode.workspace.workspaceFolders || [])
-    .filter(f => f.uri.scheme === 'file')
-    .map(f => store.findTree(f.uri.fsPath))
-    .filter(Boolean);
-}
-
-const openDoc = p => vscode.workspace.textDocuments.find(d => d.uri.scheme === 'file' && samePath(d.uri.fsPath, p));
-// 树现在的内容：编辑器里有没保存的改动就以编辑器为准
-const currentText = p => { const doc = openDoc(p); return doc && doc.isDirty ? doc.getText() : fs.readFileSync(p, 'utf8'); };
-
-// 写树：编辑器里有未保存的改动时改编辑器内容（保留用户的改动），否则加锁写文件。
-// 用户在面板上点的操作改完就保存；后台体检（save: false）不替用户保存写到一半的内容，等用户自己保存。
-// 插件里所有写树都走这里（store.applyChange/undoChange/flushQueue 的 write 参数也传它）。
-// 加锁用异步重试，不在插件宿主里同步等锁（见 store.updateTreeAsync）
-async function writeTree(treePath, update, { save = true } = {}) {
-  const doc = openDoc(treePath);
-  if (doc && doc.isDirty) {
-    const updated = update(doc.getText());
-    if (updated === doc.getText()) return;
-    const edit = new vscode.WorkspaceEdit();
-    edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), updated);
-    // 没改成（文件只读、被别的扩展拦下）就报错：调用方（store.applyChange）不能把这次改动记下来、也不能接着改记忆和文档
-    if (!(await vscode.workspace.applyEdit(edit))) throw new Error(T('x.editFail'));
-    if (save) await doc.save();
-  } else {
-    await store.updateTreeAsync(treePath, update);
-  }
+const fileFolders = () => (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file');
+// 用需求树的项目：工作区文件夹里有 .claude/rules/ruletree/ 的规则文件（或者还没升级的旧 需求树.md）
+const findProjects = () => fileFolders().map(f => f.uri.fsPath).filter(store.isProject);
+const ruleFileOf = (dir, name) => path.join(store.rulesDir(dir), name);
+// 规则文件 → 它所在的项目和文件名；不是规则文件返回 null
+function ruleDoc(doc, projects) {
+  if (doc.uri.scheme !== 'file') return null;
+  const f = doc.uri.fsPath;
+  const dir = projects.find(d => samePath(path.dirname(f), store.rulesDir(d)));
+  return dir && T0.isRuleFile(path.basename(f)) ? { dir, name: path.basename(f) } : null;
 }
 
 // 面板操作没改动时告诉用户为什么，按操作区分（文字在 strings.js 的 x.nc.<op>）
 const noChangeWhy = op => { const k = 'x.nc.' + op; return k in STRINGS.zh ? T(k) : T('x.noChangeAny'); };
 
-// 最近一周 AI 改过、但现在仍不属于任何需求的文件（面板上可以一键归到需求）
-function unmappedFiles(treePath) {
-  const root = parse(fs.readFileSync(treePath, 'utf8'));
-  const files = new Set(store.readActivity(treePath, 7 * 86400000).map(e => e.file));
-  return [...files].filter(f => !nodeForFile(root, f)).slice(-8);
+// 最近一周 AI 改过、但现在不属于任何需求的文件（面板上可以一键归到需求）
+function unmappedFiles(dir, root) {
+  const files = new Set(store.readActivity(dir, 7 * 86400000).filter(e => !e.rule).map(e => e.file));
+  return [...files].filter(f => !T0.nodeForFile(root, f)).slice(-8);
+}
+
+// 升级旧版：旧的 需求树.md 拆成规则文件、旧 hook 换成新的（init 一起做）。每个项目每次打开 VS Code 只试一次
+const upgraded = new Set();
+function upgradeIfOld(dir) {
+  if (upgraded.has(dir) || !(store.legacyTree(dir) || cli.hasOldHooks(dir))) return;
+  upgraded.add(dir);
+  try {
+    const r = cli.init(dir, { log: () => {} });
+    vscode.window.showInformationMessage(r.upgraded ? T('x.upgraded', r.upgraded.count, path.relative(dir, r.upgraded.legacy)) : T('x.upgradedHooks'));
+  } catch (e) { vscode.window.showWarningMessage(T('x.upgradeFail', errText(e))); }
 }
 
 class Panel {
@@ -123,57 +89,40 @@ class Panel {
     this.context = context;
     this.trees = [];
     this.view = null;
-    this.notified = new Set(); // 这次打开 VS Code 已经弹过通知的问题
-    this.showing = 0;
-    this.asking = Promise.resolve(); // 测试用：等通知走完
   }
 
   load() {
-    this.trees = findTrees().map(p => {
-      // 树一变就编译成原生规则（内容没变不会重写）。不等锁：锁被占着说明别人正在写树，它释放前会编译
-      try { store.compileTree(p, { wait: false }); } catch (e) { console.error(e); }
-      // 记下开始跟踪的时间（判断「久未动」从这一刻算起）
+    this.trees = findProjects().map(dir => {
+      upgradeIfOld(dir);
+      try { ensureGuide(dir); } catch (e) { console.error(e); }
+      // 别的途径（命令行、git、手动在别处改）改了规则文件：补记成「其他」的改动。最近 5 秒内改的先不记：可能是 AI 刚改的，hook 马上以「AI」记
+      store.syncFilesAsync(dir, null, '其他', { minAgeMs: 5000 }).catch(e => console.error(e));
       let state;
-      try { state = store.ensureTracking(p); } catch (e) { console.error(e); state = store.readState(p); }
+      try { state = store.ensureTracking(dir); } catch (e) { console.error(e); state = store.readState(dir); }
+      const files = store.readFiles(dir);
       return {
-        path: p,
-        uri: vscode.Uri.file(p).toString(),
-        name: vscode.workspace.asRelativePath(p),
-        text: fs.readFileSync(p, 'utf8'),
-        activity: store.readActivity(p, ACTIVE_FOR_MS).filter(e => e.node),
-        config: store.readConfig(p),
-        since: state.since,
-        touched: state.touched,
-        recorder: state.recorder,
-        compile: state.compile,
-        changes: store.readChanges(p, 8),
-        unmapped: unmappedFiles(p),
-        context: store.readContext(p, CONTEXT_WINDOW_MS),
-        questions: openQuestionsOf(p),
-        categories: require('./src/categories').read(p), // 体检分好的规则分类，只改面板显示
-        dir: path.dirname(p), // 查挂的文档在不在
+        dir, files,
+        uri: vscode.Uri.file(store.rulesDir(dir)).toString(),
+        name: path.basename(dir),
+        activity: store.readActivity(dir, ACTIVE_FOR_MS).filter(e => e.node),
+        since: state.since, touched: state.touched,
+        changes: store.changeSummaries(dir, 8),
+        unmapped: unmappedFiles(dir, T0.build(files)),
+        context: store.readContext(dir, CONTEXT_WINDOW_MS),
+        categories: require('./src/categories').read(dir),
       };
     });
     this.push();
-    this.handleQuestions();
   }
 
   // 侧栏和导图收到同一份数据
   push() {
-    // askQuestions 为 off 时不问用户，面板也就当没有问题（「久未动」提示照常显示）
-    const data = viewData(askMode() === 'off' ? this.trees.map(t => ({ ...t, questions: [] })) : this.trees);
-    // 侧栏图标上的数字：有问题等回答时显示问题个数（设置为 off 时不显示），否则记录员出错时显示 1
-    const asks = askMode() === 'off' ? 0 : this.trees.reduce((n, t) => n + (t.questions || []).length, 0);
-    if (vscode.commands.executeCommand) Promise.resolve(vscode.commands.executeCommand('setContext', 'reqtree.hasQuestions', asks > 0)).catch(() => {});
-    if (this.view) {
-      const err = data.files.some(f => f.recorder && !f.recorder.ok);
-      this.view.badge = asks ? { value: asks, tooltip: T('q.badge', asks) } : err ? { value: 1, tooltip: T('x.recorderBadge') } : undefined;
-      this.view.webview.postMessage(data);
-    }
+    const data = viewData(this.trees);
+    if (this.view) this.view.webview.postMessage(data);
     if (this.map) this.map.webview.postMessage(data);
   }
 
-  // 两个网页共用：只允许自己的样式和带 nonce 的脚本。分支颜色靠元素上的 style="--branch:…"，所以样式要放行 inline。
+  // 两个网页共用：只允许自己的样式和带 nonce 的脚本。分支颜色靠元素上的 style="--branch:…"，所以样式要放行 inline
   setHtml(webview, styles, scripts, body) {
     const media = vscode.Uri.joinPath(this.context.extensionUri, 'media');
     webview.options = { enableScripts: true, localResourceRoots: [media] };
@@ -183,9 +132,9 @@ class Panel {
     webview.html = `<!doctype html><html lang="${lg === 'en' ? 'en' : 'zh-CN'}"><head><meta charset="utf-8">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
       ${styles.map(s => `<link rel="stylesheet" href="${u(s)}">`).join('')}</head>
-      <body data-lang="${lg}">${body}${['strings.js', ...scripts].map(s => `<script nonce="${nonce}" src="${u(s)}"></script>`).join("")}</body></html>`;
-    if (!webview.__reqtreeListening) {
-      webview.__reqtreeListening = true;
+      <body data-lang="${lg}">${body}${['strings.js', ...scripts].map(s => `<script nonce="${nonce}" src="${u(s)}"></script>`).join('')}</body></html>`;
+    if (!webview.__ruletreeListening) {
+      webview.__ruletreeListening = true;
       webview.onDidReceiveMessage(msg => this.handle(msg).catch(e => vscode.window.showErrorMessage(T('x.error', errText(e)))));
     }
   }
@@ -199,13 +148,12 @@ class Panel {
   // 导图：编辑区里的大视图，可以拖出去成为独立窗口
   openMap() {
     if (this.map) { this.map.reveal(); return; }
-    this.map = vscode.window.createWebviewPanel('reqtree.map', T('x.mapTitle'), vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+    this.map = vscode.window.createWebviewPanel('ruletree.map', T('x.mapTitle'), vscode.ViewColumn.Active, { retainContextWhenHidden: true });
     this.map.iconPath = new vscode.ThemeIcon('type-hierarchy');
     this.setHtml(this.map.webview, ...MAP_HTML);
     this.map.onDidDispose(() => { this.map = null; });
   }
 
-  // 改了界面语言：两个网页按新语言重新生成（网页自己记的状态还在），再推一次数据
   relang() {
     if (this.view) this.setHtml(this.view.webview, ...VIEW_HTML);
     if (this.map) { this.map.title = T('x.mapTitle'); this.setHtml(this.map.webview, ...MAP_HTML); }
@@ -213,225 +161,52 @@ class Panel {
 
   treeOf(uri) { return this.trees.find(t => t.uri === uri); }
 
-  // ---------- 拿不准就问 ----------
-  snoozed() { const st = this.context.workspaceState; return (st && st.get(SNOOZE_KEY)) || []; }
-  snooze(id) {
-    const st = this.context.workspaceState;
-    if (st) return Promise.resolve(st.update(SNOOZE_KEY, [...this.snoozed().filter(x => x !== id), id].slice(-200))).catch(() => {});
+  async pickProject() {
+    const dirs = findProjects();
+    if (!dirs.length) { vscode.window.showWarningMessage(T('x.openFolder')); return null; }
+    if (dirs.length === 1) return dirs[0];
+    const pick = await vscode.window.showQuickPick(dirs.map(d => ({ label: path.basename(d), description: d, d })), { placeHolder: T('x.whichProject') });
+    return pick ? pick.d : null;
   }
 
-  // 新出现的问题：notify 弹通知；off 时默认做法已经写进树的问题（记录员的、体检的）都按默认做法算数
-  handleQuestions() {
-    const mode = askMode();
-    const snoozed = new Set(this.snoozed());
-    let accepted = false;
-    for (const t of this.trees) {
-      for (const q of t.questions || []) {
-        if (mode === 'off') {
-          if (q.defaultApplied) try { accepted = Q.acceptDefault(t.path, q.id) || accepted; } catch (e) { console.error(e); }
-          continue;
-        }
-        if (mode !== 'notify' || this.notified.has(q.id) || snoozed.has(q.id) || this.showing >= NOTIFY_MAX) continue;
-        this.notified.add(q.id);
-        const p = this.notify(t.path, q).catch(e => console.error(e));
-        this.asking = Promise.all([this.asking, p]);
-      }
-    }
-    if (accepted) this.load();
-  }
-
-  // 不挡操作的通知：问题 + 最多 3 个选项 +「以后再说」。选项多于 3 个时放 2 个，其余在「其他选项…」里
-  async notify(treePath, q) {
-    this.showing++;
-    let pick;
-    try {
-      const def = q.options[q.default];
-      const msg = q.defaultApplied ? T('q.notify', qText(q), optLabel(def)) : T('q.notifySuggest', qText(q), optLabel(def));
-      const many = q.options.length > 3;
-      const items = (many ? q.options.slice(0, 2) : q.options).map((o, i) => ({ title: optLabel(o) + (i === q.default && q.defaultApplied ? T('q.current') : ''), i }));
-      if (many) items.push({ title: T('q.more'), more: true });
-      items.push({ title: T('q.later'), later: true });
-      pick = await vscode.window.showInformationMessage(msg, ...items);
-    } finally { this.showing--; }
-    // 关掉通知和「以后再说」一样：不再弹，问题留着（侧栏图标上的数字、「待回答的问题」里还能答）
-    if (!pick || typeof pick !== 'object' || pick.later) return this.snooze(q.id);
-    if (pick.more) return this.chooseOption(treePath, q);
-    return this.answer(treePath, q, pick.i);
-  }
-
-  async answer(treePath, q, k) {
-    const r = await Q.answerQuestion(treePath, q.id, k, { write: writeTree });
-    if (!r.ok && r.reason !== 'busy') vscode.window.showWarningMessage(T('q.gone'));
-    this.load();
-    return r;
-  }
-
-  // 选择框：全部选项（标出现在用的、建议的）+「保持现在这样」
-  async chooseOption(treePath, q) {
-    const items = q.options.map((o, i) => ({
-      label: optLabel(o), i,
-      description: i === q.default ? (q.defaultApplied ? T('q.applied') : T('q.suggested')) : undefined,
-    }));
-    items.push({ label: T('q.keep'), description: T('q.keepTip'), keep: true });
-    const pick = await vscode.window.showQuickPick(items, { placeHolder: qText(q), ignoreFocusOut: true });
-    if (!pick) return;
-    if (pick.keep) { Q.dismissQuestion(treePath, q.id); this.load(); return; }
-    return this.answer(treePath, q, pick.i);
-  }
-
-  // 命令「需求树：待回答的问题」
-  async questionsCommand() {
-    this.load();
-    const all = this.trees.flatMap(t => (t.questions || []).map(q => ({ t, q })));
-    if (!all.length) { vscode.window.showInformationMessage(T('q.none')); return; }
-    let one = all[0];
-    if (all.length > 1) {
-      const pick = await vscode.window.showQuickPick(all.map(x => ({
-        label: qText(x.q),
-        description: `${x.q.defaultApplied ? T('q.applied') : T('q.suggested')} · ${optLabel(x.q.options[x.q.default])}`,
-        detail: this.trees.length > 1 ? x.t.name : undefined, x,
-      })), { placeHolder: T('q.pickQuestion') });
-      if (!pick) return;
-      one = pick.x;
-    }
-    return this.chooseOption(one.t.path, one.q);
-  }
-
-  // 命令「需求树：体检」：合并重复规则，处理冲突、记忆和文档（要调用模型），问不问由 Q.decide 定；结果写成报告
-  // preset（初始化之后自动体检用）：{ tree, parts }，不问查什么、不确认
-  async checkupCommand(preset) {
-    const trees = findTrees();
-    if (!trees.length) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
-    if (preset && preset.tree) return this.runCheck(preset.tree, preset.parts, false, memoryMode() === 'treeOnly' ? false : undefined);
-    let p = trees[0];
-    if (trees.length > 1) {
-      const pick = await vscode.window.showQuickPick(trees.map(t => ({ label: vscode.workspace.asRelativePath(t), p: t })), { placeHolder: T('q.whichTree') });
-      if (!pick) return;
-      p = pick.p;
-    }
-    // 树还是模板样子（没真正初始化过）：体检只整理规则、不建需求结构，先初始化（初始化完会接着体检文档和记忆）
-    if (needsInit(p)) return aiInit(path.dirname(p), this);
-    // 查什么：规则、记忆、文档（含 CLAUDE.md / AGENTS.md），默认全选，记住上次的选择；「全部重查」不管上次查过没有
-    const memOff = memoryMode() === 'treeOnly';
-    const st = this.context.workspaceState;
-    const last = (st && st.get(CHECK_PICK_KEY)) || ['rules', 'memory', 'docs'];
-    const items = [
-      { id: 'rules', label: T('q.pickRules'), detail: T('q.pickRulesTip') },
-      ...(memOff ? [] : [{ id: 'memory', label: T('q.pickMemory'), detail: T('q.pickMemoryTip') }]),
-      { id: 'docs', label: T('q.pickDocs'), detail: T('q.pickDocsTip') },
-      { id: 'full', label: T('q.pickFull'), detail: T('q.pickFullTip') },
-    ].map(i => ({ ...i, picked: last.includes(i.id) }));
-    const chosen = await vscode.window.showQuickPick(items, { canPickMany: true, placeHolder: T('q.pickWhat'), ignoreFocusOut: true });
-    if (!chosen || !chosen.some(c => c.id !== 'full')) return;
-    const ids = chosen.map(c => c.id);
-    if (st) st.update(CHECK_PICK_KEY, ids.filter(i => i !== 'full'));
-    const parts = { rules: ids.includes('rules'), memory: ids.includes('memory'), docs: ids.includes('docs') };
-    const full = ids.includes('full');
-    const memory = memOff ? false : undefined;
-    // 要调用好几次模型时先说一声
-    let plan = null;
-    try { plan = checkPlan(p, { read: currentText, parts, full, memory }); } catch {}
-    if (plan && plan.calls > 1) {
-      const go = await vscode.window.showInformationMessage(T('q.checkPlan', plan.notes.length, plan.docs.length, plan.calls), { modal: true }, T('q.checkGo'));
-      if (go !== T('q.checkGo')) return;
-    }
-    return this.runCheck(p, parts, full, memory);
-  }
-
-  // 跑体检、写报告、弹结果
-  async runCheck(p, parts, full, memory) {
-    // 同一棵树的体检正在跑（体检要十几分钟，按钮可能被再点一次）：不再开第二个，两个同时改树会互相打架
+  // 命令「需求树：体检」：程序检查 + 一次模型调用，能改的直接改（一条改动，可撤销），结果写成报告
+  async checkupCommand() {
+    const dir = await this.pickProject();
+    if (!dir) return;
     this.checking = this.checking || new Set();
-    if (this.checking.has(p)) return;
-    // 编辑器里有没保存的改动：体检删记忆、删文档行是直接改磁盘的，树的改动却只能写进编辑器，你不保存两边就对不上。先保存再体检
-    const doc = openDoc(p);
-    if (doc && doc.isDirty) { vscode.window.showWarningMessage(T('q.saveFirst')); return; }
-    this.checking.add(p);
-    const run = bar => runCheckup(p, { read: currentText, write: (t, u) => writeTree(t, u, { save: false }), memory, parts, full,
-      progress: (i, n) => { if (bar && n > 1) bar.report({ message: `${i}/${n}` }); } });
+    if (this.checking.has(dir)) return; // 同一个项目的体检正在跑：不再开第二个
+    this.checking.add(dir);
     let r;
     try {
+      const run = () => require('./src/checkup').runCheckup(dir, { T });
       r = vscode.window.withProgress && vscode.ProgressLocation
         ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('q.checking') }, run)
         : await run();
-    } finally { this.checking.delete(p); }
+    } finally { this.checking.delete(dir); }
     this.load();
-    const newQs = [...r.questions, ...r.stale, ...r.memory, ...(r.scope || []), ...(r.structure || []), ...(r.docs || [])];
-    const asked = newQs.length;
-    // 结果写成一份报告（通知过几秒就收起，报告随时能再打开）
-    const notes = [];
-    if (r.reorganized) notes.push(T('q.reorganized', countNodes(r.reorganized.nodes)));
-    if (r.error) notes.push(T('q.checkFail', errText(r.error), r.checked.failed, r.checked.calls));
-    if (r.noFiles && r.noFiles.length) notes.push(T('q.noFiles', r.noFiles));
-    if (r.missing && r.missing.length) notes.push(T('q.missing', r.missing));
-    if (r.docMissing && r.docMissing.length) notes.push(T('q.docMissing', r.docMissing));
-    if (r.docNoToc && r.docNoToc.length) notes.push(T('q.docNoToc', r.docNoToc));
-    if (r.docUnlinked && r.docUnlinked.length) notes.push(T('q.docUnlinked', r.docUnlinked));
-    if (r.toDoc && r.toDoc.length) notes.push(T('q.toDoc', r.toDoc));
-    if (r.docConflicts && r.docConflicts.length) notes.push(T('q.docConflicts', r.docConflicts));
-    if (r.docDup && r.docDup.length) notes.push(T('q.docDup', r.docDup));
-    if (r.docClash && r.docClash.length) notes.push(T('q.docClash', r.docClash));
-    const auto = r.auto || [];
-    const done = T('q.checkDone', r.merged.length, asked, (r.removed || []).length, (r.categorized || []).length, auto.length);
-    const report = [`# ${T('q.reportTitle')}`, '', new Date().toLocaleString(), '', done, '', T('q.reportChecked', r.checked.notes, r.checked.docs, r.checked.calls, r.checked.failed), ''];
-    if (asked) report.push(T('q.reportQuestions', asked), '', ...newQs.map(q => `- ${qText(q)}`), '');
-    // 要你动手的在前，做完了的、只给你知道的在后
-    if (notes.length) report.push(T('q.reportNotes'), '', ...notes.map(n => `- ${n}`), '');
-    // 直接处理了的：问题记录写「问的事 → 按哪个做的」，删文档重复的直接写做了什么
-    if (auto.length) report.push(T('q.reportAuto', auto.length), '', ...auto.map(a => `- ${qText(a)}${a.options ? ` → ${optLabel(a.options[a.default])}` : ''}`), '');
-    if (r.merged.length) report.push(T('q.reportMerged'), '', ...r.merged.map(o => `- ${o.node}：${o.text}`), '');
-    if (r.checks && r.checks.saved.length) report.push(T('q.checksSaved', r.checks.saved.length, r.checks.total), '', ...r.checks.saved.map(c => `- ${c.node}「${c.rule}」：${c.glob} · \`${c.forbid}\``), '');
-    if (!asked && !notes.length && !auto.length && !r.merged.length) report.push(T('q.reportNone'), '');
-    // 信息架构评分（src/health.js）：每次体检都写，前后能比
-    if (r.health) report.push(T('h.title'), '', T('h.note'), '', ...require('./src/health').summaryLines(r.health, T).map(l => `- ${l}`), '');
-    const reportFile = store.metaFile(p, 'checkup-report.md');
-    try { fs.mkdirSync(path.dirname(reportFile), { recursive: true }); fs.writeFileSync(reportFile, report.join('\n')); } catch {}
-    const buttons = [T('q.report'), ...(asked ? [T('q.answer')] : [])];
+    const done = T('ck.summary', r.applied.length, r.ask.length, r.notes.length);
     const show = r.error ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
-    Promise.resolve(show(r.error ? `${done}\n${notes[0]}` : done, ...buttons)).then(b => {
-      if (b === T('q.report')) vscode.window.showTextDocument(vscode.Uri.file(reportFile));
-      else if (b === T('q.answer')) this.questionsCommand();
+    Promise.resolve(show(r.error ? `${done}\n${T('ck.modelFail', errText(r.error))}` : done, T('q.report'))).then(b => {
+      if (b === T('q.report')) this.reportCommand(dir);
     }, () => {});
-    // 不弹通知的设置下，用户刚主动体检、正等着结果：直接打开问题列表
-    if (asked && askMode() !== 'notify') await this.questionsCommand();
     return r;
   }
 
-  // 命令「需求树：重新整理（AI）」：先定结构、再把现有规则原文挂上去（src/init.js reorganize），一条改动、可撤销
-  async reorganizeCommand() {
-    const trees = findTrees();
-    if (!trees.length) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
-    let p = trees[0];
-    if (trees.length > 1) {
-      const pick = await vscode.window.showQuickPick(trees.map(t => ({ label: vscode.workspace.asRelativePath(t), p: t })), { placeHolder: T('q.whichTree') });
-      if (!pick) return;
-      p = pick.p;
-    }
-    const go = await vscode.window.showInformationMessage(T('x.reorgAsk'), { modal: true }, T('x.reorgGo'));
-    if (go !== T('x.reorgGo')) return;
-    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('x.reorgRunning') },
-      () => require('./src/init').reorganize(p));
-    this.load();
-    if (r.ai) vscode.window.showInformationMessage(T('x.reorgDone', countNodes(r.nodes)));
-    else vscode.window.showWarningMessage(T('x.reorgFail', errText(r.error)));
-    return r;
-  }
-
-  // 命令「需求树：查看体检报告」：打开上次体检写下的报告（.reqtree/checkup-report.md）
-  async reportCommand() {
-    const f = findTrees().map(t => store.metaFile(t, 'checkup-report.md')).find(x => fs.existsSync(x));
+  // 命令「需求树：查看体检报告」
+  async reportCommand(dir) {
+    const f = (dir ? [dir] : findProjects()).map(d => store.metaFile(d, require('./src/checkup').REPORT)).find(x => fs.existsSync(x));
     if (!f) { vscode.window.showInformationMessage(T('q.noReport')); return; }
     await vscode.window.showTextDocument(vscode.Uri.file(f));
   }
 
-  // 面板上的编辑操作（树行和详情面板都发 edit 消息）。按需求 ID 定位（不怕文件被改过导致行号错位），
-  // 输入用 VS Code 自带的输入框和文件选择框。这些改动都记进改动记录，面板上可以撤销。
-  async edit(treePath, msg) {
-    const root = parse(currentText(treePath));
-    const node = msg.node && findById(root, msg.node);
+  // 面板上的编辑操作（树行和详情面板都发 edit 消息）。按需求编号定位，输入用 VS Code 自带的输入框和文件选择框。
+  // 这些改动都记进改动记录，面板上可以撤销
+  async edit(dir, msg) {
+    const root = store.readTree(dir);
+    const node = msg.node && T0.findById(root, msg.node);
     const ask = (prompt, value = '') => vscode.window.showInputBox({ prompt, value, ignoreFocusOut: true, validateInput: v => (v.trim() ? null : T('x.notEmpty')) });
     const apply = async ops => {
-      const done = await store.applyChange(treePath, ops, { source: '你', write: writeTree });
+      const done = await store.commitAsync(dir, ops, { source: '你' });
       if (!done.length) vscode.window.showInformationMessage(T('x.noChange', noChangeWhy(ops[0].op)));
       this.load();
       return done;
@@ -441,11 +216,10 @@ class Panel {
         const title = await ask(T('x.askNew', node ? node.title : T('x.top')));
         if (!title) return;
         const [added] = await apply([{ op: 'add_node', parent: msg.node, title }]);
-        if (added) await this.offerFiles(treePath, added.id, apply);
+        if (added) await this.offerFiles(dir, added.id, apply);
         return;
       }
       case 'rename': {
-        // 面板里直接改名时带着新名字（msg.title）；空名字不收。没带就弹输入框
         if (typeof msg.title === 'string') {
           const title = msg.title.trim();
           if (node && title) await apply([{ op: 'rename_node', node: node.id, title }]);
@@ -457,7 +231,7 @@ class Panel {
       }
       case 'delete': {
         if (!node) return;
-        const count = [...walk(node)].length;
+        const count = 1 + [...T0.walk(node)].length;
         const ok = await vscode.window.showWarningMessage(T('x.confirmDelete', node.title, count), { modal: true }, T('x.delete'));
         if (ok === T('x.delete')) await apply([{ op: 'delete_node', node: node.id }]);
         return;
@@ -481,18 +255,18 @@ class Panel {
       }
       case 'setFiles': {
         if (!node) return;
-        const globs = await this.pickFiles(treePath, node);
+        const globs = await this.pickFiles(dir, node);
         if (globs) await apply([{ op: 'set_files', node: node.id, globs }]);
         return;
       }
       case 'assignFile': {
         // AI 改了还没归属的文件：选它属于哪个需求，再选只要这个文件还是整个文件夹
-        const items = [...walk(root)].map(n => ({ label: `${n.id} ${n.title}`, description: n.files.join(', '), id: n.id }));
+        const items = [...T0.walk(root)].filter(n => !T0.isRoot(n)).map(n => ({ label: `${n.id} ${n.title}`, description: n.files.join(', '), id: n.id }));
         const pick = await vscode.window.showQuickPick(items, { placeHolder: T('x.whichNode', msg.file) });
         if (!pick) return;
-        const dir = path.posix.dirname(msg.file);
+        const d = path.posix.dirname(msg.file);
         const scope = await vscode.window.showQuickPick([
-          { label: `${dir === '.' ? '' : dir + '/'}**`, description: T('x.wholeFolder') },
+          { label: `${d === '.' ? '' : d + '/'}**`, description: T('x.wholeFolder') },
           { label: msg.file, description: T('x.onlyFile') },
         ], { placeHolder: T('x.scopePick') });
         if (scope) await apply([{ op: 'add_files', node: pick.id, globs: [scope.label] }]);
@@ -501,8 +275,7 @@ class Panel {
   }
 
   // 选文件夹或文件，转成相对项目根目录的路径规则；也可以手写或清空
-  async pickFiles(treePath, node) {
-    const projectDir = path.dirname(treePath);
+  async pickFiles(dir, node) {
     const how = await vscode.window.showQuickPick([
       { label: T('x.pickFiles'), id: 'pick' },
       { label: T('x.typeGlob'), description: T('x.typeGlobEg'), id: 'type' },
@@ -512,61 +285,56 @@ class Panel {
     if (how.id === 'clear') return [];
     if (how.id === 'type') {
       const v = await vscode.window.showInputBox({ prompt: T('x.globPrompt'), value: node.files.join(', ') });
-      return v == null ? null : splitGlobs(v); // 花括号里的逗号不拆（{ch18,ch19}-*.html）
+      return v == null ? null : T0.splitGlobs(v);
     }
-    return this.pickDialog(projectDir);
+    return this.pickDialog(dir);
   }
 
-  // 新建的需求还没有文件对应：按名字猜一个（第3章 → ch03-*.html，英文词对上文件夹名），让用户一键用上。
-  // 在上级的范围里猜；上级都没有文件对应就在项目顶层文件夹里猜。猜不到就不打扰（不设时沿用上级的范围）
-  async offerFiles(treePath, id, apply) {
-    const n = findById(parse(currentText(treePath)), id);
-    if (!n || n.files.length) return;
-    const scope = pathOf(n).slice(0, -1).reverse().find(a => a.files.length);
-    const projectDir = path.dirname(treePath);
+  // 新建的需求：按名字猜文件范围（第3章 → ch03-*.html，英文词对上文件夹名），让用户一键用上。猜不到就不打扰（新需求已沿用上级的范围）
+  async offerFiles(dir, id, apply) {
+    const n = T0.findById(store.readTree(dir), id);
+    if (!n) return;
+    const up = T0.pathOf(n).slice(0, -1).reverse().find(a => a.files.length);
     let guesses = [];
-    try { guesses = suggest(projectDir, n.title, scope ? scope.files : []); } catch (e) { console.error(e); }
+    try { guesses = suggest(dir, n.title, up ? up.files : []); } catch (e) { console.error(e); }
     if (!guesses.length) return;
     const pick = await vscode.window.showQuickPick([
       ...guesses.map(g => ({ label: T('x.useGuess', g), description: T('x.guessed'), globs: [g] })),
       { label: T('x.pickFolder'), id: 'pick' },
-      { label: T('x.later'), description: scope ? T('x.inherit', scope.title) : T('x.laterTip'), id: 'none' },
+      { label: T('x.later'), description: up ? T('x.inherit', up.title) : T('x.laterTip'), id: 'none' },
     ], { placeHolder: T('x.filesFor', n.title) });
     if (!pick || pick.id === 'none') return;
-    const globs = pick.globs || await this.pickDialog(projectDir);
+    const globs = pick.globs || await this.pickDialog(dir);
     if (globs) await apply([{ op: 'set_files', node: id, globs }]);
   }
 
-  // 系统的文件选择框：选文件夹或文件，转成相对项目根目录的路径规则
-  async pickDialog(projectDir) {
-    const uris =await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: true, canSelectMany: true, defaultUri: vscode.Uri.file(projectDir), openLabel: T('x.pickThese') });
+  async pickDialog(dir) {
+    const uris = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: true, canSelectMany: true, defaultUri: vscode.Uri.file(dir), openLabel: T('x.pickThese') });
     if (!uris) return null;
     const globs = [];
     for (const u of uris) {
-      const rel = path.relative(projectDir, u.fsPath).split(path.sep).join('/');
+      const rel = path.relative(dir, u.fsPath).split(path.sep).join('/');
       if (rel.startsWith('..')) { vscode.window.showWarningMessage(T('x.outside', u.fsPath)); continue; }
       globs.push(fs.statSync(u.fsPath).isDirectory() ? (rel ? `${rel}/**` : '**') : rel);
     }
     return globs.length ? globs : null;
   }
 
-  // 网页发来的消息。改树的操作都走 edit（进改动记录、可撤销）；没列出的消息类型一律忽略
+  // 网页发来的消息。改规则的操作都走 edit（进改动记录、可撤销）；没列出的消息类型一律忽略
   async handle(msg) {
     const t = msg.uri && this.treeOf(msg.uri);
-    const p = t && t.path;
+    const dir = t && t.dir;
     switch (msg.type) {
       case 'ready': return this.push();
       case 'openMap': return this.openMap();
       case 'checkup': return this.checkupCommand();
       case 'checkupReport': return this.reportCommand();
-      case 'questions': return this.questionsCommand();
       case 'create': return create(this);
-      case 'disable': return vscode.commands.executeCommand('reqtree.disable');
+      case 'disable': return vscode.commands.executeCommand('ruletree.disable');
       case 'openDoc': {
-        // 打开需求挂的文档；只开项目里的文件
-        // 只挂了一节（路径#节名）：打开后跳到那一节
+        // 打开需求挂的文档（只开项目里的文件）；只挂了一节（路径#节名）的跳到那一节
         const Docs = require('./src/docs');
-        const f = p && Docs.resolve(path.dirname(p), String(msg.doc || ''));
+        const f = dir && Docs.resolve(dir, String(msg.doc || ''));
         if (!f || !fs.existsSync(f)) { vscode.window.showWarningMessage(T('x.docGone', String(msg.doc || ''))); return; }
         const sec = Docs.splitRef(msg.doc).section;
         const h = sec ? Docs.findSection(fs.readFileSync(f, 'utf8'), sec) : null;
@@ -575,24 +343,23 @@ class Panel {
         return;
       }
       case 'open': {
-        if (!p) return;
-        // 面板上的行号可能已经过时（记录员刚改过文件）：按当时那一行的原文找回来，找不到就用原行号
-        const l = relocate(currentText(p), msg.line, msg.expect);
-        const line = l < 0 ? msg.line : l;
-        await vscode.window.showTextDocument(vscode.Uri.file(p), { selection: new vscode.Range(line, 0, line, 0) });
+        // 打开需求的规则文件。面板上的行号可能已经过时（AI 刚改过文件）：按当时那一行的原文找回来，找不到就用原行号
+        if (!dir || !msg.file || !T0.isRuleFile(String(msg.file)) || /[\\/]/.test(msg.file)) return;
+        const f = ruleFileOf(dir, msg.file);
+        if (!fs.existsSync(f)) return;
+        const lines = T0.splitLines(fs.readFileSync(f, 'utf8'));
+        let line = Math.max(0, +msg.line || 0);
+        if (msg.expect != null && lines[line] !== msg.expect) { const i = lines.indexOf(msg.expect); if (i >= 0) line = i; }
+        await vscode.window.showTextDocument(vscode.Uri.file(f), { selection: new vscode.Range(line, 0, line, 0) });
         return;
       }
-      case 'setConfig':
-        // 「每轮记录 / 暂停记录员」和「记下 AI 发现的做法」（writeConfig 只认 DEFAULT_CONFIG 里的键）。动手原则、代码地图要马上生效，见 applyConfigEffects
-        // 写不进去（state.lock 一直被占）时要告诉用户，不然点了没反应、菜单还停在旧选项
-        if (!p) return;
-        try { store.writeConfig(p, msg.patch || {}); applyConfigEffects(p, msg.patch || {}); }
-        catch (e) { vscode.window.showWarningMessage(T('x.saveFail', errText(e))); }
-        this.load();
-        return;
-      case 'edit': return p && this.edit(p, msg);
+      case 'edit': return dir && this.edit(dir, msg);
       case 'undo':
-        if (p && !(await store.undoChange(p, msg.id, { write: writeTree }))) vscode.window.showWarningMessage(T('x.undoFail'));
+        if (dir) {
+          const r = await store.undoChangeAsync(dir, msg.id);
+          if (!r) vscode.window.showWarningMessage(T('x.undoFail'));
+          else if (r === 'partial') vscode.window.showWarningMessage(T('x.undoPartial'));
+        }
         return this.load();
     }
   }
@@ -603,143 +370,83 @@ const MAP_BODY = require('./media/map-body');
 const VIEW_HTML = [['view.css', 'detail.css'], ['detail.js', 'view.js'], '<div id="app" style="display:contents"></div>'];
 const MAP_HTML = [['view.css', 'detail.css', 'map.css'], ['detail.js', 'map.js'], MAP_BODY];
 
-// 打开着的问题；顺便把标着 🔨 很久没动的需求变成问题（不调用模型，每个需求每个周期只问一次）
-function openQuestionsOf(p) {
-  try { Q.staleQuestions(p); } catch (e) { console.error(e); }
-  try { return Q.openQuestions(p); } catch (e) { console.error(e); return []; }
-}
-
-// 改了这些要马上生效的：动手原则 → 重编总目录；代码地图 → 重建或删掉
-function applyConfigEffects(treePath, patch) {
-  if ('principles' in patch) try { store.compileTree(treePath, { force: true }); } catch (e) { console.error(e); }
-  if ('codeMap' in patch) setTimeout(() => { try { require('./src/codemap').refresh(treePath); } catch (e) { console.error(e); } }, 0);
-}
-
-// 用 AI 初始化（src/init.js）：读项目生成需求、分好已经记下的规则、拆 CLAUDE.md 里大段的参考资料，直接写进去（一条改动，可撤销）；
-// 接着体检文档和记忆，把写在 CLAUDE.md、挂上的文档里的规则搬进树。模型调用失败时树保持按文件夹生成的样子
-const initRunning = new Set();
-async function aiInit(dir, panel) {
-  if (initRunning.has(dir)) return null;
-  initRunning.add(dir);
-  try {
-    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: T('x.initRunning') },
-      () => require('./src/init').initProject(dir));
-    panel.load();
-    if (r.skipped) return r;
-    if (!r.ai) { vscode.window.showWarningMessage(T('x.initFail', errText(r.error))); return r; }
-    vscode.window.showInformationMessage(T('x.initDone', countNodes(r.nodes), r.moves.length));
-    await panel.checkupCommand({ tree: r.treePath, parts: { rules: false, docs: true, memory: memoryMode() !== 'treeOnly' } });
-    return r;
-  } catch (e) { console.error(e); return null; } finally { initRunning.delete(dir); }
-}
-// 初始化、整理出的需求一共几个（各层都算）
-const countNodes = list => (list || []).reduce((k, n) => k + 1 + countNodes(n.children), 0);
-const needsInit = treePath => { try { const t = fs.readFileSync(treePath, 'utf8').replace(/\r\n/g, '\n'); return require('./src/init').templateShaped(t); } catch { return false; } };
-
-// 「新建需求树」= 在这个项目启用：装 hook、用 AI 生成需求树、编译（只建一个模板文件的话，记录员和按需加载都不会工作）
+// 「新建需求树」= 在这个项目启用：装 hook、按文件夹建第一批需求（或把旧的 需求树.md 拆开）、写说明书，然后打开根需求的文件
 async function create(panel) {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const folder = fileFolders()[0];
   if (!folder) { vscode.window.showWarningMessage(T('x.openFolder')); return; }
   const dir = folder.uri.fsPath;
-  if (!reqtree.enabledIn(dir)) await enableIn(dir, panel);
-  const existing = store.findTree(dir);
-  if (!existing || needsInit(existing)) await aiInit(dir, panel);
-  const tree = store.findTree(dir);
-  if (tree) await vscode.window.showTextDocument(vscode.Uri.file(tree));
+  if (!(await enableIn(dir, panel))) return;
+  const f = ruleFileOf(dir, T0.ROOT_FILE);
+  if (fs.existsSync(f)) await vscode.window.showTextDocument(vscode.Uri.file(f));
 }
 
 function activate(context) {
   const panel = new Panel(context);
   let timer = null;
-  // 界面语言跟着需求树走（见 lang）：刚打开时还没有树，建了中文的树以后要换过来
   let shownLang = lang();
   const checkLang = () => { treeLangCache = null; const l = lang(); if (l !== shownLang) { shownLang = l; panel.relang(); } };
   // 连续多次文件变化合并成一次刷新
   const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { try { checkLang(); panel.load(); } catch (e) { console.error(e); } }, 150); };
-  // 还没真正初始化过的树（模板、按文件夹生成的，哪怕记录员已经往里记了规则）：后台用 AI 初始化。
-  // 启动时看一次，VS Code 开着时新建出来的树（比如在终端里跑了 reqtree init）也看。
-  // 一天只试一次：没装 Claude、模型调用失败时，别每次打开都跑
-  const initIfNeeded = () => {
-    for (const t of findTrees()) {
-      if (!needsInit(t)) continue;
-      const key = `reqtree.initTried:${t}`;
-      if (Date.now() - (context.workspaceState.get(key) || 0) < 24 * 3600e3) continue;
-      context.workspaceState.update(key, Date.now());
-      setTimeout(() => aiInit(path.dirname(t), panel), 3000);
-    }
-  };
-  initIfNeeded();
-  const isTree = doc => doc.uri.scheme === 'file' && panel.trees.some(t => samePath(t.path, doc.uri.fsPath));
 
-  const watchers = (vscode.workspace.workspaceFolders || []).flatMap(f => [
+  const watchers = fileFolders().flatMap(f => [
+    vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(f, '.claude/rules/ruletree/*.md')),
+    vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(f, '.ruletree/*.{json,jsonl}')),
     vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(f, '{需求树.md,*.tree.md}')),
-    vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(f, '.reqtree/*.{json,jsonl}')),
   ]);
   for (const w of watchers) { w.onDidChange(refresh); w.onDidCreate(refresh); w.onDidDelete(refresh); }
-  // 每个文件夹两个监视器，单数位是需求树的
-  watchers.filter((_, i) => i % 2 === 0).forEach(w => w.onDidCreate(() => { try { initIfNeeded(); } catch (e) { console.error(e); } }));
-  // 定时刷新，让"AI 正在改"过期消失
+  // 定时刷新：让「AI 正在改」过期消失，把别处改的规则文件补记下来
   const tick = setInterval(refresh, 60 * 1000);
 
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('reqtree.panel', panel, { webviewOptions: { retainContextWhenHidden: true } }),
+    vscode.window.registerWebviewViewProvider('ruletree.panel', panel, { webviewOptions: { retainContextWhenHidden: true } }),
     ...watchers, { dispose: () => { clearInterval(tick); clearTimeout(timer); } },
-    // 用户有未保存改动时告诉记录员排队；保存后把排队的改动写进去
-    vscode.workspace.onDidChangeTextDocument(e => { if (isTree(e.document)) store.setEditing(e.document.uri.fsPath, e.document.isDirty); }),
+    // 用户在编辑器里改了规则文件并保存：记成「你」的一条改动
     vscode.workspace.onDidSaveTextDocument(doc => {
-      if (!isTree(doc)) return;
-      store.setEditing(doc.uri.fsPath, false);
-      Promise.resolve().then(() => store.flushQueue(doc.uri.fsPath, { write: writeTree }))
-        .catch(e => vscode.window.showErrorMessage(T('x.error', errText(e))));
+      const r = ruleDoc(doc, findProjects());
+      if (r) try { store.syncFiles(r.dir, [r.name], '你'); } catch (e) { console.error(e); }
     }),
-    vscode.workspace.onDidCloseTextDocument(doc => { if (isTree(doc)) store.setEditing(doc.uri.fsPath, false); }),
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
-    vscode.commands.registerCommand('reqtree.refresh', refresh),
-    vscode.commands.registerCommand('reqtree.openMap', () => panel.openMap()),
-    vscode.commands.registerCommand('reqtree.create', () => create(panel)),
-    vscode.commands.registerCommand('reqtree.disable', () => disableCommand(context, panel)),
-    vscode.commands.registerCommand('reqtree.enable', () => enableCommand(panel)),
-    vscode.commands.registerCommand('reqtree.questions', () => panel.questionsCommand()),
-    vscode.commands.registerCommand('reqtree.checkup', () => panel.checkupCommand()),
-    vscode.commands.registerCommand('reqtree.checkupReport', () => panel.reportCommand()),
-    vscode.commands.registerCommand('reqtree.reorganize', () => panel.reorganizeCommand()),
+    vscode.commands.registerCommand('ruletree.refresh', refresh),
+    vscode.commands.registerCommand('ruletree.openMap', () => panel.openMap()),
+    vscode.commands.registerCommand('ruletree.create', () => create(panel)),
+    vscode.commands.registerCommand('ruletree.disable', () => disableCommand(context, panel)),
+    vscode.commands.registerCommand('ruletree.enable', () => enableCommand(panel)),
+    vscode.commands.registerCommand('ruletree.checkup', () => panel.checkupCommand()),
+    vscode.commands.registerCommand('ruletree.checkupReport', () => panel.reportCommand()),
   );
-  // 改了 reqtree.language：界面马上换语言
   if (vscode.workspace.onDidChangeConfiguration) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('reqtree.language')) { panel.relang(); panel.load(); }
-      else if (e.affectsConfiguration('reqtree.askQuestions')) panel.load();
-      else if (e.affectsConfiguration('reqtree.memoryMode')) applyMemoryMode(true);
+      if (e.affectsConfiguration('ruletree.language')) { panel.relang(); panel.load(); }
+      else if (e.affectsConfiguration('ruletree.memoryMode')) applyMemoryMode(true);
     }));
   }
+  // 插件升级后，~/.ruletree/runtime 里的 hook 程序还是旧版：换成新的（从没启用过就不建）
+  try { cli.refreshRuntimeIfOlder(); } catch (e) { console.error(e); }
   panel.load();
   applyMemoryMode();
-  // 插件升级后，~/.reqtree/runtime 里的 hook 程序还是旧版：悄悄换成新的（从没启用过就不建）
-  try { reqtree.refreshRuntimeIfOlder(); } catch (e) { console.error(e); }
   const prompted = offerEnable(context, panel).catch(e => console.error(e));
   return { prompted, panel }; // 测试用：等提示走完
 }
 
-// ---------- 一键启用：在项目里装 hook（和命令行 init 同一套逻辑） ----------
+// ---------- 启用、停用（和命令行 init、disable 同一套逻辑） ----------
 
-const fileFolders = () => (vscode.workspace.workspaceFolders || []).filter(f => f.uri.scheme === 'file');
-const neverKey = dir => `reqtree.neverOfferEnable:${store.pathKey(dir)}`;
+const neverKey = dir => `ruletree.neverOfferEnable:${store.pathKey(dir)}`;
 
 async function enableIn(dir, panel) {
-  try { reqtree.init(dir, { log: () => {} }); }
+  try { cli.init(dir, { log: () => {} }); }
   catch (e) { vscode.window.showErrorMessage(T('x.enableFail', errText(e))); return false; }
   try { panel.load(); } catch (e) { console.error(e); }
   vscode.window.showInformationMessage(T('x.enabled'));
   return true;
 }
 
-// 工作区里没装需求树 hook 的项目：弹一次不挡操作的提示。「不再提示」按工作区记住；直接关掉下次还问
+// 工作区里没启用的项目：弹一次不挡操作的提示。「不再提示」按工作区记住；直接关掉下次还问。正在升级的旧项目不问
 async function offerEnable(context, panel) {
   const state = context.workspaceState;
   const folders = fileFolders();
   for (const f of folders) {
     const dir = f.uri.fsPath;
-    if (reqtree.enabledIn(dir) || (state && state.get(neverKey(dir)))) continue;
+    if (cli.enabledIn(dir) || store.legacyTree(dir) || cli.hasOldHooks(dir) || (state && state.get(neverKey(dir)))) continue;
     const where = folders.length > 1 ? (lang() === 'en' ? ` (${path.basename(dir)})` : `（${path.basename(dir)}）`) : '';
     const pick = await vscode.window.showInformationMessage(T('x.askEnable', where), T('x.enable'), T('x.never'));
     if (pick === T('x.enable')) await enableIn(dir, panel);
@@ -748,20 +455,19 @@ async function offerEnable(context, panel) {
   }
 }
 
-// 命令「需求树：在本项目停用」：去掉 hook 和编译出的规则，需求树.md 留着；以后不再弹「启用？」（想用时运行「在本项目启用」）
+// 命令「需求树：在本项目停用」：去掉 hook，规则文件留着；以后不再弹「启用？」
 async function disableCommand(context, panel) {
-  const folders = fileFolders().filter(f => reqtree.enabledIn(f.uri.fsPath));
+  const folders = fileFolders().filter(f => cli.enabledIn(f.uri.fsPath));
   if (!folders.length) { vscode.window.showInformationMessage(T('x.notEnabled')); return; }
   const dir = folders[0].uri.fsPath;
   const ok = await vscode.window.showWarningMessage(T('x.askDisable', path.basename(dir)), { modal: true }, T('x.disable'));
   if (ok !== T('x.disable')) return;
-  try { reqtree.disable(dir); } catch (e) { vscode.window.showErrorMessage(T('x.error', errText(e))); return; }
+  try { cli.disable(dir); } catch (e) { vscode.window.showErrorMessage(T('x.error', errText(e))); return; }
   if (context.workspaceState) await context.workspaceState.update(neverKey(dir), true);
   try { panel.load(); } catch {}
   vscode.window.showInformationMessage(T('x.disabled'));
 }
 
-// 命令「需求树：在本项目启用」：多个工作区文件夹时先选一个
 async function enableCommand(panel) {
   const folders = fileFolders();
   if (!folders.length) { vscode.window.showWarningMessage(T('x.openFolder')); return; }

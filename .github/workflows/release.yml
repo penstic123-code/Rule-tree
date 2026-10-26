@@ -24,21 +24,21 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - name: 测试
         env:
-          REQTREE_BROWSER: /usr/bin/google-chrome
-          REQTREE_REQUIRE_BROWSER: '1'
+          RULETREE_BROWSER: /usr/bin/google-chrome
+          RULETREE_REQUIRE_BROWSER: '1'
         run: node --test test/*.test.js
       - name: 版本号要和标签一致
         run: test "v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
       - name: 打包
-        run: npx --yes @vscode/vsce@3 package --no-dependencies -o reqtree-${GITHUB_REF_NAME#v}.vsix
+        run: npx --yes @vscode/vsce@3 package --no-dependencies -o ruletree-${GITHUB_REF_NAME#v}.vsix
       - name: 挂到 GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: reqtree-*.vsix
+          files: ruletree-*.vsix
           generate_release_notes: true
       - name: 发布到 VS Code 扩展市场
         if: env.VSCE_PAT != ''
-        run: npx --yes @vscode/vsce@3 publish --no-dependencies --packagePath reqtree-*.vsix -p "$VSCE_PAT"
+        run: npx --yes @vscode/vsce@3 publish --no-dependencies --packagePath ruletree-*.vsix -p "$VSCE_PAT"
       - name: 发布到 Open VSX
         if: env.OVSX_PAT != ''
-        run: npx --yes ovsx@0 publish reqtree-*.vsix -p "$OVSX_PAT"
+        run: npx --yes ovsx@0 publish ruletree-*.vsix -p "$OVSX_PAT"

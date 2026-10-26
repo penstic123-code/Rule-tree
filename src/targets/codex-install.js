@@ -1,28 +1,24 @@
 'use strict';
 // 在项目里为 OpenAI Codex 装好需求树：
-// - <项目>/.codex/hooks.json：合并写入 5 个 hook（重复运行不重复；已有的原地换成新命令；用户自己的 hook 不动）
-// - <项目>/.reqtree/codex.json：装过 Codex 的标记 + 记录员的模型设置（已有就保留用户改过的值）
-// - 编译：.reqtree/rules/<ID>.md + AGENTS.md 托管块
+// - <项目>/.codex/hooks.json：合并写入 3 个 hook（重复运行不重复；已有的原地换成新命令；用户自己的 hook 不动；旧版多出来的事件删掉）
+// - <项目>/.ruletree/codex.json：装过 Codex 的标记
+// - AGENTS.md 托管块（说明书、全局规则、按文件的规则索引，指向 .claude/rules/ruletree/ 里的需求文件）
 // 不碰用户的 ~/.codex/config.toml。Codex 要求用户在 /hooks 里信任项目 hook 才会运行（见 docs/codex.md）；
 // trustSnippet 给出等价的 config.toml 片段，只在用户明确同意时由调用方写入。
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const store = require('../store');
-const { compile, targetsOf } = require('../compile');
 const codex = require('./codex');
 
 const HOOK_FILE = 'codex-hook.js';
 const isOurs = h => /codex-hook\.js/.test((h && h.command) || '') || /codex-hook\.js/.test((h && h.commandWindows) || '');
 
-// 事件、matcher、超时（秒）。都同步运行：Codex 在 codex exec 结束时会取消还没跑完的后台 hook，
-// 记录员由 hook.js 另起后台进程，Stop 本身很快。PostToolUse 要把规则送回给 AI，必须同步
+// 事件、matcher、超时（秒）。都同步运行：PostToolUse 要把规则送回给 AI，必须同步
 const EVENTS = [
   ['SessionStart', null, 15],
-  ['UserPromptSubmit', null, 30],
+  ['UserPromptSubmit', null, 15],
   ['PostToolUse', 'Bash|apply_patch', 15],
-  ['Stop', null, 30],
-  ['PreCompact', null, 30], // 压缩前补漏（hook.js takeSweep）
 ];
 
 function hookCommand(runtimeDir) {
@@ -74,18 +70,11 @@ function removeHooks(existing) {
   return { ...cfg, hooks };
 }
 
-function ensureGitignore(projectDir) {
-  const gi = path.join(projectDir, '.gitignore');
-  let text = '';
-  try { text = fs.readFileSync(gi, 'utf8'); } catch {}
-  if (/^\.reqtree\/?$/m.test(text)) return false;
-  fs.writeFileSync(gi, text + (text && !text.endsWith('\n') ? '\n' : '') + '.reqtree/\n');
-  return true;
-}
+const ensureGitignore = store.ensureGitignore;
 
-// installCodex(projectDir, { runtimeDir, model })
-// runtimeDir：hook 脚本所在的需求树目录（含 hooks/codex-hook.js、hooks/hook.js、hooks/recorder.js、src/），默认本仓库
-// 返回 { hooksPath, agentsPath, configPath, treePath, compiled, warnings, trust }
+// installCodex(projectDir, { runtimeDir })。项目里要已经有规则文件（命令行 init 先建好）
+// runtimeDir：hook 脚本所在的目录（含 hooks/codex-hook.js、src/），默认本仓库
+// 返回 { hooksPath, agentsPath, configPath, compiled, warnings, trust }
 function installCodex(projectDir, opts = {}) {
   projectDir = path.resolve(projectDir);
   const runtimeDir = path.resolve(opts.runtimeDir || path.join(__dirname, '..', '..'));
@@ -108,22 +97,19 @@ function installCodex(projectDir, opts = {}) {
   // 同一层既有 hooks.json 又有 config.toml 里的 [hooks] 时 Codex 会合并并警告
   try { if (/^\s*\[\[?hooks[.\]]/m.test(fs.readFileSync(path.join(projectDir, '.codex', 'config.toml'), 'utf8'))) warnings.push('.codex/config.toml 里也有 [hooks]，Codex 会和 hooks.json 合并并在启动时警告'); } catch {}
 
-  // 2. 标记 + 记录员设置
+  // 2. 标记
   const configPath = path.join(projectDir, codex.CONFIG);
-  const cfg = { version: 1, model: codex.DEFAULT_MODEL, effort: 'low', ...(codex.readConfig(projectDir) || {}) };
-  if (opts.model) cfg.model = opts.model;
-  store.writeJson(configPath, cfg);
+  store.writeJson(configPath, { version: 2 });
   ensureGitignore(projectDir);
+  // 旧版另抄的一份规则（.reqtree/rules/）不用了
+  try { fs.rmSync(path.join(projectDir, '.reqtree', 'rules'), { recursive: true, force: true }); } catch {}
 
-  // 3. 树和编译
-  let treePath = store.findTree(projectDir);
-  if (!treePath) { treePath = path.join(projectDir, '需求树.md'); fs.writeFileSync(treePath, store.TEMPLATE); }
-  const compiled = compile(treePath, { targets: { ...targetsOf(projectDir), codex: true } });
-  warnings.push(...(compiled.warnings || []));
+  // 3. AGENTS.md 托管块
+  const compiled = codex.compile(projectDir);
+  warnings.push(...compiled.errors, ...compiled.warnings);
   if (AGENTS_OVERRIDE(projectDir)) warnings.push('项目根有 AGENTS.override.md，Codex 不读同目录的 AGENTS.md，需求树的部分已写进 AGENTS.override.md');
-  if (!codex.findCodex()) warnings.push('没找到 codex 命令（PATH 上和 Codex 桌面版里都没有），记录员会失败；可以在 .reqtree/codex.json 里写 recorderCmd');
 
-  return { hooksPath, agentsPath: codex.agentsFile(projectDir), configPath, treePath, compiled, warnings, trust: trustEntries(projectDir) };
+  return { hooksPath, agentsPath: codex.agentsFile(projectDir), configPath, compiled, warnings, trust: trustEntries(projectDir) };
 }
 
 const AGENTS_OVERRIDE = projectDir => path.basename(codex.agentsFile(projectDir)) === 'AGENTS.override.md';
@@ -140,11 +126,10 @@ function uninstallCodex(projectDir) {
     const p = path.join(projectDir, f);
     try {
       const t = fs.readFileSync(p, 'utf8');
-      const n = codex.removeBlock(t);
+      const n = codex.removeBlock(codex.removeBlock(t), codex.OLD);
       if (n !== t) { if (n.trim()) fs.writeFileSync(p, n); else fs.unlinkSync(p); }
     } catch {}
   }
-  try { fs.rmSync(path.join(projectDir, codex.RULES_DIR), { recursive: true, force: true }); } catch {}
   try { fs.unlinkSync(path.join(projectDir, codex.CONFIG)); } catch {}
 }
 

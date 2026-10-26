@@ -32,7 +32,7 @@ jobs:
       # 界面测试用全局 WebSocket：Node 22 自带，Node 20 要这个开关（不会往 stderr 打警告）
       NODE_OPTIONS: --experimental-websocket
       # 找不到浏览器时界面测试应当失败而不是跳过（test/ui.test.js 读这个变量）
-      REQTREE_REQUIRE_BROWSER: '1'
+      RULETREE_REQUIRE_BROWSER: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +60,7 @@ jobs:
             "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" \
             "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
             if [ -f "$p" ]; then
-              echo "REQTREE_BROWSER=$p" >> "$GITHUB_ENV"
+              echo "RULETREE_BROWSER=$p" >> "$GITHUB_ENV"
               echo "browser: $p"
               exit 0
             fi

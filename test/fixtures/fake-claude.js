@@ -4,7 +4,7 @@ const fs = require('fs');
 let input = '';
 process.stdin.on('data', d => { input += d; });
 process.stdin.on('end', () => {
-  if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ input, env: !!process.env.REQTREE_RECORDER }) + '\n');
+  if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ input }) + '\n');
   // 模拟卡住的 claude：再开一个子进程（像 claude.cmd 背后的 node），把它的 pid 写进 FAKE_HANG，然后两个都不退出
   if (process.env.FAKE_HANG) {
     const child = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });

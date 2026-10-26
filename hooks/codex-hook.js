@@ -1,212 +1,121 @@
 #!/usr/bin/env node
 'use strict';
-// OpenAI Codex 的 hook（.codex/hooks.json 指向这里）。Codex 的 hook 输入和 Claude Code 基本同名
-// （session_id、cwd、hook_event_name、prompt、last_assistant_message、tool_name、tool_input、stop_hook_active），
-// 差别在两处，由这里处理：
-// 1. 规则怎么到 AI 手上：Codex 没有按路径加载的规则，AGENTS.md 只在会话开始读一次。所以 AI 读写到某个需求的文件时，
-//    这里把那份规则作为 additionalContext 送过去（每个会话每份只送一次；规则改了再送）。会话中途全局规则变了，下一句话时补送。
-// 2. 改文件走 apply_patch（文件名在补丁文本 tool_input.command 的 *** Update File: 行里，不在 file_path），
-//    在 Windows 上更常见的是 PowerShell 命令（tool_name 是 Bash，2026-10-22 实测 gpt-6-luna 全用 Set-Content）。
-// 其余（记下用户原话、启动记录员）交给 hook.js，记录员改用 codex exec 调小模型。
+// OpenAI Codex 的 hook（.codex/hooks.json 指向这里）。Codex 的 hook 输入和 Claude Code 基本同名（session_id、cwd、hook_event_name、tool_name、tool_input），
+// 差别由这里处理：
+// 1. Codex 没有按路径加载的规则，AGENTS.md 只在会话开始读一次。所以 AI 读写到某个需求的文件时，这里把那几个需求文件作为 additionalContext 送过去
+//    （每个会话每份只送一次；内容改了再送）。会话中途托管块（全局规则、索引）变了，下一句话时补送。
+// 2. 改文件走 apply_patch（文件名在补丁文本里），在 Windows 上更常见的是 PowerShell 命令（tool_name 是 Bash）。
+//    AI 改了规则文件，就对照快照记一条改动（面板上可以撤销），和 Claude 的 hook 一样。
 // hook 出错不能挡住 Codex 干活：所有异常吞掉，记进临时目录的 codex-hook.log。
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
-const { parse, nodeForFile, findById, pathOf } = require('../src/parser');
 const store = require('../src/store');
+const T = require('../src/tree');
 const codex = require('../src/targets/codex');
-const Docs = require('../src/docs');
-const { mentionContext, isMachinePrompt } = require('../src/mention');
+const { tmpDir, findProjectUp, checkoutOf } = require('../src/common');
 
-const HOOK = path.join(__dirname, 'hook.js');
-// 从 cwd 往上找需求树，到 git 根为止（Codex 可能在子目录里启动）；和 hook.js 共用一份
-const { tmpDir: LOG_DIR, findTreeUp } = require('../src/common');
-
-function readSession(file) {
-  const s = store.readJson(file, null) || {};
-  return { sent: s.sent && typeof s.sent === 'object' ? s.sent : {}, seen: typeof s.seen === 'string' ? s.seen : null };
-}
-
-const blockOf = text => {
-  const at = codex.findBlock(text);
-  return at && !at.broken ? text.slice(at.start, at.end) : '';
-};
-const readBlock = projectDir => { try { return blockOf(fs.readFileSync(codex.agentsFile(projectDir), 'utf8')); } catch { return ''; } };
-
-// 交给 hook.js（同步：它很快，记录员它自己放后台）。记录员的模型命令通过环境变量换成 codex exec
-function delegate(payload, projectDir, trace) {
-  const env = { ...process.env };
-  if ((payload.hook_event_name === 'Stop' || payload.hook_event_name === 'PreCompact') && !env.REQTREE_CLAUDE_CMD) {
-    const cmd = codex.recorderCommand(projectDir);
-    if (cmd) env.REQTREE_CLAUDE_CMD = cmd; else trace.recorder = '找不到 codex 命令';
-  }
-  // 被提到的需求的规则由这里送（和按文件送的规则共用一份「送过了」的记录），hook.js 那边关掉
-  if (payload.hook_event_name === 'UserPromptSubmit') env.REQTREE_NO_MENTION = '1';
-  const r = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(payload), env, windowsHide: true, timeout: 20000, encoding: 'utf8' });
-  if (r.error) trace.delegateError = r.error.message;
-  // hook.js 要告诉 AI 的话（编译失败的提醒）：交回来，跟这边要送的一起送
-  try { return (JSON.parse(r.stdout || '{}').hookSpecificOutput || {}).additionalContext || ''; } catch { return ''; }
-}
-
+const readSession = file => { const s = store.readJson(file, null) || {}; return { sent: s.sent && typeof s.sent === 'object' ? s.sent : {}, seen: typeof s.seen === 'string' ? s.seen : null }; };
+const blockOf = text => { const at = codex.findBlock(text); return at && !at.broken ? text.slice(at.start, at.end) : ''; };
+const readBlock = dir => { try { return blockOf(fs.readFileSync(codex.agentsFile(dir), 'utf8')); } catch { return ''; } };
 const fits = text => Buffer.byteLength(text) <= codex.CONTEXT_LIMIT;
-// 兜底：仍然超过就截断（按字符截，留出提示）
 function clip(text) {
   if (fits(text)) return text;
   let t = text;
   while (!fits(t + '\n…（截断）')) t = t.slice(0, Math.floor(t.length * 0.9));
   return t + '\n…（截断）';
 }
-
-function context(event, text) {
-  return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
-}
-
-const unitText = (u, treeName, docLine) => codex.renderUnit(u, treeName, docLine).split('\n').filter(l => !l.startsWith('<!--')).join('\n').trim();
+const context = (event, text) => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
+const RULES_PREFIX = codex.RULES + '/';
 
 function main(input, trace) {
-  if (process.env.REQTREE_RECORDER) return ''; // 记录员自己调用 codex 时不要再触发
   const cwd = input.cwd || process.cwd();
-  const treePath = findTreeUp(cwd);
-  trace.tree = !!treePath;
-  if (!treePath) return '';
-  const projectDir = path.dirname(treePath);
-  const docLine = n => Docs.readLine(projectDir, n);
-  const treeName = path.basename(treePath);
+  const dir = findProjectUp(cwd);
+  trace.project = !!dir;
+  if (!dir) return '';
   const event = input.hook_event_name;
-  const sf = codex.sessionFile(projectDir, input.session_id);
+  const sf = codex.sessionFile(dir, input.session_id);
   const st = readSession(sf);
-  let out = '';
 
   if (event === 'SessionStart') {
-    // AGENTS.md 在会话开始时已经读进去了：记下 AI 看到的那一版（在 git worktree 里是那份检出的），再编译。compact/clear 之后上下文清空，送过的规则要重送
-    const seen = readBlock(require('../src/common').checkoutOf(projectDir, cwd));
-    store.compileTree(treePath);
+    // AGENTS.md 在会话开始时已经读进去了：记下 AI 看到的那一版（在 worktree 里是那份检出的），再更新。compact/clear 之后送过的要重送
+    const seen = readBlock(checkoutOf(dir, cwd));
+    codex.compile(dir);
     store.writeJson(sf, { sent: {}, seen: codex.hash(seen) });
     return '';
   }
 
   if (event === 'UserPromptSubmit') {
-    const note = delegate({ ...input, cwd: projectDir }, projectDir, trace); // 编译 + 记下用户原话（通知类的 hook.js 自己会跳过）
-    // 后台通知、子 agent 回报、命令输出不是用户的话：什么都不送
-    if (input.prompt && isMachinePrompt(input.prompt)) { trace.machine = true; return ''; }
-    // 托管块是项目根 AGENTS.md 里最新的；会话开始时 AI 读到的那一版记在 seen（在 worktree 里读的是 worktree 那份）
-    const block = readBlock(projectDir);
-    let global = null;
+    const c = codex.compile(dir);
+    const block = readBlock(dir);
+    const notes = c.errors.slice();
     if (block && st.seen && codex.hash(block) !== st.seen) {
-      global = `需求树（${treeName}）的全局规则或索引刚更新过，以这一版为准：\n\n${block}`;
+      notes.push(fits(block) ? `需求树的全局规则或索引刚更新过，以这一版为准：\n\n${block}` : `需求树的全局规则或索引刚更新过，内容较长，请重新读项目根 ${path.basename(codex.agentsFile(dir))} 里需求树那一段（会话开始时读到的是旧版）。`);
       trace.injected = ['global'];
     }
     if (block) st.seen = codex.hash(block);
-    let mention = null;
-    // 这句话明确提到的需求（标题、编号、第N章）：送它的规则。记在 sent 里键加 @；提到的正好是一个单元的主人时，单元也记成已送
-    if (input.prompt) {
-      const root = parse(fs.readFileSync(treePath, 'utf8'));
-      const mine = Object.fromEntries(Object.entries(st.sent).filter(([k]) => k.startsWith('@')).map(([k, v]) => [k.slice(1), v]));
-      const active = store.readActivity(treePath, 2 * 3600000).filter(e => e.session === input.session_id && e.node).map(e => e.node);
-      const m = mentionContext(root, input.prompt, mine, codex.hash, { active, projectDir });
-      if (m) {
-        const units = codex.units(root, docLine);
-        for (const { id, hash } of m.ids) {
-          st.sent['@' + id] = hash;
-          // 提到的需求自己的单元，以及上级里只有自己一个成员的单元（它们的规则已经作为「来自上级」写在里面）
-          const node = findById(root, id);
-          for (const u of units) {
-            const self = u.id === id;
-            const ancestor = node && u.owner !== node && pathOf(node).includes(u.owner) && u.members.length === 1;
-            if (self || ancestor) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName, docLine));
-          }
-        }
-        mention = m.text;
-        trace.injected = [...(trace.injected || []), ...m.ids.map(x => '@' + x.id)];
-      }
-    }
     store.writeJson(sf, st);
-    // Codex 的附加上下文超过上限（默认 2500 token ≈ 1 万字节）会被存进文件、只给 AI 一段预览。
-    // 全局那段太长时换成一句提示，让 AI 自己重读 AGENTS.md
-    const parts = [note, global, mention].filter(Boolean);
-    if (!parts.length) return '';
-    if (global && !fits(parts.join('\n\n'))) {
-      parts[parts.indexOf(global)] = `需求树（${treeName}）的全局规则或索引刚更新过，内容较长，请重新读项目根 ${path.basename(codex.agentsFile(projectDir))} 里需求树那一段（会话开始时读到的是旧版）。`;
-      trace.injected.push('global-pointer');
-    }
-    return context(event, clip(parts.join('\n\n')));
+    return notes.length ? context(event, clip(notes.join('\n\n'))) : '';
   }
 
-  if (event === 'PostToolUse') {
-    const ti = input.tool_input || {};
-    const isPatch = input.tool_name === 'apply_patch';
-    const raw = isPatch ? codex.patchFiles(ti.command) : typeof ti.command === 'string' ? codex.shellPaths(ti.command) : [];
-    const rels = [...new Set(raw.map(p => codex.relTo(projectDir, cwd, p)).filter(Boolean))];
-    trace.files = rels.slice(0, 10);
-    if (!rels.length) return '';
-    const text = fs.readFileSync(treePath, 'utf8');
-    const root = parse(text);
+  if (event !== 'PostToolUse') return '';
+  const ti = input.tool_input || {};
+  const isPatch = input.tool_name === 'apply_patch';
+  const raw = isPatch ? codex.patchFiles(ti.command) : typeof ti.command === 'string' ? codex.shellPaths(ti.command) : [];
+  const rels = [...new Set(raw.map(p => codex.relTo(dir, cwd, p)).filter(Boolean))];
+  // 改的是主仓库里的文件（不是某个 worktree 里的）
+  const mainRels = new Set(raw.map(p => path.resolve(cwd, String(p).replace(/^['"]|['"]$/g, ''))).filter(a => checkoutOf(dir, path.dirname(a)) === dir).map(a => codex.relTo(dir, cwd, a)));
+  trace.files = rels.slice(0, 10);
+  if (!rels.length) return '';
+  let root = store.readTree(dir);
 
-    // 活动记录（面板上的「AI 正在改」）：apply_patch 的文件是确定的；命令行只在像写文件的命令里、
-    // 且路径确实是项目里的文件时才记（Codex 在 Windows 上多半用 PowerShell 改文件）
-    const writes = isPatch ? rels : codex.isWriteCommand(ti.command)
-      ? rels.filter(rel => { try { return fs.statSync(path.join(projectDir, rel)).isFile(); } catch { return false; } }) : [];
-    if (writes.length) {
-      if (!isPatch) trace.writes = writes.slice(0, 10);
-      for (const rel of writes) {
-        if (store.samePath(path.join(projectDir, rel), treePath)) { store.compileTree(treePath); continue; }
-        if (/^\.(reqtree|claude|codex)\//.test(rel)) continue;
-        const node = nodeForFile(root, rel);
-        store.appendActivity(treePath, { node: node ? node.id : null, file: rel, time: Date.now(), session: input.session_id, agent: 'codex' });
-      }
+  // 活动记录（面板上的「AI 正在改」）：apply_patch 的文件是确定的；命令行只在像写文件的命令里、路径确实是项目里的文件时才记
+  const writes = isPatch ? rels : codex.isWriteCommand(ti.command)
+    ? rels.filter(rel => { try { return fs.statSync(path.join(dir, rel)).isFile(); } catch { return false; } }) : [];
+  const ruleNames = [];
+  for (const rel of writes) {
+    const base = { file: rel, time: Date.now(), session: input.session_id || null, agent: 'codex' };
+    if (rel.startsWith(RULES_PREFIX)) {
+      const name = rel.slice(RULES_PREFIX.length);
+      if (!name.includes('/') && T.isRuleFile(name) && mainRels.has(rel)) ruleNames.push(name);
+      continue;
     }
-
-    // AI 照 AGENTS.md 的索引自己读了规则文件：记成已送
-    const all = codex.units(root, docLine);
-    for (const id of codex.readRuleIds(rels)) {
-      const u = all.find(x => x.id === id);
-      if (u) st.sent[id] = codex.hash(codex.renderUnit(u, treeName, docLine));
-    }
-    const due = codex.unitsForFiles(root, rels, docLine).filter(u => st.sent[u.id] !== codex.hash(codex.renderUnit(u, treeName, docLine)));
-    if (due.length) {
-      for (const u of due) st.sent[u.id] = codex.hash(codex.renderUnit(u, treeName, docLine));
-      // 放不下的单元换成「去读规则文件」
-      let body = '需求树：你正在处理的文件属于下面的需求，照这些规则做（每份本会话只发一次，后面不再重复）。';
-      for (const u of due) {
-        const t = unitText(u, treeName, docLine);
-        body += fits(`${body}\n\n${t}`) ? `\n\n${t}` : `\n\n${u.id} ${u.owner.title} 的规则较长，请读 .reqtree/rules/${u.id}.md。`;
-      }
-      out = context(event, clip(body));
-      trace.injected = due.map(u => u.id);
-    }
-    // 能写成检查的规则（src/checks.js）：apply_patch 加进去的行查一遍，可能违反就提醒
-    if (isPatch) {
-      const Checks = require('../src/checks');
-      const warns = [...Checks.patchAdded(ti.command)].map(([p, added]) => { const rel = codex.relTo(projectDir, cwd, p); return rel ? Checks.run(treePath, root, rel, added) : ''; }).filter(Boolean);
-      if (warns.length) { out = context(event, clip([out ? JSON.parse(out).hookSpecificOutput.additionalContext : '', ...warns].filter(Boolean).join('\n\n'))); trace.checks = true; }
-    }
-    store.writeJson(sf, st);
-    return out;
+    if (/^\.(ruletree|claude|codex)\//.test(rel)) continue;
+    const node = T.nodeForFile(root, rel);
+    store.appendActivity(dir, { ...base, node: node ? node.id : null });
+    if (node) try { store.touch(dir, [node.id]); } catch {}
+  }
+  // AI 改了主仓库里的规则文件：记一条改动（在 worktree 里改的那份合并回来时再记）
+  if (ruleNames.length) {
+    const e = store.syncFiles(dir, ruleNames, 'AI');
+    trace.change = e && e.id;
+    root = store.readTree(dir);
   }
 
-  if (event === 'PreCompact') {
-    delegate({ ...input, cwd: projectDir }, projectDir, trace); // 压缩前补漏
-    return '';
+  // AI 照索引自己读了规则文件：记成已送
+  const files = store.readFiles(dir);
+  for (const rel of rels) if (rel.startsWith(RULES_PREFIX) && files.has(rel.slice(RULES_PREFIX.length))) st.sent[rel.slice(RULES_PREFIX.length)] = codex.hash(files.get(rel.slice(RULES_PREFIX.length)));
+  const due = codex.units(root).filter(n => rels.some(rel => T.matchesAny(n.files, rel)) && st.sent[n.file] !== codex.hash(files.get(n.file) || ''));
+  let out = '';
+  if (due.length) {
+    let body = '需求树：你正在处理的文件属于下面的需求，照这些规则做（每份本会话只发一次，后面不再重复）。';
+    for (const n of due) {
+      st.sent[n.file] = codex.hash(files.get(n.file) || '');
+      const t = codex.bodyOf(files.get(n.file) || '');
+      body += fits(`${body}\n\n${t}`) ? `\n\n${t}` : `\n\n${n.id} ${n.title} 的规则较长，请读 ${RULES_PREFIX}${n.file}。`;
+    }
+    out = context(event, clip(body));
+    trace.injected = due.map(n => n.id);
   }
-
-  if (event === 'Stop') {
-    // 先记一行：Codex 结束得快时可能等不到这个进程写完最后的日志
-    writeTrace(input, { ...trace, phase: 'start' }, 0);
-    delegate({ ...input, cwd: projectDir }, projectDir, trace); // 启动记录员
-    return '';
-  }
-  return '';
+  store.writeJson(sf, st);
+  return out;
 }
 
 function writeTrace(input, trace, ms) {
   try {
-    const f = path.join(LOG_DIR(), 'codex-hook.log');
+    const f = path.join(tmpDir(), 'codex-hook.log');
     fs.mkdirSync(path.dirname(f), { recursive: true });
     if (fs.existsSync(f) && fs.statSync(f).size > 512 * 1024) fs.renameSync(f, f + '.old');
-    fs.appendFileSync(f, JSON.stringify({
-      t: new Date().toISOString(), ev: input.hook_event_name, tool: input.tool_name, session: (input.session_id || '').slice(0, 8),
-      turn: input.turn_id, hasPrompt: !!input.prompt, hasLastMsg: !!input.last_assistant_message, ms, ...trace,
-    }) + '\n');
+    fs.appendFileSync(f, JSON.stringify({ t: new Date().toISOString(), ev: input.hook_event_name, tool: input.tool_name, session: (input.session_id || '').slice(0, 8), ms, ...trace }) + '\n');
   } catch {}
 }
 
@@ -218,11 +127,10 @@ if (require.main === module) {
     const t0 = Date.now();
     const trace = {};
     let input = {}, out = '';
-    try { input = JSON.parse(buf || '{}'); out = main(input, trace); }
-    catch (e) { trace.error = e.stack; }
+    try { input = JSON.parse(buf || '{}'); out = main(input, trace); } catch (e) { trace.error = e.stack; }
     if (out) process.stdout.write(out);
-    if (!process.env.REQTREE_RECORDER) writeTrace(input, trace, Date.now() - t0);
+    writeTrace(input, trace, Date.now() - t0);
   });
 }
 
-module.exports = { main, findTreeUp };
+module.exports = { main };

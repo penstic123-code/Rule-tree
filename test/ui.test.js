@@ -11,7 +11,7 @@ const { build } = require('../tools/preview');
 
 // 找一个 Chromium 内核的浏览器：环境变量优先，再按 Windows、macOS、Linux 的常见位置找
 const BROWSER = [
-  process.env.REQTREE_BROWSER,
+  process.env.RULETREE_BROWSER,
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -21,8 +21,8 @@ const BROWSER = [
   '/usr/bin/microsoft-edge', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
   '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ].find(p => p && fs.existsSync(p));
-// CI 设了 REQTREE_REQUIRE_BROWSER：找不到浏览器要报错，不能悄悄跳过
-if (!BROWSER && process.env.REQTREE_REQUIRE_BROWSER) throw new Error('没有找到 Edge 或 Chrome（可以用 REQTREE_BROWSER 指定路径）');
+// CI 设了 RULETREE_REQUIRE_BROWSER：找不到浏览器要报错，不能悄悄跳过
+if (!BROWSER && process.env.RULETREE_REQUIRE_BROWSER) throw new Error('没有找到 Edge 或 Chrome（可以用 RULETREE_BROWSER 指定路径）');
 const OUT = path.join(__dirname, 'out');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -78,7 +78,7 @@ class Browser {
   async open(width) {
     LIVE.add(this);
     this.logs = []; // 页面报错、控制台错误，失败时附在报错信息里
-    this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reqtree-browser-'));
+    this.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ruletree-browser-'));
     this.stderr = path.join(this.dir, 'stderr.log');
     // 端口给 0：浏览器自己挑空闲端口，写进配置目录下的 DevToolsActivePort，不会和别的进程撞端口
     const args = ['--headless=new', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${this.dir}`,
@@ -263,9 +263,8 @@ for (const theme of ['dark', 'light']) {
       const html = path.join(OUT, `ui-${theme}-${width}.html`);
       fs.writeFileSync(html, build({
         treeFile, theme, selId: 'C2.2', activeId: 'C2.1', width,
-        changes: [{ id: 'c1', time: Date.now() - 60000, source: '记录员', summary: ['把 C2.1 的「开场用勇士」改成「开场用霍乱」'], undone: false }],
+        changes: [{ id: 'c1', time: Date.now() - 60000, source: 'AI', summary: ['把 C2.1 的「开场用勇士」改成「开场用霍乱」'], undone: false }],
         unmapped: ['notes/plan.md'],
-        recorder: { ok: true, time: Date.now() - 120000, message: '记下 2 条要求；C2.1 标为进行中' },
         touched: { 'C2.1': Date.now() },
       }));
       const b = new Browser();
@@ -312,7 +311,7 @@ for (const theme of ['dark', 'light']) {
         assert.strictEqual(r.detailTitle, '英文版');
         assert.ok(r.ai >= 1, '没有显示 AI 正在改');
         assert.ok(r.aiIcon, 'AI 正在改要用线条图标');
-        assert.match(r.status, /记录员 · 2 分钟前/);
+        assert.match(r.status, /^AI · 1 分钟前 · 把 C2\.1 的「开场用勇士」改成「开场用霍乱」$/);
         assert.deepStrictEqual(r.squeezed, [], '标题被挤没了');
         assert.deepStrictEqual(r.hiddenButtons, [], '有按钮被裁掉或盖住');
         assert.deepStrictEqual(r.misaligned, [], '图标和按钮文字没对齐');
@@ -331,14 +330,9 @@ for (const theme of ['dark', 'light']) {
           const rowsAfter = document.querySelectorAll('.row').length;
           document.querySelector('.gear[data-act="settings"]').click();
           const labels = ${MENU_ALL};
-          ${MENU_PICK}(t => t === '记录员').click();
-          const items = [...document.querySelectorAll('.menu button[data-v]')].map(x => x.getAttribute('aria-checked'));
-          document.querySelectorAll('.menu button[data-v]')[2].click();
-          const cfg = window.__posted.filter(m => m.type === 'setConfig').pop();
-          return { posted: window.__posted.map(m => m.type), all: window.__posted, sel, rowsAfter, aiCollapsed: !!document.querySelector('.row[data-key$="#C2"] .chip.ai svg.ico-ai'), items, labels, cfg };`);
-        assert.deepStrictEqual(posted.items, ['true', 'false', 'false'], '默认：每轮记录（另有每 3 轮、暂停）');
-        assert.ok(posted.labels.every(l => !/确认/.test(l)), `设置菜单里还有确认模式：${posted.labels}`);
-        assert.deepStrictEqual(posted.cfg.patch, { recorder: 'off' });
+          return { posted: window.__posted.map(m => m.type), all: window.__posted, sel, rowsAfter, aiCollapsed: !!document.querySelector('.row[data-key$="#C2"] .chip.ai svg.ico-ai'), labels };`);
+        assert.deepStrictEqual(posted.labels.slice(0, 4), ['上下文用量…', '显示', '上次体检报告', '在本项目停用需求树…'], '设置菜单里没有记录员的开关了');
+        assert.ok(!posted.labels.some(l => /记录|动手原则|代码地图|拿不准/.test(l)), posted.labels.join('、'));
         const edits = posted.all.filter(m => m.type === 'edit');
         assert.deepStrictEqual(edits.map(m => m.action), ['setStatus', 'addRule', 'assignFile']);
         assert.strictEqual(edits[0].status, 'done');
@@ -353,18 +347,18 @@ for (const theme of ['dark', 'light']) {
   }
 }
 
-test('界面：记录员出错时显示红色提示', { skip, timeout: 60000 }, async () => {
+test('界面：规则文件之间对不上（编号重复、上级不存在）时显示红色提示', { skip, timeout: 60000 }, async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const treeFile = path.join(OUT, 'ui-tree.md');
-  fs.writeFileSync(treeFile, TREE);
   const html = path.join(OUT, 'ui-error.html');
-  fs.writeFileSync(html, build({ treeFile, recorder: { ok: false, time: Date.now(), message: '模型返回错误：Not logged in' } }));
+  const files = new Map([['_root.md', '# P x\n'], ['R1-a.md', '# R1 a\n'], ['R1-b.md', '# R1 b\n'], ['R5.1-c.md', '# R5.1 c\n']]);
+  fs.writeFileSync(html, build({ files }));
   const b = new Browser();
   try {
     await b.open(340);
     await b.load(html);
-    const t = await b.eval(`return document.querySelector('.banner.err')?.textContent || ''`);
-    assert.match(t, /记录员出错.*Not logged in/);
+    const t = await b.eval(`return [...document.querySelectorAll('.banner.err')].map(x => x.textContent)`);
+    assert.strictEqual(t.length, 2);
+    assert.match(t.join('\n'), /编号 R1 重复：R1-[ab]\.md 和 R1-[ab]\.md[\s\S]*R5\.1 的上级 R5 不存在/);
   } finally { b.close(); }
 });
 
@@ -667,12 +661,12 @@ test('图标集：ReqDetail.icon 每个名字都有图形，未知名字不报�
   } finally { b.close(); }
 });
 
-test('package.json 声明的命令都在插件里注册了，没有「全部确认」', () => {
+test('package.json 声明的命令都在插件里注册了，没有已删功能的命令', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   const cmds = pkg.contributes.commands.map(c => c.command);
-  assert.ok(!cmds.includes('reqtree.acceptAll'));
-  assert.ok(!JSON.stringify(pkg.contributes.menus).includes('acceptAll'));
+  assert.ok(cmds.every(c => c.startsWith('ruletree.')));
+  assert.ok(!cmds.some(c => /questions|reorganize|acceptAll/.test(c)), '记录员的问题、AI 重新整理已经删了');
   for (const c of cmds) assert.ok(ext.includes(`'${c}'`), `${c} 没在 extension.js 里注册`);
 });
 
@@ -703,27 +697,6 @@ test('导图：数据到达前滚轮、缩放、工具栏按钮不报错', { ski
   } finally { b.close(); }
 });
 
-test('规则没有生成时，侧栏和导图顶部都有红色提示', { skip, timeout: 60000 }, async () => {
-  const compile = { ok: false, message: '写不进 .claude/rules', time: Date.now() };
-  for (const [name, opts, w] of [['reg-compile-side.html', {}, 340], ['reg-compile-map.html', { width: 1200, height: 760, mode: 'map' }, 1200]]) {
-    for (const theme of ['dark', 'light']) {
-      const b = await openPage(name.replace('.html', `-${theme}.html`), { ...opts, theme, compile }, w);
-      try {
-        const r = await b.eval(`${CONTRAST}
-          const el = [...document.querySelectorAll('.banner.err')].find(e => /规则没有生成/.test(e.textContent));
-          return el ? { text: el.textContent, top: el.getBoundingClientRect().top, c: contrast(el.querySelector('span')) } : null;`);
-        assert.ok(r, `${name} ${theme}：没有提示`);
-        assert.match(r.text, /规则没有生成：写不进 \.claude\/rules/);
-        assert.ok(r.top < 120, '提示要在顶部');
-        assert.ok(r.c >= 4.5, `对比度 ${r.c.toFixed(2)}`);
-      } finally { b.close(); }
-    }
-  }
-  // 编译成功时不显示
-  const b = await openPage('reg-compile-ok.html', { compile: { ok: true, message: '', time: Date.now() } }, 340);
-  try { assert.strictEqual(await b.eval(`return document.querySelectorAll('.banner.err').length`), 0); } finally { b.close(); }
-});
-
 test('共用工具：久未动天数取 data.staleDays，分支颜色用 viewmodel 给的 n.branch', { skip, timeout: 60000 }, async () => {
   const b = await openPage('reg-shared.html', { selId: 'C2.1' }, 340);
   try {
@@ -744,7 +717,7 @@ test('共用工具：久未动天数取 data.staleDays，分支颜色用 viewmod
       window.postMessage(d, '*');
       return new Promise(res => setTimeout(() => res({ ...out, rowBranch2: rowBranch() }), 100));`);
     assert.ok(r.five && r.none && r.noHard, JSON.stringify(r));
-    assert.match(r.rowBranch, /--branch: var\(--purple\)/);
+    assert.match(r.rowBranch, /--branch: var\(--blue\)/, 'C2 现在排在根下面第一个（按编号排）');
     assert.match(r.rowBranch2, /--branch: var\(--red\)/);
   } finally { b.close(); }
 });
@@ -895,28 +868,28 @@ test('详情：被覆盖的上级规则划掉、标出「被本需求覆盖」�
 - 每章有练习
 - 每章有小结
 
-## A 第一章
+## R1 第一章
 > 文件：a/**
 - [段落] 段落可以到 6 行
 
-### A1 开场
+### R1.1 开场
 - [语气] 开场可以活泼一点
 `;
   for (const theme of ['dark', 'light']) {
-    const b = await openPage2(`polish-override-${theme}.html`, { theme, selId: 'A', state: { inheritOpen: true } }, 300, { tree });
+    const b = await openPage2(`polish-override-${theme}.html`, { theme, selId: 'R1', state: { inheritOpen: true } }, 300, { tree });
     try {
       const r = await b.eval(`${CONTRAST}
         const pick = () => [...document.querySelectorAll('.dp .rule.r-overridden')].map(el => {
           const t = el.querySelector('.rt'); return { text: t.textContent, deco: getComputedStyle(t).textDecorationLine, note: el.querySelector('.tag') && el.querySelector('.tag').textContent, tip: el.title, c: contrast(t), cn: contrast(el.querySelector('.tag')) }; });
         const a = pick();
-        document.querySelector('.row[data-key$="#A1"]').click();
+        document.querySelector('.row[data-key$="#R1.1"]').click();
         return { a, a1: pick(), tg: document.querySelector('.inh-tg') && document.querySelector('.inh-tg').textContent.replace(/\\s+/g, '') };`);
       assert.strictEqual(r.a.length, 1);
       assert.strictEqual(r.a[0].text, '段落不超过 4 行');
       assert.strictEqual(r.a[0].deco, 'line-through');
       assert.strictEqual(r.a[0].note, '被本需求覆盖');
       assert.ok(r.a[0].c >= 4.5 && r.a[0].cn >= 4.5, `${theme}：被覆盖规则对比度 ${r.a[0].c.toFixed(2)} / ${r.a[0].cn.toFixed(2)}`);
-      // A1：语气被自己覆盖，段落被上级 A 覆盖
+      // R1.1：语气被自己覆盖，段落被上级 A 覆盖
       assert.deepStrictEqual(r.a1.map(x => x.note).sort(), ['被「第一章」覆盖', '被本需求覆盖'].sort());
       assert.strictEqual(r.tg, '继承的规则5', '小标题只写条数，不写几条被覆盖');
       assert.strictEqual(r.a[0].tip, '被本需求覆盖');
@@ -1301,7 +1274,7 @@ test('详情：点标题在面板里直接改名——回车保存、Esc 取消�
 
 test('上下文用量：⚙ 和导图 ⋯ 里能打开；会话可以切；常驻 / 按需的横条和数字；文件列表常驻在前、按字数排；需求的规则能点过去；没数据时有说明', { skip, timeout: 90000 }, async () => {
   const { fakeContext } = require('../tools/preview');
-  const tree = fs.readFileSync(path.join(__dirname, '..', 'example', '需求树.md'), 'utf8');
+  const tree = fs.readFileSync(path.join(__dirname, 'fixtures', 'example.tree.md'), 'utf8');
   for (const theme of ['dark', 'light']) {
     const b = await openPage2(`polish-ctx-${theme}.html`, { theme, selId: 'R3.2', context: fakeContext }, 320, { tree });
     try {
@@ -1385,7 +1358,7 @@ test('文字表：中英文两张表的键一样、类型一样；代码里用�
 
 test('英文界面：侧栏、详情、导图、菜单、上下文用量里都没有中文（树的内容也是英文）', { skip, timeout: 90000 }, async () => {
   const { fakeContext } = require('../tools/preview');
-  const tree = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
+  const tree = fs.readFileSync(path.join(__dirname, 'fixtures', 'example-en.tree.md'), 'utf8');
   const SCAN = `
     const CJK = /[\u4e00-\u9fff]/;
     const bad = [];
@@ -1420,7 +1393,7 @@ test('英文界面：侧栏、详情、导图、菜单、上下文用量里都�
       assert.deepStrictEqual(r.withCtx, [], `${name}：上下文用量里还有中文`);
       assert.ok(r.menu.some(x => x.includes('Show IDs')), r.menu.join());
       assert.strictEqual(r.ctx, 'Always loaded 11,230 chars · On demand 1,175 chars');
-      assert.deepStrictEqual(r.more, ['Copy ID R3.2', 'Delete requirement…']);
+      assert.deepStrictEqual(r.more, ['Open rule file', 'Copy ID R3.2', 'Delete requirement…']);
     } finally { b.close(); }
   }
 });
@@ -1444,49 +1417,42 @@ test('导图变窄：工具栏到 700px 还是一行；自动适应不小于 0.8
   }
 });
 
-test('英文界面：新的改动记录、记录员状态、出错提示都按英文显示（没有中文）；旧记录（只有存下的文字）照样显示', { skip, timeout: 90000 }, async () => {
-  const tree = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
+test('英文界面：改动记录、状态栏、出错提示都按英文显示（没有中文）；认不出的旧记录显示存下的文字', { skip, timeout: 90000 }, async () => {
+  const tree = fs.readFileSync(path.join(__dirname, 'fixtures', 'example-en.tree.md'), 'utf8');
   const now = Date.now();
-  // 新记录：带 ops（结构化），summary 是中文；旧记录：只有中文 summary、ops 认不出
+  // ops 是结构化的，summary 是中文：界面按 ops 用英文重写；ops 认不出的只能显示 summary
   const changes = [
-    { id: 'n1', time: now - 60000, source: '记录员', summary: ['给 R3.2 加规则「x」', 'R3.2 标为进行中'], undone: false,
-      ops: [{ op: 'add_rule', node: 'R3.2', text: 'Suspense within the first screen', undo: [{ op: 'remove_rule', node: 'R3.2', text: 'Suspense within the first screen' }] },
-            { op: 'set_status', node: 'R3.2', status: 'doing', undo: [{ op: 'set_status', node: 'R3.2', status: null }] }] },
+    { id: 'n1', time: now - 60000, source: 'AI', summary: ['给 R3.2 加规则「x」', 'R3.2 标为进行中'], undone: false,
+      ops: [{ op: 'add_rule', node: 'R3.2', text: 'Suspense within the first screen' }, { op: 'set_status', node: 'R3.2', status: 'doing' }] },
     { id: 'n2', time: now - 120000, source: '你', summary: ['R4 改名为「第2章」'], undone: false,
-      ops: [{ op: 'rename_node', node: 'R4', title: 'Chapter 2', undo: [{ op: 'rename_node', node: 'R4', title: 'Chapter Two' }] },
-            { op: 'delete_node', node: 'R9', undo: [{ op: 'restore_node', parent: 'P', before: null, at: 30, lines: ['## R9 Old idea ⏳', '- something'] }] }] },
-    { id: 'old', time: now - 240000, source: '记录员', summary: ['old entry kept as stored'], undone: false, ops: [{ op: 'reject_pending', node: 'R1' }] },
+      ops: [{ op: 'rename_node', node: 'R4', title: 'Chapter 2', old: 'Chapter Two' }, { op: 'delete_node', node: 'R9', title: 'Old idea' }, { op: 'edit_file', node: 'R1', file: 'R1-x.md' }] },
+    { id: 'n3', time: now - 180000, source: '体检', summary: ['x'], undone: true, ops: [{ op: 'remove_rule', node: 'R1', text: 'Six parts' }] },
+    { id: 'old', time: now - 240000, source: '其他', summary: ['old entry kept as stored'], undone: false, ops: [{ op: 'reject_pending', node: 'R1' }] },
   ];
-  const recorder = { ok: true, time: now - 30000, message: '记下 2 条；R3.2 标为进行中', parts: [{ k: 'rec.rules', a: [2] }, { k: 'rec.doing', a: [['R3.2']] }] };
-  const compile = { ok: false, time: now, message: '需求树被占用，5 秒内没拿到锁', t: { k: 'err.busy', a: [5] } };
-  const b = await openPage2('en-changes.html', { lang: 'en', selId: 'R3.2', changes, recorder, compile }, 320, { tree });
+  const files = require('../src/migrate').convert(tree).files;
+  files.set('R1-dup.md', '# R1 dup\n');
+  const b = await openPage2('en-changes.html', { lang: 'en', selId: 'R3.2', changes, files }, 320, { tree });
   try {
     const r = await b.eval(`
-      const CJK = /[\\u4e00-\\u9fff]/;
+      const CJK = /[\u4e00-\u9fff]/;
+      document.querySelectorAll('.dp .fold-tg[aria-expanded="false"]').forEach(t => t.click());
       const lines = [...document.querySelectorAll('.chg .cs')].map(e => e.textContent);
+      const banner = document.querySelector('.banner.err')?.textContent || '';
       return { lines, who: [...document.querySelectorAll('.chg .who')].map(e => e.textContent), status: document.querySelector('.status').textContent,
-        banner: document.querySelector('.banner.err')?.textContent || '', cjk: [...lines, document.querySelector('.status').textContent, document.querySelector('.banner.err')?.textContent || ''].filter(t => CJK.test(t)) };`);
-    assert.deepStrictEqual(r.lines, [
+        banner, cjk: [...lines, document.querySelector('.status').textContent, banner].filter(t => CJK.test(t)) };`);
+    assert.deepStrictEqual(r.lines.slice(0, 5), [
       'Added rule "Suspense within the first screen" to "Opening story"', 'Marked "Opening story" as In progress',
-      'Renamed "Chapter Two" to "Chapter 2"', 'Deleted requirement "Old idea"',
-      'old entry kept as stored',
+      'Renamed "Chapter Two" to "Chapter 2"', 'Deleted requirement "Old idea"', 'Edited the rule file of "Course structure"',
     ]);
-    assert.deepStrictEqual(r.who, ['Recorder', 'You', 'Recorder']);
-    assert.match(r.status, /^Recorder · .* · Recorded 2 rules; marked "Opening story" in progress$/);
-    assert.match(r.banner, /The requirement tree is busy; couldn't get the lock within 5 s/);
+    assert.strictEqual(r.lines[r.lines.length - 1], 'old entry kept as stored');
+    assert.deepStrictEqual(r.who, ['AI', 'You', 'Checkup', 'Other']);
+    assert.match(r.status, /^AI · .* · Added rule "Suspense within the first screen" to "Opening story"$/);
+    assert.match(r.banner, /ID R1 is used twice/);
     assert.deepStrictEqual(r.cjk, [], '英文界面里还有中文');
   } finally { b.close(); }
-  // 记录员出错：带 t 的按英文显示；旧的只有中文 message 的照样显示
-  for (const [rec, want] of [
-    [{ ok: false, time: now, message: '调用模型超时（90 秒没有返回）', t: { k: 'rec.err.timeout', a: [90] } }, /Recorder error \(.*\): The model timed out \(no reply in 90 s\)/],
-    [{ ok: false, time: now, message: '旧版本的出错文字' }, /Recorder error \(.*\): 旧版本的出错文字/],
-  ]) {
-    const e = await openPage2('en-rec-err.html', { lang: 'en', recorder: rec }, 320, { tree });
-    try { assert.match(await e.eval(`return document.querySelector('.banner.err').textContent`), want); } finally { e.close(); }
-  }
-  // 中文界面：同样的新记录用中文写出来，名字用需求标题
+  // 中文界面：同样的记录用中文写出来，名字用需求标题
   const z = await openPage2('zh-changes.html', { selId: 'C2.2', changes: [{ ...changes[0], ops: [{ op: 'add_rule', node: 'C2.2', text: '例子要足' }] }] }, 320);
-  try { assert.deepStrictEqual(await z.eval(`return [...document.querySelectorAll('.chg .cs')].map(e => e.textContent)`), ['给「英文版」加规则「例子要足」']); } finally { z.close(); }
+  try { assert.deepStrictEqual(await z.eval(`document.querySelectorAll('.dp .fold-tg[aria-expanded="false"]').forEach(t => t.click()); return [...document.querySelectorAll('.chg .cs')].map(e => e.textContent)`), ['给「英文版」加规则「例子要足」']); } finally { z.close(); }
 });
 
 // ---------- 详情的状态：只显示当前状态，点开菜单再改 ----------
@@ -1509,7 +1475,7 @@ const ST_STATE = `
     posted: window.__posted.filter(m => m.type === 'edit'), errors: window.__errors };`;
 
 test('详情状态：只显示当前状态（一个文字按钮），没有四格分段；有 aria-haspopup / aria-expanded，名字里带当前状态；中英文', { skip, timeout: 120000 }, async () => {
-  const en = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
+  const en = fs.readFileSync(path.join(__dirname, 'fixtures', 'example-en.tree.md'), 'utf8');
   const cases = [['zh', 'C2.2', '待做', '状态：待做', TREE], ['zh', 'C2.1', '进行中', '状态：进行中', TREE], ['zh', 'C2.3', '没有状态', '状态：没有状态', TREE],
     ['en', 'R3.2', 'In progress', 'Status: In progress', en], ['en', 'R3.3', 'Undecided', 'Status: Undecided', en]];
   for (const [lang, selId, want, aria, tree] of cases) {
@@ -1620,7 +1586,7 @@ test('详情状态：键盘能用——回车 / 空格 / 下方向键打开，�
 });
 
 test('详情状态：英文菜单全是英文；深浅色、高对比度、侧栏和导图下文字对比度 ≥ 4.5，有焦点环，平时没有底色，比标题小，不溢出', { skip, timeout: 150000 }, async () => {
-  const en = fs.readFileSync(path.join(__dirname, '..', 'example', 'en', 'course.tree.md'), 'utf8');
+  const en = fs.readFileSync(path.join(__dirname, 'fixtures', 'example-en.tree.md'), 'utf8');
   const e = await openPage2('st-en.html', { lang: 'en', selId: 'R3.2' }, 300, { tree: en });
   try {
     const r = await e.eval(`document.querySelector('.dp .st-btn').click();` + ST_STATE);
@@ -1650,42 +1616,10 @@ test('详情状态：英文菜单全是英文；深浅色、高对比度、侧�
   }
 });
 
-test('最近改动：删掉自动记忆里重复的一句（memory_remove）按界面语言写出记忆文件名和那句话', { skip, timeout: 90000 }, async () => {
-  const now = Date.now();
-  const changes = [
-    { id: 'm1', time: now - 60000, source: '你', summary: ['删掉记忆 feedback_tone.md 里的「少用你」'], undone: false,
-      ops: [{ op: 'memory_remove', dir: 'C:/x/memory', file: 'feedback_tone.md', text: '少用你', wholeFile: false, undo: [] }] },
-    { id: 'm2', time: now - 120000, source: '你', summary: ['删掉记忆文件 style.md（「不引原话」）'], undone: false,
-      ops: [{ op: 'memory_remove', dir: 'C:/x/memory', file: 'style.md', text: '不引原话'.repeat(20), wholeFile: true, undo: [] }] },
-  ];
-  const lines = b => b.eval(`return [...document.querySelectorAll('.chg .cs')].map(e => e.textContent)`);
-  const z = await openPage2('mem-zh.html', { selId: 'C2.2', changes }, 320);
-  try {
-    const r = await lines(z);
-    assert.strictEqual(r[0], '删掉记忆 feedback_tone.md 里的「少用你」');
-    assert.match(r[1], /^删掉记忆文件 style\.md（「(不引原话)+不引原…」）$/);
-    assert.ok(r[1].length < 90, '太长的句子要截短');
-  } finally { z.close(); }
-  const e = await openPage2('mem-en.html', { selId: 'C2.2', changes, lang: 'en' }, 320);
-  try {
-    const r = await lines(e);
-    assert.strictEqual(r[0], 'Removed "少用你" from memory feedback_tone.md');
-    assert.match(r[1], /^Deleted memory file style\.md \("(不引原话)+不引原…"\)$/);
-    assert.ok(!r.some(l => /删掉/.test(l)), '英文界面不该用存下来的中文说明');
-  } finally { e.close(); }
-});
-
-test('久未动：同一个需求已经作为问题在问（问题还开着）时，详情里不再显示久未动提示；没问、问的是别的需求、已经答过时照常显示', { skip, timeout: 120000 }, async () => {
-  const q = (node, status = 'open') => ({ id: 'q-' + node, kind: 'stale', node, status, staleKey: node + '@1', text: 'x', options: [] });
-  for (const [name, questions, want] of [
-    ['none', [], true],
-    ['asked', [q('C2.1')], false],
-    ['other', [q('C2')], true],
-    ['answered', [q('C2.1', 'answered')], true],
-    ['notStale', [{ ...q('C2.1'), kind: 'conflict' }], true],
-  ]) {
+test('久未动：标着进行中、很久没改过它的文件时，详情里有提示；刚改过就没有', { skip, timeout: 120000 }, async () => {
+  for (const [name, opts, want] of [['old', { sinceDays: 10 }, true], ['fresh', { sinceDays: 10, touched: { 'C2.1': Date.now() } }, false], ['new', { sinceDays: 1 }, false]]) {
     for (const mode of ['side', 'map']) {
-      const b = await openPage2(`stale-q-${name}-${mode}.html`, { selId: 'C2.1', sinceDays: 10, questions, mode, width: mode === 'map' ? 1300 : 320, height: 800 }, mode === 'map' ? 1300 : 320);
+      const b = await openPage2(`stale-${name}-${mode}.html`, { selId: 'C2.1', ...opts, mode, width: mode === 'map' ? 1300 : 320, height: 800 }, mode === 'map' ? 1300 : 320);
       try {
         const r = await b.eval(`return { hint: !!document.querySelector('.dp .hint'), errors: window.__errors };`);
         assert.deepStrictEqual(r.errors, []);
