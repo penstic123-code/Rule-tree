@@ -36,7 +36,7 @@ function worktreesOf(mainDir) {
   return out;
 }
 
-// 从 dir 往上找用需求树的项目，到 git 根为止（Claude Code 和 Codex 都可能在子目录里启动）；git 根是 worktree 时回主仓库
+// 从 dir 往上找用需求树的项目，到 git 根为止（Claude Code 可能在子目录里启动）；git 根是 worktree 时回主仓库
 function findProjectUp(dir) {
   const { isProject } = require('./store');
   for (let d = path.resolve(dir); ;) {

@@ -9,6 +9,7 @@ const { spawnSync } = require('child_process');
 // 真实路径：Windows CI 上 os.tmpdir() 是 8.3 短路径，hook 记的是 realpath，两边要一致
 const SANDBOX = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ruletree-sandbox-')));
 process.env.TEMP = process.env.TMP = process.env.TMPDIR = SANDBOX;
+process.on('exit', () => { try { fs.rmSync(SANDBOX, { recursive: true, force: true }); } catch {} }); // 以前从不清，每跑一次留一个临时目录
 process.env.RULETREE_HOME = path.join(SANDBOX, 'home', '.ruletree');
 const ROOT = path.join(__dirname, '..');
 const FAKE = path.join(__dirname, 'fixtures', 'fake-claude.js');

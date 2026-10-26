@@ -4,6 +4,11 @@ An information architecture designed for AI coding: one rule file per requiremen
 
 A VS Code extension for [Claude Code](https://claude.com/claude-code). English | [中文](README.md)
 
+![How RuleTree is put together: requests go into a rules folder, the AI receives only the rules that cover the file it edits, and every change can be undone](docs/images/en/architecture.png)
+
+Technically it does three things: each requirement becomes one rule file whose header lists the files it covers; Claude Code's built-in path rules hand the AI only the files that cover whatever it is reading or editing; and the extension logs the before and after of every change so you can undo it.
+
+
 Three weeks into building a project with an AI, you have told it dozens of things: comments in English, store money as whole cents, run the tests after every edit. Those requests are scattered across chat history, CLAUDE.md, the AI's own memory and your design docs. Start a new chat and the AI can no longer see what was said in the old one. Put everything in CLAUDE.md and it reads tens of thousands of words before fixing a typo. Change your mind one day, and the old wording survives in two other places, so the AI cannot tell which one to follow.
 
 ![Requests scattered across places, messier every week](docs/images/en/pain.png)

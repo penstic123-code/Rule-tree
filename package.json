@@ -2,7 +2,7 @@
   "name": "ruletree",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "publisher": "shidipeng",
   "license": "MIT",
   "repository": {

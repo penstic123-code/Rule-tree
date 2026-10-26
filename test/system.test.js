@@ -66,6 +66,15 @@ test('hook：InstructionsLoaded 记下加载了哪个规则文件、多少字（
   assert.strictEqual(fs.readFileSync(guide, 'utf8'), guideText());
 });
 
+test('说明书：文件里是更新版本写的就不改回去（旧插件不和新插件来回改）', () => {
+  const dir = H.project();
+  const guide = H.ruleFile(dir, '_guide.md');
+  const newer = '<!-- ruletree:guide 999 -->\n更新版本的说明书';
+  fs.writeFileSync(guide, newer);
+  assert.strictEqual(require('../src/guide').ensureGuide(dir), false);
+  assert.strictEqual(fs.readFileSync(guide, 'utf8'), newer);
+});
+
 test('hook：git worktree 里改的文件按 worktree 的根归到需求；worktree 里的规则文件不记改动（合并回来时再记）', () => {
   const dir = H.project();
   fs.mkdirSync(path.join(dir, '.git', 'worktrees', 'w1'), { recursive: true });
@@ -132,6 +141,18 @@ test('disable：去掉 hook，规则文件留着', () => {
   assert.deepStrictEqual(cli.disable(dir), ['.claude/settings.local.json']);
   assert.ok(!cli.enabledIn(dir));
   assert.ok(store.hasRules(dir));
+});
+
+test('init 给 settings.local.json 加「直接改规则文件夹」的允许规则，不重复、不动别的，disable 去掉', () => {
+  const dir = H.project();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(ls)'], deny: ['Read(.env)'] } }));
+  cli.init(dir, { log: () => {} });
+  cli.init(dir, { log: () => {} });
+  const rule = 'Edit(/.claude/rules/ruletree/**)';
+  assert.deepStrictEqual(settingsOf(dir).permissions, { allow: ['Bash(ls)', rule], deny: ['Read(.env)'] });
+  cli.disable(dir);
+  assert.deepStrictEqual(settingsOf(dir).permissions, { allow: ['Bash(ls)'], deny: ['Read(.env)'] });
 });
 
 test('hook 命令的引号：posix 用单引号（$、反引号、单引号都不会被 shell 解释），Windows 用双引号、正斜杠', () => {

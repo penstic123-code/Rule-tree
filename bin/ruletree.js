@@ -81,10 +81,21 @@ const enabledIn = dir => settingsHooks(dir, h => { if (!isCurrent(h)) return fal
 // 还装着旧版（需求树 reqtree）的 hook：要升级
 const hasOldHooks = dir => settingsHooks(dir, h => isOurs(h) && !isCurrent(h));
 
-// 从一份 settings 里去掉我们的 hook（别的 hook 原样留着），返回有没有改
+// 让 AI 记规则不用每次弹「允许」：Claude Code 对 .claude/ 里的文件默认要确认。只放行规则文件夹，写在 settings.local.json（不进 git）
+const ALLOW_RULES = 'Edit(/.claude/rules/ruletree/**)';
+
+// 从一份 settings 里去掉我们的 hook 和允许规则（别的原样留着），返回有没有改
 function stripOurs(s) {
-  if (!s || !s.hooks || typeof s.hooks !== 'object') return false;
+  if (!s) return false;
   let changed = false;
+  const allow = s.permissions && s.permissions.allow;
+  if (Array.isArray(allow) && allow.includes(ALLOW_RULES)) {
+    s.permissions.allow = allow.filter(r => r !== ALLOW_RULES);
+    if (!s.permissions.allow.length) delete s.permissions.allow;
+    if (!Object.keys(s.permissions).length) delete s.permissions;
+    changed = true;
+  }
+  if (!s.hooks || typeof s.hooks !== 'object') return changed;
   for (const ev of Object.keys(s.hooks)) {
     if (!Array.isArray(s.hooks[ev])) continue;
     const next = s.hooks[ev].map(g => ({ ...g, hooks: (g.hooks || []).filter(h => !isOurs(h)) })).filter(g => g.hooks.length);
@@ -106,6 +117,8 @@ function installClaude(dir, { runtime, log }) {
   const settingsPath = path.join(dir, '.claude', 'settings.local.json');
   const settings = readSettings(settingsPath, {});
   stripOurs(settings);
+  settings.permissions = settings.permissions && typeof settings.permissions === 'object' ? settings.permissions : {};
+  settings.permissions.allow = [...(Array.isArray(settings.permissions.allow) ? settings.permissions.allow : []), ALLOW_RULES];
   settings.hooks = settings.hooks || {};
   for (const [event, matcher] of [['PostToolUse', EDIT_MATCHER], ['InstructionsLoaded', null]]) {
     const group = { hooks: [{ type: 'command', command, async: true }] };
@@ -114,7 +127,7 @@ function installClaude(dir, { runtime, log }) {
   }
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-  log(`✓ hook 已写入 ${settingsPath}`);
+  log(`✓ hook 和「AI 可以直接改规则文件夹」的允许规则已写入 ${settingsPath}`);
 }
 
 // 在项目里启用：复制运行时副本、装 hook、忽略 .ruletree/；旧版的 需求树.md 拆成规则文件，没有就按文件夹建第一批需求；写说明书。
