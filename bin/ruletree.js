@@ -150,6 +150,9 @@ function init(dir, { log = console.log } = {}) {
   ensureGuide(dir);
   store.syncFiles(dir, null, '其他'); // 第一次：建快照
   store.ensureTracking(dir);
+  const gs = require('../src/files').rulesGitState(dir, store.RULES_DIR);
+  if (gs === 'ignored') log(`! ${store.RULES_DIR.replace(/\\/g, '/')}/ 被 .gitignore 忽略了：规则只在这个文件夹里，其他工作区、分支和同事看不到。想共享，在 .gitignore 里放行（.claude/ 整个被忽略时，要改成 .claude/* 再加一行 !.claude/rules/），然后提交`);
+  else if (gs === 'untracked') log(`! ${store.RULES_DIR.replace(/\\/g, '/')}/ 还没加进 git：不提交的话，其他工作区、分支和同事看不到规则。请自己 git add 并提交`);
   log('完成。新开 Claude Code 会话后生效。');
   return { dir, runtime, upgraded: up };
 }
@@ -174,7 +177,7 @@ const USAGE = `用法（目录默认是当前目录）：
   ruletree tree    [目录]        打印整棵树
   ruletree rules   <编号> [目录]  打印某个需求实际要守的规则（含上级的）
   ruletree check   [目录]        只用程序检查（不调用模型、不改文件）：重复、送不到、提到的文件不在、文档不在、规则太多
-  ruletree checkup [目录] [--no-model]  体检：程序检查 + 一次模型调用找重复、矛盾、过时的规则并直接改（可在面板上撤销），写报告`;
+  ruletree checkup [目录] [--no-model]  体检：程序检查 + 分块调用模型找重复、矛盾、过时的规则并直接改（可在面板上撤销），写报告`;
 
 function printTree(dir) {
   const label = n => `${n.id} ${n.title}${n.status ? ' ' + T.STATUS_EMOJI[n.status] : ''}`;
@@ -214,10 +217,10 @@ async function main(argv) {
       console.log(notes.length ? `共 ${notes.length} 处要看` : '没有发现问题');
       return notes.length ? 1 : 0;
     }
-    console.log(flags.includes('--no-model') ? '体检（只用程序检查）…' : '体检：程序检查 + 一次模型调用（一两分钟）…');
+    console.log(flags.includes('--no-model') ? '体检（只用程序检查）…' : '体检：程序检查 + 分块调用模型（并行，通常一两分钟）…');
     const r = await C.runCheckup(dir, { model: !flags.includes('--no-model') });
     console.log(r.report);
-    return r.error ? 1 : 0;
+    return r.error || r.failed.length ? 1 : 0;
   }
   console.log(USAGE);
   return 1;

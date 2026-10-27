@@ -27,4 +27,22 @@ function listFiles(dir) {
   return files.filter(f => !f.split('/').slice(0, -1).some(p => SKIP_DIRS.has(p))).slice(0, MAX_FILES);
 }
 
-module.exports = { listFiles };
+const git = (dir, args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', windowsHide: true, timeout: 10000 });
+
+// 当前分支名；不在 git 里或 HEAD 游离时返回 null
+function gitBranch(dir) {
+  const r = git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const b = r.status === 0 && typeof r.stdout === 'string' ? r.stdout.trim() : '';
+  return b && b !== 'HEAD' ? b : null;
+}
+
+// 规则文件夹在 git 里的状态：'tracked' 已跟踪 / 'ignored' 被 .gitignore 忽略 / 'untracked' 还没加进 git；不在 git 里返回 null
+function rulesGitState(dir, rel) {
+  rel = rel.replace(/\\/g, '/');
+  if (git(dir, ['rev-parse', '--is-inside-work-tree']).status !== 0) return null;
+  const ls = git(dir, ['ls-files', '--', rel]);
+  if (ls.status === 0 && ls.stdout.trim()) return 'tracked';
+  return git(dir, ['check-ignore', '-q', '--no-index', '--', rel + '/_guide.md']).status === 0 ? 'ignored' : 'untracked';
+}
+
+module.exports = { listFiles, gitBranch, rulesGitState };

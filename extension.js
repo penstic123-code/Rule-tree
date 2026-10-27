@@ -169,7 +169,7 @@ class Panel {
     return pick ? pick.d : null;
   }
 
-  // 命令「需求树：体检」：程序检查 + 一次模型调用，能改的直接改（一条改动，可撤销），结果写成报告
+  // 命令「需求树：体检」：程序检查 + 分块调用模型，能改的直接改（一条改动，可撤销），结果写成报告
   async checkupCommand() {
     const dir = await this.pickProject();
     if (!dir) return;
@@ -185,8 +185,10 @@ class Panel {
     } finally { this.checking.delete(dir); }
     this.load();
     const done = T('ck.summary', r.applied.length, r.ask.length, r.notes.length);
-    const show = r.error ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
-    Promise.resolve(show(r.error ? `${done}\n${T('ck.modelFail', errText(r.error))}` : done, T('q.report'))).then(b => {
+    const bad = r.error || r.failed[0];
+    const show = bad ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
+    const why = r.error ? T('ck.modelFail', errText(r.error)) : bad ? T('ck.partFail', r.failed.map(f => f.ids.join('、')).join('；'), errText(r.failed[0].error)) : '';
+    Promise.resolve(show(bad ? `${done}\n${why}` : done, T('q.report'))).then(b => {
       if (b === T('q.report')) this.reportCommand(dir);
     }, () => {});
     return r;

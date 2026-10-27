@@ -7,6 +7,9 @@ const { spawn, spawnSync } = require('child_process');
 const CLAUDE = process.env.RULETREE_CLAUDE_CMD || 'claude -p --model haiku --strict-mcp-config --no-session-persistence --setting-sources user';
 const TIMEOUT_MS = +process.env.RULETREE_CLAUDE_TIMEOUT_MS || 300000;
 
+// 一块 n 条规则的超时：基础 60 秒 + 每条 2 秒，最多 240 秒；设了环境变量就一律用它
+const timeoutFor = n => (process.env.RULETREE_CLAUDE_TIMEOUT_MS ? TIMEOUT_MS : Math.min(60000 + 2000 * n, 240000));
+
 // 把命令行拆成参数（posix 不经过 shell 时用）：认双引号、单引号和反斜杠转义，和 sh 的规则一致
 function splitCommand(cmd) {
   const args = [];
@@ -78,4 +81,4 @@ async function askJson(prompt, { timeoutMs = TIMEOUT_MS, cmd = CLAUDE } = {}) {
   return out;
 }
 
-module.exports = { askJson, runModel, splitCommand, fail };
+module.exports = { askJson, runModel, splitCommand, fail, timeoutFor };

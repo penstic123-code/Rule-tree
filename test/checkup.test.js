@@ -1,5 +1,5 @@
 'use strict';
-// 体检（src/checkup.js）：程序检查 + 一次模型调用（这里用假 claude），能改的直接改、可撤销；「决定：」不许模型动；规则分组只改面板显示
+// 体检（src/checkup.js）：程序检查 + 分块调用模型（这里用假 claude），能改的直接改、可撤销；「决定：」不许模型动；规则分组只改面板显示
 const H = require('./helpers');
 const test = require('node:test');
 const assert = require('node:assert');
@@ -38,7 +38,7 @@ const project = () => {
   fs.writeFileSync(path.join(dir, 'docs', 'a.md'), '# A\n## 一节\n');
   return dir;
 };
-const run = (dir, out, opts = {}) => C.runCheckup(dir, { ask: async p => { run.prompt = p; if (out instanceof Error) throw out; return out; }, ...opts });
+const run = (dir, out, opts = {}) => { run.prompts = []; return C.runCheckup(dir, { ask: async p => { run.prompt = p; run.prompts.push(p); if (out instanceof Error) throw out; return typeof out === 'function' ? out(p) : out; }, ...opts }); };
 
 test('程序检查：送不到、没写范围、超出上级、文档或节不在；编号问题；规则太多', () => {
   const dir = project();
@@ -124,7 +124,8 @@ test('规则分组：规则多的需求才分；对不上的序号、太少规�
     { node: 'C1', groups: [{ name: '少', rules: [1] }] }, { node: 'Z9', groups: [] },
   ] });
   assert.deepStrictEqual(r.categorized, ['P']);
-  assert.match(run.prompt, /要分组的：P/);
+  assert.ok(run.prompts.some(p => /要分组的：P/.test(p)), '分组单独问一次');
+  assert.ok(run.prompts.every(p => /要分组的/.test(p) !== /"fixes"/.test(p)), '检查和分组不在同一个提示词里');
   assert.deepStrictEqual(store.readFiles(dir), before);
   const cats = Cat.read(dir);
   assert.strictEqual(Cat.catOf(cats, 'P', '段落不超过 4 行'), '写作');
@@ -138,4 +139,75 @@ test('规则分组：规则多的需求才分；对不上的序号、太少规�
 test('审查回归：下级用「决定：」重复上级的规则时，两条都留', () => {
   const dir = H.project('# P x\n\n## R1 a\n> 文件：a/**\n- 段落不超过 4 行\n\n### R1.1 b\n- 决定：段落不超过 4 行\n', { files: ['a/b.js'] });
   assert.deepStrictEqual(C.duplicateOps(store.readTree(dir)), []);
+});
+
+const big = (id, n, extra = '') => `## ${id} 需求${id} 🔨
+> 文件：${id.toLowerCase()}/**
+${Array.from({ length: n }, (_, i) => `- ${id} 第 ${i} 条各不相同的内容${'甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥'[i % 22]}${i}`).join('\n')}
+${extra}
+`;
+const checks = () => run.prompts.filter(p => /"fixes"/.test(p));
+const SPLIT = `# P 项目
+- 全项目的一条
+
+${big('A1', 20)}
+${big('B1', 20)}
+${big('C1', 4)}
+`;
+
+test('体检分块：规则多就分几次问，小块装在一起；上级只当背景，改它的不算；块里没有的需求编号不改', async () => {
+  const dir = H.project(SPLIT, { files: ['a1/x', 'b1/x', 'c1/x'] });
+  const bs = C.batches(store.readTree(dir));
+  assert.deepStrictEqual(bs.map(b => b.nodes.map(n => n.id).join('+')), ['P+A1', 'B1+C1']);
+  const r = await run(dir, p => ({ fixes: [{ op: 'remove', rule: 'A1#1', why: 'x' }, { op: 'remove', rule: 'B1#1', why: 'y' }] }));
+  assert.strictEqual(checks().length, 2);
+  assert.ok(checks()[0].includes('A1#1') && !checks()[0].includes('B1#1'));
+  assert.deepStrictEqual(r.applied.map(o => o.node).sort(), ['A1', 'B1'], '每块只改自己块里的');
+  assert.match(checks()[1], /P 项目（全项目）【上级，只用来对照，不要改】/);
+});
+
+test('体检分块：一块超时或出错，其余照常生效；没问成的块下次重问，问成的不再问；全失败才算 error', async () => {
+  const dir = H.project(SPLIT, { files: ['a1/x', 'b1/x', 'c1/x'] });
+  let r = await run(dir, p => { if (p.includes('B1#1')) throw new Error('boom'); return { fixes: [{ op: 'remove', rule: 'A1#1', why: 'x' }] }; });
+  assert.ok(!r.error);
+  assert.deepStrictEqual(r.failed.map(f => f.ids.join('+')), ['B1+C1']);
+  assert.strictEqual(r.applied.length, 1, '成功的那块照常生效');
+  assert.match(r.report, /这几块没检查成功：B1、C1（boom）/);
+  r = await run(dir, { fixes: [] });
+  assert.strictEqual(checks().length, 1, '只重问没成的那块');
+  assert.ok(checks()[0].includes('B1#1') && !checks()[0].includes('A1#2'));
+  r = await run(dir, { fixes: [] });
+  assert.strictEqual(checks().length, 0, '问成的不再问');
+  const dir2 = H.project(SPLIT, { files: ['a1/x'] });
+  r = await run(dir2, new Error('Not logged in'));
+  assert.ok(r.error && r.failed.filter(f => !f.group).length === 2);
+});
+
+test('体检读 CLAUDE.md：规则树里已有的规矩标出来（只提示不改文件）；没变不再问；对不上规则的丢掉；没有 CLAUDE.md 就不问', async () => {
+  const dir = project();
+  const prompts = r => r.length;
+  let r = await run(dir, { fixes: [] });
+  assert.ok(!run.prompts.some(p => /CLAUDE\.md：/.test(p)), '没有 CLAUDE.md 不问');
+  const md = '# 项目\n- 段落不超过 4 行\n- 别的和规则树无关的要求，写长一点才算数\n';
+  fs.writeFileSync(path.join(dir, 'CLAUDE.md'), md);
+  const out = p => (/CLAUDE\.md：/.test(p) ? { dups: [{ line: '段落不超过 4 行', rule: 'P#1' }, { line: '编的', rule: 'Z9#1' }] } : { fixes: [] });
+  r = await run(dir, out);
+  assert.ok(run.prompts.some(p => /CLAUDE\.md：/.test(p)));
+  const dup = r.notes.filter(n => n.k === 'claudeDup');
+  assert.deepStrictEqual(dup.map(n => `${n.line}|${n.rule}`), ['段落不超过 4 行|P#1']);
+  assert.match(C.noteText(dup[0]), /CLAUDE\.md 里的「段落不超过 4 行」规则树里已经有了（P#1）/);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), md, '不改 CLAUDE.md');
+  r = await run(dir, out);
+  assert.ok(r.skippedModel && !run.prompts.length, '都没变不再问');
+  assert.strictEqual(r.notes.filter(n => n.k === 'claudeDup').length, 1, '沿用上次的结果');
+  r = await run(dir, new Error('x'), { full: true });
+  assert.ok(r.failed.some(f => f.claude), 'CLAUDE.md 那次没问成单独记');
+  assert.ok(prompts(run.prompts) > 0);
+});
+
+test('文档找不到时带上当前分支；不在 git 里就不带', () => {
+  const dir = project();
+  assert.ok(C.programChecks(dir).filter(n => n.k === 'docGone').every(n => !n.branch));
+  assert.doesNotMatch(C.noteText({ k: 'docGone', id: 'C2', doc: 'x.md' }), /分支/);
+  assert.match(C.noteText({ k: 'docGone', id: 'C2', doc: 'x.md', branch: 'dev' }), /当前分支：dev，可能是分支不同/);
 });
