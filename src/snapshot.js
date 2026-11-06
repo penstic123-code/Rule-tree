@@ -38,6 +38,21 @@ function localSummary(c, lang) {
   return lines.every(Boolean) ? lines : c.summary;
 }
 
+// 建树的那条改动（setup 写的）：撤销它会删掉整棵树，面板不给撤销按钮。来源是 propose.apply 写的「新建」或 created
+const CREATED = new Set(['新建', 'created']);
+
+// 范围里一个文件都匹配不到的需求（做完了的不算，同体检）：在每个节点上标 noMatch，详情里提醒。
+// 只在有需求写了范围时才列一次项目文件（git ls-files），别让没范围的项目白花时间
+function markNoMatch(dir, nodes) {
+  const all = [];
+  const walk = (list, depth) => list.forEach(n => { all.push([n, depth]); walk(n.children, depth + 1); });
+  walk(nodes, 0);
+  const check = all.filter(([n, d]) => d > 0 && n.files.length && n.status !== 'done');
+  const files = check.length ? require('./files').listFiles(dir, { dotDirs: true }) : [];
+  for (const [n] of all) n.noMatch = false;
+  for (const [n] of check) n.noMatch = !files.some(f => T.matchesAny(n.files, f));
+}
+
 // 项目的需求树和近期动静，viewData 的输入（插件另加 uri）
 function loadTree(dir, now = Date.now()) {
   const files = store.readFiles(dir);
@@ -63,7 +78,8 @@ function snapshot(cwd, { file, now = Date.now() } = {}) {
   snap.lang = require('./lang').detectLang(dir, 'en');
   const tree = loadTree(dir, now);
   const view = viewData([{ ...tree, uri: dir }], now).files[0];
-  Object.assign(snap, { nodes: view.nodes, changes: view.changes.map(c => ({ ...c, summary: localSummary(c, snap.lang) })), unmapped: view.unmapped, problems: view.problems });
+  Object.assign(snap, { nodes: view.nodes, changes: view.changes.map(c => ({ ...c, summary: localSummary(c, snap.lang), undoable: c.undoable && !CREATED.has(c.source) })), unmapped: view.unmapped, problems: view.problems });
+  markNoMatch(dir, snap.nodes);
   if (file) {
     const rel = projectRel(dir, path.resolve(cwd, file));
     const node = rel.startsWith('..') ? null : T.nodeForFile(T.build(tree.files), rel);

@@ -20,7 +20,7 @@ const STR = {
     working: ' ● 在改',
     recentTag: ' 刚改',
     workingNow: (id: string, title: string) => `● AI 在改：${id} ${title}`,
-    done: '完成', doing: '进行中', todo: '待做', none: '未标',
+    done: '完成', doing: '进行中', todo: '待做', question: '待定', none: '未标',
     totals: (d: number, g: number, t: number, n: string) => `✓ 完成 ${d} · ◐ 进行中 ${g} · ○ 待做 ${t}${n}`,
     noneTotal: (n: number) => ` · 未标 ${n}`,
     selected: (id: string, title: string) => `已选：${id} ${title}`,
@@ -40,6 +40,10 @@ const STR = {
     recent: '最近的改动',
     undo: '撤销',
     more: (n: number) => `还有 ${n} 个`,
+    noMatch: '管的文件一个都没匹配到：路径可能写错了，或文件还没建',
+    noId: (file: string) => `${file} 的标题行没有编号，没算进需求树`,
+    dupId: (id: string, file: string, other: string) => `编号 ${id} 重复：${file} 和 ${other}`,
+    noParent: (id: string, parent: string) => `${id} 的上级 ${parent} 不存在，先放在最上层`,
     back: '‹ 返回',
     notEnabled: '这个项目还没有启用需求树',
     enablePitch: '启用后，这里会画出项目的全貌：有哪些部分、各做到哪了、AI 正在改哪里。',
@@ -68,7 +72,7 @@ const STR = {
     working: ' ● editing',
     recentTag: ' just edited',
     workingNow: (id: string, title: string) => `● AI is editing: ${id} ${title}`,
-    done: 'Done', doing: 'In progress', todo: 'To do', none: 'No status',
+    done: 'Done', doing: 'In progress', todo: 'To do', question: 'Open question', none: 'No status',
     totals: (d: number, g: number, t: number, n: string) => `✓ Done ${d} · ◐ In progress ${g} · ○ To do ${t}${n}`,
     noneTotal: (n: number) => ` · No status ${n}`,
     selected: (id: string, title: string) => `Selected: ${id} ${title}`,
@@ -88,6 +92,10 @@ const STR = {
     recent: 'Recent changes',
     undo: 'Undo',
     more: (n: number) => `${n} more`,
+    noMatch: 'None of the files it covers match: a path may be wrong, or the files are not created yet',
+    noId: (file: string) => `${file} has no ID in its title line, so it is not in the tree`,
+    dupId: (id: string, file: string, other: string) => `ID ${id} is used twice: ${file} and ${other}`,
+    noParent: (id: string, parent: string) => `The parent of ${id}, ${parent}, does not exist; shown at the top level`,
     back: '‹ Back',
     notEnabled: 'This project does not use a requirement tree yet',
     enablePitch: 'Once it is on, this pane maps the whole project: its parts, how far along each one is, and where the AI is working.',
@@ -174,7 +182,7 @@ const contains = (n: SnapshotNode, id: string | null): boolean =>
 const STATUS_COLOR: Record<string, string> = { done: 'success', doing: 'warning', todo: 'inactive' }
 const colorOf = (s: string | null) => STATUS_COLOR[s ?? ''] ?? 'inactive'
 // 状态记号：只靠颜色分不清（色弱、主题改色），每格都带一个；总数那行同时充当图例
-const STATUS_GLYPH: Record<string, string> = { done: '✓', doing: '◐', todo: '○' }
+const STATUS_GLYPH: Record<string, string> = { done: '✓', doing: '◐', todo: '○', question: '?' }
 const glyphOf = (s: string | null) => STATUS_GLYPH[s ?? ''] ?? '·'
 
 // 一格至少这么宽才放得下记号、编号和一个看得出意思的标题；60 列的面板正好两列
@@ -238,6 +246,7 @@ const statusOptions = (t: ReturnType<typeof strings>) => [
   { value: 'todo', label: t.todo },
   { value: 'doing', label: t.doing },
   { value: 'done', label: t.done },
+  { value: 'question', label: t.question },
 ]
 const RECENT_CHANGES = 3
 
@@ -260,6 +269,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
         onSelect={v => act.onEdit(node.id, [{ op: 'set_status', node: node.id, status: v || null }])}
       />
       <Text dimColor>{node.files.length ? t.covers(node.files.join(t.sep)) : t.coversNothing}</Text>
+      {node.noMatch ? <Text color="warning">{t.noMatch}</Text> : null}
       {node.docs.length ? (
         <Text dimColor>{t.docs(node.docs.map(d => d.path + (d.ok ? '' : t.docGone)).join(t.sep))}</Text>
       ) : null}
@@ -395,11 +405,12 @@ function Tile(els: any, tile: OverviewTile, selected: string, act: PaneActions, 
 
 // 格子排成固定的列，一行一个 Box：不靠换行排版，两列就一定是两列，宽度也都按 cols 算好
 function tileGrid(els: any, id: string, tiles: OverviewTile[], hidden: number, selected: string, act: PaneActions, lang: string | undefined, cols: number) {
-  const { Box, Text } = els
+  const { Box, Text, Button } = els
   const n = tileColumns(cols)
   const width = tileWidth(cols)
   const cells = tiles.map(t => Tile(els, t, selected, act, lang, width))
-  if (hidden > 0) cells.push(<Text key={`more-${id}`} dimColor>{strings(lang).more(hidden)}</Text>)
+  // 藏起来的格：按「还有 N 个」进到这个需求的下一层，那里列全部
+  if (hidden > 0) cells.push(<Button key={`more-${id}`} plain onPress={() => act.onTile({ id, hasChildren: true })}><Text dimColor>{strings(lang).more(hidden)}</Text></Button>)
   const rows = Array.from({ length: Math.ceil(cells.length / n) }, (_, i) => cells.slice(i * n, (i + 1) * n))
   return rows.map((row, i) => (
     <Box key={`row-${id}-${i}`} flexDirection="row" columnGap={1}>{row}</Box>
@@ -407,17 +418,34 @@ function tileGrid(els: any, id: string, tiles: OverviewTile[], hidden: number, s
 }
 
 // 块标题：记号、编号、标题，右边是这一块的下一级完成了几个（藏起来的格也算，总览只列得下一部分）
-function blockTitle(els: any, node: { id: string; title: string; status: string | null }, nodes: SnapshotNode[], cols: number) {
-  const { Box, Text } = els
+// act 给了就把标题做成按钮：按下进到这个需求的下一层，同时选中它（顶层需求有下级时，这是看它自己详情的唯一入口）
+function blockTitle(els: any, node: { id: string; title: string; status: string | null }, nodes: SnapshotNode[], cols: number, act?: PaneActions) {
+  const { Box, Text, Button } = els
   const kids = locate(nodes, node.id)?.node.children ?? []
   const progress = kids.length ? `${kids.filter(k => k.status === 'done').length}/${kids.length}` : ''
   const room = cols - (progress ? cellsOf(progress) + 1 : 0)
+  const title = <Text bold color={colorOf(node.status)} wrap="truncate-end">{fit(`${glyphOf(node.status)} ${node.id} ${node.title}`, room)}</Text>
   return (
     <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
-      <Text bold color={colorOf(node.status)} wrap="truncate-end">{fit(`${glyphOf(node.status)} ${node.id} ${node.title}`, room)}</Text>
+      {act ? (
+        <Button key={`block-${node.id}`} plain label={`${node.id} ${node.title}`} onPress={() => act.onTile({ id: node.id, hasChildren: true })}>
+          {title}
+        </Button>
+      ) : title}
       {progress ? <Text dimColor>{progress}</Text> : null}
     </Box>
   )
+}
+
+// 规则文件本身的问题：没编号、编号重复、上级不存在。不画的话这个需求在地图上悄悄消失，用户不知道为什么
+function problemLines(els: any, snap: Snapshot) {
+  const { Text } = els
+  const t = strings(snap.lang)
+  return (snap.problems ?? []).map((p, i) => (
+    <Text key={`problem-${i}`} color="warning">
+      {p.k === 'dupId' ? t.dupId(p.id ?? '', p.file, p.other ?? '') : p.k === 'noParent' ? t.noParent(p.id ?? '', p.parent ?? '') : t.noId(p.file)}
+    </Text>
+  ))
 }
 
 function Hint(Text: any, text: string, color?: string) {
@@ -459,7 +487,7 @@ function overviewView(els: any, snap: Snapshot, selected: string, act: PaneActio
     <Box flexDirection="column" rowGap={air}>
       {blocks.map(b => (
         <Box key={b.id} flexDirection="column">
-          {soloTile(b) ? Tile(els, b.tiles[0] as OverviewTile, selected, act, snap.lang, cols) : blockTitle(els, b, snap.nodes, cols)}
+          {soloTile(b) ? Tile(els, b.tiles[0] as OverviewTile, selected, act, snap.lang, cols) : blockTitle(els, b, snap.nodes, cols, act)}
           {soloTile(b) ? null : tileGrid(els, b.id, b.tiles, b.hidden, selected, act, snap.lang, cols)}
         </Box>
       ))}
@@ -574,6 +602,7 @@ export function paneTree(els: { Box: any; Text: any; Button: any; Select: any; I
   return (
     <Box flexDirection="column">
       {reason}
+      {problemLines(els, snap)}
       {surface === 'terminal' ? (
         textTree(els, snap, selected, cols)
       ) : (

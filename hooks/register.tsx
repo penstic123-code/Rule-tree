@@ -199,6 +199,16 @@ export const register: Register = on => {
     }).catch(($, e, next) => next(e)) // 刷新出错不能挡住 AI 的改动
   }
 
+  // 命令行里跑了需求树的程序（比如 /ruletree:setup）：改的不是 Edit/Write 能看到的文件，所以按命令内容刷新。
+  // 同样先让命令跑完，后台刷新，AI 一点不被拖慢；不记 lastEdit（没有具体文件）
+  for (const tool of ['Bash', 'PowerShell'] as const) {
+    on('tool.call', { tool }, async ($, e, next) => {
+      const ran = await next(e)
+      if (String((e as any).command ?? '').includes('ruletree.js')) refresh($).catch(() => {})
+      return ran
+    }).catch(($, e, next) => next(e))
+  }
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e) as any
     const props = (e as any).props

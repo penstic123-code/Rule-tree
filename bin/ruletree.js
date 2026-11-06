@@ -16,14 +16,15 @@ const VERSION = require('../package.json').version;
 // ---------- 运行时副本 ~/.ruletree/runtime ----------
 // hook 命令不指向插件的安装目录：插件升级后目录名会变，npx 的缓存也随时会被清掉。所以 init 把 hooks/ 和 src/ 复制到固定位置，hook 命令指向那里。
 // 每次 init（以及插件发现副本比自己旧时）整个覆盖并写下版本号；副本比自己新时不降级。先复制 src 再复制 hooks：复制到一半时旧 hook 用到的 src 接口不会消失
-const RUNTIME_PARTS = ['src', 'hooks'];
+// hooks/ 里只有 hook.js 要被 Claude Code 直接调用（其余是 Claude 应用插件的界面代码，VS Code 路线用不到，也不打进包）
+const RUNTIME_PARTS = [['src'], ['hooks', ['hook.js']]];
 const home = () => process.env.RULETREE_HOME || path.join(os.homedir(), '.ruletree');
 const runtimeDir = () => path.join(home(), 'runtime');
 
 // 把 from 目录同步到 to：逐个文件先写临时文件再改名，删掉 from 里已经没有的文件
-function syncDir(from, to) {
+function syncDir(from, to, only) {
   fs.mkdirSync(to, { recursive: true });
-  const names = new Set(fs.readdirSync(from));
+  const names = new Set(fs.readdirSync(from).filter(n => !only || only.includes(n)));
   for (const name of fs.readdirSync(to)) if (!names.has(name) && !name.endsWith('.tmp')) fs.rmSync(path.join(to, name), { recursive: true, force: true });
   for (const name of names) {
     const src = path.join(from, name), dst = path.join(to, name);
@@ -35,7 +36,7 @@ function syncDir(from, to) {
 }
 function installRuntime() {
   const dir = runtimeDir();
-  for (const part of RUNTIME_PARTS) syncDir(path.join(ROOT, part), path.join(dir, part));
+  for (const [part, only] of RUNTIME_PARTS) syncDir(path.join(ROOT, part), path.join(dir, part), only);
   fs.writeFileSync(path.join(dir, 'version'), VERSION + '\n');
   return dir;
 }
@@ -140,9 +141,10 @@ function init(dir, { log = console.log, plugin = false, lang = 'zh' } = {}) {
   if (!fs.statSync(dir).isDirectory()) throw new Error(`不是文件夹：${dir}`);
   const have = runtimeVersion();
   let runtime = null; // 插件路线不用运行时副本：hook 直接从插件目录跑
-  if (plugin) {}
-  else if (have && isOlder(VERSION, have)) { runtime = runtimeDir(); log(`✓ ${runtime} 里已经是更新的版本 ${have}（这次是 ${VERSION}），不覆盖`); }
-  else { runtime = installRuntime(); log(`✓ hook 程序已复制到 ${runtime}（版本 ${VERSION}）`); }
+  if (!plugin) {
+    if (have && isOlder(VERSION, have)) { runtime = runtimeDir(); log(`✓ ${runtime} 里已经是更新的版本 ${have}（这次是 ${VERSION}），不覆盖`); }
+    else { runtime = installRuntime(); log(`✓ hook 程序已复制到 ${runtime}（版本 ${VERSION}）`); }
+  }
   installClaude(dir, { runtime, log, plugin });
   if (store.ensureGitignore(dir)) log('✓ .gitignore 已忽略 .ruletree/');
   const up = require('../src/migrate').upgrade(dir);
@@ -177,7 +179,7 @@ function disable(dir) {
 
 const USAGE = `用法（目录默认是当前目录）：
   ruletree init    [目录]        在项目里启用：装 hook、忽略 .ruletree/；旧版的 需求树.md 拆成规则文件，没有就按文件夹建第一批需求
-  ruletree setup   [目录] --json  从标准输入读 AI 提出的第一棵树，检查后写成规则文件并启用（给 Claude 插件的 /ruletree:setup 用；已有规则的项目不动）
+  ruletree setup   [目录] --json [--proposal <文件>]  从标准输入（或 --proposal 指定的文件）读 AI 提出的第一棵树，检查后写成规则文件并启用，输出里的 warnings 要转告用户（给 Claude 插件的 /ruletree:setup 用；已有规则的项目不动）
   ruletree disable [目录]        停用：去掉 hook（规则文件留着）
   ruletree snapshot [目录] [--file <路径>] --json  打印项目现状（给 Claude 插件的面板读），--file 是正在改的文件
   ruletree edit    [目录] --json  从标准输入读 {"ops":[...]} 或 {"undo":"id"}，改规则或撤销（给 Claude 插件的面板用）
@@ -242,9 +244,11 @@ async function main(argv) {
     let wrote = null;
     try {
       wrote = P.apply(dir, proposal);
-      init(dir, { plugin: true, lang: wrote.lang, log: () => {} }); // 插件路线：只写允许规则、说明书、.gitignore，hook 由插件带
+      // 插件路线：只写允许规则、说明书、.gitignore，hook 由插件带。init 的提示（R1 决定：规则文件夹被 git 忽略或没加进 git）以 ! 开头，收集起来交给调用方转告用户
+      const warnings = [];
+      init(dir, { plugin: true, lang: wrote.lang, log: m => { if (String(m).startsWith('!')) warnings.push(String(m).replace(/^!\s*/, '')); } });
       const snap = require('../src/snapshot').snapshot(dir);
-      out({ ok: true, problems: [], lang: wrote.lang, files: wrote.files.length, blocks: snap.overview.blocks.length });
+      out({ ok: true, problems: [], warnings, lang: wrote.lang, files: wrote.files.length, blocks: snap.overview.blocks.length });
     } catch (e) {
       // 失败要能重来：检查通过时项目里本来没有规则，把这次写下的规则文件和说明书撤掉，修好原因（比如坏掉的 settings.local.json）后可以重跑
       const rd = store.rulesDir(dir);

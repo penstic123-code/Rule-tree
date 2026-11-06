@@ -21,6 +21,6 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ruletree.js" setup --json --proposal <temp-file>
 
 The file holds `{"lang":"en","requirements":[{"id":"R1","title":"...","status":"doing","paths":["src/**"],"rules":["..."]},{"id":"R1.1","title":"...","paths":["src/api/**"]}]}`.
 
-Run it from the project root. If the output has `"ok":false`, fix the `problems` it names, show the user what changed, and run again. When `"ok":true`, tell the user the map is ready and a new session loads the rules.
+Run it from the project root. If the output has `"ok":false`, fix the `problems` it names, show the user what changed, and run again. When `"ok":true`, tell the user the map is ready and a new session loads the rules. If `warnings` is not empty (for example the rules folder is ignored by git or not added to git yet, so other worktrees, branches and teammates will not see the rules), pass each warning on to the user in their language. Do not edit `.gitignore` or commit for them.
 
 If the output is not valid JSON, or setup fails after validation passed (`"ok":false` with a problem that is not about the proposal itself, such as an unreadable settings file), stop, report the exact message to the user, and do not retry blindly. A failed setup removes the rule files it wrote, so it can be run again once the cause is fixed.

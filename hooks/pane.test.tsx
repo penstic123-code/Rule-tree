@@ -587,3 +587,89 @@ test('the terminal stays a plain text tree', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /R3\.4 第4格 \[待做\] ● 在改/ })).toBeTruthy()
   await ui.unmount()
 })
+
+test('pressing a block title opens its children and its own detail', async ($, on) => {
+  engine(on, () => ({ value: ok(JSON.stringify(bigSnap())) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'block-R2' })
+  expect(await ui.find({ type: 'Text', text: /已选：R2 第2块/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', text: /R2\.6 第6格/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', text: /R3\.1/ })).toBeFalsy() // 进到了 R2 这一层，别的块不画
+  await ui.unmount()
+})
+
+test('the "N more" line also opens the block, so hidden tiles can be reached', async ($, on) => {
+  const s = bigSnap()
+  s.overview.blocks[0].tiles = s.overview.blocks[0].tiles.slice(0, 4)
+  s.overview.blocks[0].hidden = 2
+  engine(on, () => ({ value: ok(JSON.stringify(s)) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Button', text: /R1\.6/ })).toBeFalsy()
+  await ui.press({ key: 'more-R1' })
+  expect(await ui.find({ type: 'Button', text: /R1\.6 第6格/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a Bash or PowerShell command that runs ruletree.js refreshes the map; other commands do not', async ($, on) => {
+  engine(on)
+  on('tool.call', () => ({ result: 'ok' }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const reads = () => seen.filter(c => JSON.stringify(c).includes('snapshot')).length
+  let seen: any[] = []
+  run = e => { seen.push(e); return { value: ok(SNAPSHOT) } }
+  await $.tool.call({ tool: 'Bash', command: 'ls -la' })
+  await $.tool.call({ tool: 'PowerShell', command: 'Get-ChildItem' })
+  await sleep(100)
+  expect(reads()).toBe(0)
+  await $.tool.call({ tool: 'Bash', command: 'node "/x/bin/ruletree.js" setup --json' })
+  await sleep(100)
+  expect(reads()).toBe(1)
+  await $.tool.call({ tool: 'PowerShell', command: 'node "$env:X/bin/ruletree.js" setup --json' })
+  await sleep(100)
+  expect(reads()).toBe(2)
+})
+
+test('rule-file problems are drawn with the file name', async ($, on) => {
+  const s: any = snap(null, 'en')
+  s.problems = [{ k: 'noId', file: 'R9-x.md' }, { k: 'dupId', id: 'R1', file: 'R1-b.md', other: 'R1-a.md' }]
+  engine(on, () => ({ value: ok(JSON.stringify(s)) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /R9-x\.md has no ID/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /ID R1 is used twice: R1-b\.md and R1-a\.md/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a requirement whose files match nothing says so in its detail', async ($, on) => {
+  const s: any = snap(null, 'zh')
+  s.nodes[0].children[0].noMatch = true
+  s.nodes[0].children[0].status = 'question'
+  engine(on, () => ({ value: ok(JSON.stringify(s)) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  expect(await ui.find({ type: 'Text', text: /一个都没匹配到/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('the open-question status has a word, a glyph and a Select option', async ($, on) => {
+  calls = []
+  const s: any = snap(null, 'en')
+  s.nodes[0].children[0].status = 'question'
+  s.overview.blocks[0].tiles[0].status = 'question'
+  engine(on, withEdit(done))
+  run = e => { calls.push(e); return JSON.stringify(e).includes('"edit"') ? done() : { value: ok(JSON.stringify(s)) } }
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /\? R1 / })).toBeTruthy()
+  await ui.press({ key: 'b-R1' })
+  await ui.select({ key: 'status-R1', value: 'question' })
+  expect(JSON.stringify(editCalls()[0])).toContain('question')
+  await ui.unmount()
+})

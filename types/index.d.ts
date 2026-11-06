@@ -20,6 +20,8 @@ export type SnapshotNode = {
   files: string[]
   docs: { path: string; ok: boolean }[]
   groups: SnapshotRuleGroup[]
+  // 写了范围却一个文件都匹配不到（做完了的不算）
+  noMatch?: boolean
 }
 // 改动记录的一条（src/store.js changeSummaries）
 export type SnapshotChange = {
@@ -30,6 +32,8 @@ export type SnapshotChange = {
   undone: boolean
   undoable: boolean
 }
+
+export type SnapshotProblem = { k: 'noId' | 'dupId' | 'noParent'; file: string; id?: string; other?: string; parent?: string }
 
 // 以下三个类型对应 src/layout.js 的 overview() 返回值。
 export type OverviewTile = {
@@ -62,7 +66,8 @@ export type Snapshot = {
   nodes: SnapshotNode[]
   changes: SnapshotChange[]
   unmapped: unknown[]
-  problems: unknown[]
+  // 规则文件的问题：没有编号、编号重复、上级不存在（src/tree.js build）
+  problems: SnapshotProblem[]
   // 正在改的文件所属的需求编号；没有就是 null
   working: string | null
   // 项目的语言：说明书、面板文字跟着它走。没有规则的项目是 'en'

@@ -176,3 +176,65 @@ test('an existing _guide.md is not overwritten', () => {
   apply(dir, fx('flat-app'));
   assert.strictEqual(fs.readFileSync(path.join(store.rulesDir(dir), '_guide.md'), 'utf8'), 'mine' + String.fromCharCode(10));
 });
+
+// ---------- 终审修复 ----------
+
+const git = (cwd, ...args) => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }); assert.strictEqual(r.status, 0, r.stderr); return r.stdout; };
+const gitApp = () => { const dir = app(); git(dir, 'init', '-q'); git(dir, 'add', '.'); git(dir, 'commit', '-qm', 'x'); return dir; };
+const runSetup = (dir, input) => spawnSync(process.execPath, [BIN, 'setup', dir, '--json'], { input: JSON.stringify(input), encoding: 'utf8' });
+
+test('setup works in a real git worktree, and the worktree is then its own project', () => {
+  const { findProjectUp, checkoutOf } = require('../src/common');
+  const main = gitApp();
+  const wt = main + '-wt';
+  git(main, 'worktree', 'add', '-q', wt);
+  const r = runSetup(wt, fx('flat-app'));
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.strictEqual(JSON.parse(r.stdout).blocks, 3);
+  assert.strictEqual(findProjectUp(wt), wt);
+  assert.strictEqual(checkoutOf(wt, wt), wt);
+  assert.strictEqual(snapshot(wt).enabled, true);
+});
+test('a worktree of a project with rules still resolves to the main checkout', () => {
+  const { findProjectUp, checkoutOf } = require('../src/common');
+  const main = gitApp();
+  assert.strictEqual(runSetup(main, fx('flat-app')).status, 0);
+  git(main, 'add', '-A'); git(main, 'commit', '-qm', 'rules');
+  const wt = main + '-wt2';
+  git(main, 'worktree', 'add', '-q', wt);
+  assert.ok(store.hasRules(wt)); // 规则随提交进了 worktree，但项目仍认主仓库
+  assert.strictEqual(findProjectUp(wt), main);
+  assert.strictEqual(checkoutOf(main, wt), wt);
+});
+test('setup passes init git warnings on in "warnings"', () => {
+  const dir = gitApp();
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.claude/\n');
+  const out = JSON.parse(runSetup(dir, fx('flat-app')).stdout);
+  assert.strictEqual(out.ok, true);
+  assert.ok(out.warnings.length >= 1 && out.warnings.every(w => !w.startsWith('!')), JSON.stringify(out.warnings));
+  const plain = JSON.parse(runSetup(app(), fx('flat-app')).stdout); // 不在 git 里：没有提示
+  assert.deepStrictEqual(plain.warnings, []);
+});
+test('the change that created the tree is not undoable in the snapshot', () => {
+  const dir = app();
+  assert.strictEqual(runSetup(dir, fx('flat-app')).status, 0);
+  const ch = snapshot(dir).changes;
+  assert.ok(ch.length >= 1 && ch.every(c => c.undoable === false), JSON.stringify(ch.map(c => [c.source, c.undoable])));
+});
+test('a requirement whose paths match no file is marked noMatch', () => {
+  const dir = app();
+  assert.strictEqual(runSetup(dir, fx('flat-app')).status, 0);
+  assert.ok(snapshot(dir).nodes[0].children.every(n => n.noMatch === false));
+  const rd = store.rulesDir(dir);
+  const f = fs.readdirSync(rd).find(n => /^R1-/.test(n));
+  const txt = fs.readFileSync(path.join(rd, f), 'utf8');
+  fs.writeFileSync(path.join(rd, f), txt.replace(/paths:\n(\s+- .*\n)+/, 'paths:\n  - "nowhere/**"\n'));
+  const nodes = snapshot(dir).nodes[0].children;
+  assert.strictEqual(nodes.find(n => n.id === 'R1').noMatch, true);
+});
+test('the VS Code runtime copy takes only hook.js from hooks/', () => {
+  const cli = require('../bin/ruletree.js');
+  const dir = cli.installRuntime();
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'hooks')), ['hook.js']);
+  assert.ok(fs.existsSync(path.join(dir, 'src', 'store.js')));
+});

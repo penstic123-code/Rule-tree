@@ -42,7 +42,8 @@ function findProjectUp(dir) {
   for (let d = path.resolve(dir); ;) {
     if (fs.existsSync(path.join(d, '.git'))) {
       const main = worktreeMain(d);
-      if (main) return isProject(main) ? main : null;
+      // worktree：主仓库有规则就用主仓库的；没有（比如 setup 刚在这个 worktree 里建了规则）就用 worktree 自己
+      if (main && isProject(main)) return main;
       return isProject(d) ? d : null;
     }
     if (isProject(d)) return d;

@@ -25,7 +25,7 @@
   },
   "files": [
     "bin/",
-    "hooks/",
+    "hooks/hook.js",
     "src/",
     "media/",
     "extension.js",
