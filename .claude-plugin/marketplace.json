@@ -1,5 +1,15 @@
 {
   "name": "ruletree",
-  "owner": { "name": "Shidi Peng" },
-  "plugins": [{ "name": "ruletree", "source": "./" }]
+  "owner": {
+    "name": "Shidi Peng"
+  },
+  "metadata": {
+    "description": "RuleTree: a live map of your project beside the chat"
+  },
+  "plugins": [
+    {
+      "name": "ruletree",
+      "source": "./"
+    }
+  ]
 }

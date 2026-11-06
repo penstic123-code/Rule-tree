@@ -733,6 +733,6 @@ Vibelearning（数据科学第 1 章加「本章小结」、机器学习梯度�
 - VS Code 集成测试：`node test/vscode/run.js` 起不来，缺 `@vscode/test-electron` 模块，没有跑。
 - monorepo、文档很多的项目、中文项目：`/ruletree:setup` 没有在这三类项目上做真实试跑，只试了上面那一个英文的平铺应用。
 - 干净环境安装：没有用新用户配置从 GitHub 添加市场、安装、再跑 `/ruletree:setup`，也就没看到「几分钟内得到有用的地图」是否成立。
-- 已知遗留（评审时记下、没修）：丢掉 3 行以内的规则缺回归测试；`maxTokens 4096` 在特别密的块上可能不够。
+- 已知遗留（评审时记下、没修）：`maxTokens 4096` 在特别密的块上可能不够。
 
 补记（发布前，只跑和这次改动相关的）：`node --test test/system.test.js` 26/26 通过（没有测试写死版本号）；`claude plugin validate .` 通过，只剩一条警告：市场文件缺描述。README 里「安装命令」的那条警告不再出现。
