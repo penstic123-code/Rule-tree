@@ -4,6 +4,7 @@ const path = require('path');
 const T = require('./tree');
 const store = require('./store');
 const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./viewmodel');
+const { overview } = require('./layout');
 const { findProjectUp, projectRel } = require('./common');
 
 // 最近一周 AI 改过、但现在不属于任何需求的文件（面板上可以一键归到需求）
@@ -42,6 +43,7 @@ function snapshot(cwd, { file, now = Date.now() } = {}) {
     const node = rel.startsWith('..') ? null : T.nodeForFile(T.build(tree.files), rel);
     snap.working = node ? node.id : null;
   }
+  snap.overview = overview(snap.nodes, { working: snap.working, now });
   return snap;
 }
 

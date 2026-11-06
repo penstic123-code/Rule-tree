@@ -25,6 +25,10 @@ test('reports a project with no rules as not enabled', () => {
   assert.deepStrictEqual(pick(snapshot(emptyDir), ['enabled', 'nodes']), { enabled: false, nodes: [] });
   assert.deepStrictEqual(fs.readdirSync(emptyDir), []); // 没有规则的项目不创建任何文件
 });
+test('overview is filled for a project and null when disabled', () => {
+  assert.strictEqual(snapshot(emptyDir).overview, null);
+  assert.deepStrictEqual(snapshot(project).overview.totals, { done: 0, doing: 1, todo: 0, none: 0 });
+});
 test('finds the enclosing project from a subfolder', () => {
   assert.strictEqual(snapshot(path.join(project, 'src', 'deep')).dir, project);
 });
