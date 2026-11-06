@@ -5,7 +5,8 @@ const path = require('path');
 const T0 = require('./src/tree');
 const store = require('./src/store');
 const { samePath } = store;
-const { viewData, ACTIVE_FOR_MS, CONTEXT_WINDOW_MS } = require('./src/viewmodel');
+const { viewData } = require('./src/viewmodel');
+const { loadTree } = require('./src/snapshot');
 const { suggest } = require('./src/guess');
 const { ensureGuide } = require('./src/guide');
 const cli = require('./bin/ruletree');
@@ -67,12 +68,6 @@ function ruleDoc(doc, projects) {
 // 面板操作没改动时告诉用户为什么，按操作区分（文字在 strings.js 的 x.nc.<op>）
 const noChangeWhy = op => { const k = 'x.nc.' + op; return k in STRINGS.zh ? T(k) : T('x.noChangeAny'); };
 
-// 最近一周 AI 改过、但现在不属于任何需求的文件（面板上可以一键归到需求）
-function unmappedFiles(dir, root) {
-  const files = new Set(store.readActivity(dir, 7 * 86400000).filter(e => !e.rule).map(e => e.file));
-  return [...files].filter(f => !T0.nodeForFile(root, f)).slice(-8);
-}
-
 // 升级旧版：旧的 需求树.md 拆成规则文件、旧 hook 换成新的（init 一起做）。每个项目每次打开 VS Code 只试一次
 const upgraded = new Set();
 function upgradeIfOld(dir) {
@@ -97,20 +92,8 @@ class Panel {
       try { ensureGuide(dir); } catch (e) { console.error(e); }
       // 别的途径（命令行、git、手动在别处改）改了规则文件：补记成「其他」的改动。最近 5 秒内改的先不记：可能是 AI 刚改的，hook 马上以「AI」记
       store.syncFilesAsync(dir, null, '其他', { minAgeMs: 5000 }).catch(e => console.error(e));
-      let state;
-      try { state = store.ensureTracking(dir); } catch (e) { console.error(e); state = store.readState(dir); }
-      const files = store.readFiles(dir);
-      return {
-        dir, files,
-        uri: vscode.Uri.file(store.rulesDir(dir)).toString(),
-        name: path.basename(dir),
-        activity: store.readActivity(dir, ACTIVE_FOR_MS).filter(e => e.node),
-        since: state.since, touched: state.touched,
-        changes: store.changeSummaries(dir, 8),
-        unmapped: unmappedFiles(dir, T0.build(files)),
-        context: store.readContext(dir, CONTEXT_WINDOW_MS),
-        categories: require('./src/categories').read(dir),
-      };
+      try { store.ensureTracking(dir); } catch (e) { console.error(e); }
+      return { ...loadTree(dir), uri: vscode.Uri.file(store.rulesDir(dir)).toString() };
     });
     this.push();
   }

@@ -174,6 +174,7 @@ function disable(dir) {
 const USAGE = `用法（目录默认是当前目录）：
   ruletree init    [目录]        在项目里启用：装 hook、忽略 .ruletree/；旧版的 需求树.md 拆成规则文件，没有就按文件夹建第一批需求
   ruletree disable [目录]        停用：去掉 hook（规则文件留着）
+  ruletree snapshot [目录] [--file <路径>] --json  打印项目现状（给 Claude 插件的面板读），--file 是正在改的文件
   ruletree tree    [目录]        打印整棵树
   ruletree rules   <编号> [目录]  打印某个需求实际要守的规则（含上级的）
   ruletree check   [目录]        只用程序检查（不调用模型、不改文件）：重复、送不到、提到的文件不在、文档不在、规则太多
@@ -197,7 +198,9 @@ function printRules(dir, id) {
 
 async function main(argv) {
   const [cmd, ...rest] = argv;
-  const flags = rest.filter(a => a.startsWith('--')), args = rest.filter(a => !a.startsWith('--'));
+  const fi = rest.indexOf('--file'), file = fi >= 0 ? rest[fi + 1] : undefined; // --file 后面跟着路径，不当作目录参数
+  const own = fi >= 0 ? rest.filter((_, i) => i !== fi && i !== fi + 1) : rest;
+  const flags = own.filter(a => a.startsWith('--')), args = own.filter(a => !a.startsWith('--'));
   const dirArg = i => path.resolve(args[i] || process.cwd());
   if (cmd === 'init') { init(dirArg(0)); return 0; }
   if (cmd === 'disable') {
@@ -205,6 +208,7 @@ async function main(argv) {
     console.log(done.length ? `已停用：改了 ${done.join('、')}；规则文件留着` : '这个项目没有启用需求树');
     return 0;
   }
+  if (cmd === 'snapshot') { console.log(JSON.stringify(require('../src/snapshot').snapshot(dirArg(0), { file }))); return 0; }
   if (cmd === 'tree') { printTree(dirArg(0)); return 0; }
   if (cmd === 'rules') return printRules(dirArg(1), args[0]);
   if (cmd === 'check' || cmd === 'checkup') {
