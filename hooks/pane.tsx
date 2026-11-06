@@ -1,4 +1,4 @@
-import type { Snapshot, SnapshotNode, OverviewTile } from '../types'
+import type { Snapshot, SnapshotNode, SnapshotChange, OverviewTile } from '../types'
 
 export const NODE_URL = 'https://nodejs.org'
 
@@ -39,11 +39,126 @@ export type PaneState = {
   selected: string
   level: string
   surface: string
+  // 等第二次按下才删的决定规则；正在改的规则；上一次编辑没完全成功时的话
+  armed: string
+  editing: string
+  notice: string
 }
 export type PaneActions = {
   // 按下一格：记住选中；有下一层就进到那一层
   onTile: (tile: { id: string; hasChildren: boolean }) => void
   onBack: (to: string) => void
+  // 改规则或状态；撤销一条改动；记下「再按一次才删」的决定规则；记下正在改的规则（空串取消）
+  onEdit: (ops: any[]) => void
+  onUndo: (id: string) => void
+  onArm: (text: string) => void
+  onEditing: (text: string) => void
+}
+
+// 决定类规则：用户拍板的，删它要按两次
+export const isDecision = (text: string) => /^\s*(决定[：:]|decision\s*:)/i.test(text)
+
+const STATUS_OPTIONS = [
+  { value: '', label: '未标' },
+  { value: 'todo', label: '待做' },
+  { value: 'doing', label: '进行中' },
+  { value: 'done', label: '完成' },
+]
+const RECENT_CHANGES = 3
+
+// 详情：按下一格后画在地图下面。规则分组里自己的可以改、删；上级的只读
+function detailView(els: any, node: SnapshotNode, st: PaneState, changes: SnapshotChange[], act: PaneActions) {
+  const { Box, Text, Button, Select, Input } = els
+  const { armed, editing, notice } = st
+  const undoable = changes.filter(c => c.undoable).slice(0, RECENT_CHANGES)
+  return (
+    <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="inactive" paddingX={1}>
+      <Text bold>{`已选：${node.id} ${node.title}`}</Text>
+      {notice ? <Text color="warning">{notice}</Text> : null}
+      <Select
+        key={`status-${node.id}`}
+        label="状态："
+        options={STATUS_OPTIONS}
+        value={node.status ?? ''}
+        onSelect={v => act.onEdit([{ op: 'set_status', node: node.id, status: v || null }])}
+      />
+      <Text dimColor>{node.files.length ? `管：${node.files.join('、')}` : '没写管哪些文件（每次都会加载）'}</Text>
+      {node.docs.length ? (
+        <Text dimColor>{`文档：${node.docs.map(d => d.path + (d.ok ? '' : '（找不到）')).join('、')}`}</Text>
+      ) : null}
+      {node.groups.map(g => (
+        <Box key={g.ownerId} flexDirection="column" marginTop={1}>
+          <Text bold dimColor={!g.self}>{g.self ? '规则' : `来自 ${g.ownerId} ${g.ownerTitle}`}</Text>
+          {g.rules.map((r, i) => {
+            const k = `${g.ownerId}-${i}`
+            const decision = isDecision(r.text)
+            const asking = armed === r.text
+            if (g.self && editing === r.text) {
+              return (
+                <Box key={k} flexDirection="row">
+                  <Input
+                    key={`edit-${k}`}
+                    value={r.text}
+                    submitLabel="保存"
+                    onSubmit={v => {
+                      const text = v.trim()
+                      if (text && text !== r.text) act.onEdit([{ op: 'replace_rule', node: node.id, old: r.text, text }])
+                      else act.onEditing('')
+                    }}
+                  />
+                  <Button key={`cancel-${k}`} onPress={() => act.onEditing('')}>{'取消'}</Button>
+                </Box>
+              )
+            }
+            return (
+              <Box key={k} flexDirection="row">
+                <Text dimColor={!g.self} bold={decision}>{`- ${r.shown}`}</Text>
+                {decision ? <Text color="claude">{' [决定]'}</Text> : null}
+                {g.self ? (
+                  <Box flexDirection="row" marginLeft={1}>
+                    <Button key={`e-${k}`} plain onPress={() => act.onEditing(r.text)}>{'改'}</Button>
+                    <Text>{' '}</Text>
+                    <Button
+                      key={`d-${k}`}
+                      plain
+                      onPress={() =>
+                        decision && !asking
+                          ? act.onArm(r.text)
+                          : act.onEdit([{ op: 'remove_rule', node: node.id, text: r.text }])
+                      }
+                    >
+                      {asking ? '再按一次确认删除这条决定' : '删'}
+                    </Button>
+                  </Box>
+                ) : null}
+              </Box>
+            )
+          })}
+        </Box>
+      ))}
+      <Input
+        key={`add-${node.id}`}
+        label="加一条规则："
+        placeholder="写完按 Enter"
+        submitLabel="添加"
+        onSubmit={v => {
+          const text = v.trim()
+          if (text) act.onEdit([{ op: 'add_rule', node: node.id, text }])
+        }}
+      />
+      {undoable.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>{'最近的改动'}</Text>
+          {undoable.map(c => (
+            <Box key={c.id} flexDirection="row">
+              <Text dimColor>{c.summary.join('；')}</Text>
+              <Button key={`undo-${c.id}`} plain onPress={() => act.onUndo(c.id)}>{' 撤销'}</Button>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  )
 }
 
 // 全部是纯函数：只拿解析好的元素、普通数据和回调，不碰 `$` 和状态。
@@ -157,7 +272,7 @@ function levelView(els: any, snap: Snapshot, level: string, selected: string, ac
   )
 }
 
-export function paneTree(els: { Box: any; Text: any; Button: any }, st: PaneState, act: PaneActions) {
+export function paneTree(els: { Box: any; Text: any; Button: any; Select: any; Input: any }, st: PaneState, act: PaneActions) {
   const { Box, Text } = els
   const { snap, err, selected, level, surface } = st
   // 刷新失败：保留上一次好的地图，把原因放在上面。没有地图可保留时只有原因。
@@ -186,7 +301,7 @@ export function paneTree(els: { Box: any; Text: any; Button: any }, st: PaneStat
           </Box>
         </Box>
       )}
-      {picked ? <Text>{`已选：${picked.id} ${picked.title}`}</Text> : null}
+      {picked ? (surface === 'terminal' ? <Text>{`已选：${picked.id} ${picked.title}`}</Text> : detailView(els, picked, st, snap.changes, act)) : null}
     </Box>
   )
 }

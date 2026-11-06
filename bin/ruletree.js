@@ -175,6 +175,7 @@ const USAGE = `用法（目录默认是当前目录）：
   ruletree init    [目录]        在项目里启用：装 hook、忽略 .ruletree/；旧版的 需求树.md 拆成规则文件，没有就按文件夹建第一批需求
   ruletree disable [目录]        停用：去掉 hook（规则文件留着）
   ruletree snapshot [目录] [--file <路径>] --json  打印项目现状（给 Claude 插件的面板读），--file 是正在改的文件
+  ruletree edit    [目录] --json  从标准输入读 {"ops":[...]} 或 {"undo":"id"}，改规则或撤销（给 Claude 插件的面板用）
   ruletree tree    [目录]        打印整棵树
   ruletree rules   <编号> [目录]  打印某个需求实际要守的规则（含上级的）
   ruletree check   [目录]        只用程序检查（不调用模型、不改文件）：重复、送不到、提到的文件不在、文档不在、规则太多
@@ -209,6 +210,17 @@ async function main(argv) {
     return 0;
   }
   if (cmd === 'snapshot') { console.log(JSON.stringify(require('../src/snapshot').snapshot(dirArg(0), { file }))); return 0; }
+  if (cmd === 'edit') {
+    // 从标准输入读 JSON：{ ops } 或 { undo }。结果打印成一行 JSON；输入不合规矩退出码 1
+    const { findProjectUp } = require('../src/common');
+    const dir = findProjectUp(dirArg(0));
+    const out = r => console.log(JSON.stringify(r));
+    if (!dir) { out({ ok: false, result: 'failed', message: '这个项目没有启用需求树' }); return 1; }
+    let input;
+    try { input = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { out({ ok: false, result: 'failed', message: '标准输入不是 JSON' }); return 1; }
+    try { out(await require('../src/edit').run(dir, input)); } catch (e) { out({ ok: false, result: 'failed', message: e.message }); return 1; }
+    return 0;
+  }
   if (cmd === 'tree') { printTree(dirArg(0)); return 0; }
   if (cmd === 'rules') return printRules(dirArg(1), args[0]);
   if (cmd === 'check' || cmd === 'checkup') {

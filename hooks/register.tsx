@@ -16,6 +16,10 @@ const level = atom({ plugin: 'ruletree', key: 'level' } as const, '', { shape: '
 const lastEdit = atom({ plugin: 'ruletree', key: 'lastEdit' } as const, { file: '', at: 0 }, { shape: 'lastEdit-1' })
 // 刷新序号：刷新可能乱序完成，旧的不能盖掉新的
 const seq = atom({ plugin: 'ruletree', key: 'seq' } as const, 0, { shape: 'seq-1' })
+// 编辑或撤销没完全成功时的话；决定规则等第二次按下；正在改哪条规则
+const notice = atom({ plugin: 'ruletree', key: 'notice' } as const, '', { shape: 'notice-1' })
+const armed = atom({ plugin: 'ruletree', key: 'armed' } as const, '', { shape: 'armed-1' })
+const editing = atom({ plugin: 'ruletree', key: 'editing' } as const, '', { shape: 'editing-1' })
 const error = atom({ plugin: 'ruletree', key: 'error' } as const, '', { shape: 'error-1' })
 
 // Top level on purpose: the validator rejects passing `$` to a local function.
@@ -51,6 +55,26 @@ export async function refresh($: any, file?: string) {
   } catch (err) {
     await update($, error, () => `刷新失败，下面是上一次的地图：${String(err).slice(0, 300)}`)
   }
+}
+
+// 改规则或撤销：同样放在顶层，因为校验器不让把 `$` 交给本地函数。
+// JSON 走标准输入（$.process.run 的 stdin），不放进命令行，免得引号和中文出问题。
+// 不管结果如何都刷新；不是 done 就把 message 给用户看。
+export async function runEdit($: any, input: { ops: any[] } | { undo: string }) {
+  let message = ''
+  try {
+    const cwd = await $.session.cwd()
+    const r = await $.process.run(['node', `${$.plugin.root}/bin/ruletree.js`, 'edit', cwd, '--json'], { stdin: JSON.stringify(input) })
+    let out: any = null
+    try { out = JSON.parse(r.stdout) } catch {}
+    if (!(out && out.result === 'done')) message = (out && out.message) || String(r.stderr).slice(0, 200) || `edit exited ${r.exitCode}`
+  } catch (err) {
+    message = `需要 Node.js 才能改需求树（${NODE_URL}）。${String(err).slice(0, 120)}`
+  }
+  await update($, notice, () => message)
+  await update($, armed, () => '')
+  await update($, editing, () => '')
+  await refresh($)
 }
 
 export const register: Register = on => {
@@ -92,15 +116,28 @@ export const register: Register = on => {
       err: await read($, error),
       selected: await read($, selected),
       level: await read($, level),
+      armed: await read($, armed),
+      editing: await read($, editing),
+      notice: await read($, notice),
       surface: String((e as any).surface),
     }
     return paneTree(els, state, {
       onTile: async tile => {
         await update($, selected, () => tile.id)
+        await update($, notice, () => '')
+        await update($, armed, () => '')
+        await update($, editing, () => '')
         if (tile.hasChildren) await update($, level, () => tile.id)
       },
       onBack: async to => {
         await update($, level, () => to)
+      },
+      onEdit: async ops => { await runEdit($, { ops }) },
+      onUndo: async id => { await runEdit($, { undo: id }) },
+      onArm: async text => { await update($, armed, () => text) },
+      onEditing: async text => {
+        await update($, editing, () => text)
+        await update($, armed, () => '')
       },
     })
   })

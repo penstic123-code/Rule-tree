@@ -19,10 +19,28 @@ const snap = (working: string | null) => ({
       id: 'P',
       title: '需求树',
       status: null,
-      children: [{ id: 'R1', title: '规则记录', status: 'doing', children: [] }],
+      files: [],
+      docs: [],
+      groups: [],
+      children: [
+        {
+          id: 'R1', title: '规则记录', status: 'doing', children: [],
+          files: ['src/**'],
+          docs: [],
+          groups: [
+            {
+              self: true, ownerId: 'R1', ownerTitle: '规则记录',
+              rules: [
+                { text: '先写测试', shown: '先写测试', state: 'own' },
+                { text: '决定：别删我', shown: '决定：别删我', state: 'own' },
+              ],
+            },
+          ],
+        },
+      ],
     },
   ],
-  changes: [],
+  changes: [{ id: 'c1', time: 1, source: '你', summary: ['给 R1 加规则「先写测试」'], undone: false, undoable: true }],
   unmapped: [],
   problems: [],
   working,
@@ -135,5 +153,54 @@ test('pressing a tile shows its id and title under the map', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'b-R1' })
   expect(await ui.find({ type: 'Text', text: /已选：R1 规则记录/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+// process.run 的参数里带 edit 的那次，记下来看按了几次、送了什么
+const editCalls = () => calls.filter(c => JSON.stringify(c).includes('"edit"'))
+let calls: any[] = []
+const withEdit = (answer: (e: any) => any) => (e: any) => {
+  calls.push(e)
+  return JSON.stringify(e).includes('"edit"') ? answer(e) : { value: ok(SNAPSHOT) }
+}
+const done = () => ({ value: ok(JSON.stringify({ ok: true, result: 'done' })) })
+
+test('deleting a decision rule asks first', async ($, on) => {
+  calls = []
+  engine(on, withEdit(done))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+
+  await ui.press({ key: 'd-R1-1' })
+  expect(editCalls().length).toBe(0)
+  expect(await ui.find({ type: 'Button', text: /再按一次/ })).toBeTruthy()
+
+  await ui.press({ key: 'd-R1-1' })
+  expect(editCalls().length).toBe(1)
+  expect(JSON.stringify(editCalls()[0])).toContain('remove_rule')
+  await ui.unmount()
+})
+
+test('deleting a plain rule runs at once', async ($, on) => {
+  calls = []
+  engine(on, withEdit(done))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  await ui.press({ key: 'd-R1-0' })
+  expect(editCalls().length).toBe(1)
+  await ui.unmount()
+})
+
+test('a result that is not done shows its message', async ($, on) => {
+  calls = []
+  engine(on, withEdit(() => ({ value: ok(JSON.stringify({ ok: true, result: 'partial', message: '只撤销了一部分' })) })))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  await ui.press({ key: 'undo-c1' })
+  expect(editCalls().length).toBe(1)
+  expect(await ui.find({ type: 'Text', text: /只撤销了一部分/ })).toBeTruthy()
   await ui.unmount()
 })
