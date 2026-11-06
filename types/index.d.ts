@@ -78,11 +78,14 @@ declare module 'claude-code' {
       level: Shaped<string>
       error: Shaped<string>
       // 编辑或撤销没完全成功时给用户看的话
-      notice: Shaped<string>
+      notice: Shaped<{ node: string; text: string }>
       // 等第二次按下才删的决定规则原文
       armed: Shaped<string>
-      // 正在改的规则原文
-      editing: Shaped<string>
+      // 正在改哪个需求的哪条规则原文
+      editing: Shaped<{ node: string; text: string }>
+      // 正在跑的编辑个数（防连按）；加规则成功次数（换 Input 的 key 清空它）
+      inflight: Shaped<number>
+      addSeq: Shaped<number>
       lastEdit: Shaped<{ file: string; at: number }>
       seq: Shaped<number>
     }

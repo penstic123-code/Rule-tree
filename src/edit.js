@@ -9,6 +9,11 @@ const ALLOWED = new Set(['set_status', 'add_rule', 'replace_rule', 'remove_rule'
 const REASON = {
   'unknown-op': '不认识的操作',
   'no-node': '找不到这个需求',
+  'no-rule': '这条规则已经变了，请重新看一下再改',
+  'duplicate': '已经有同样的规则了',
+  'same': '内容没有变化',
+  'empty': '内容是空的',
+  'bad-status': '不认识这个状态',
 };
 
 // 这次是不是没改成：把核心给的 skipped 原因翻成一句话

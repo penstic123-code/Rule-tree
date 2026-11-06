@@ -204,3 +204,69 @@ test('a result that is not done shows its message', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /只撤销了一部分/ })).toBeTruthy()
   await ui.unmount()
 })
+
+test('the status Select sends set_status for the selected node', async ($, on) => {
+  calls = []
+  engine(on, withEdit(done))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  await ui.select({ key: 'status-R1', value: 'done' })
+  expect(editCalls().length).toBe(1)
+  const sent = JSON.stringify(editCalls()[0])
+  expect(sent).toContain('set_status')
+  expect(sent).toContain('done')
+  await ui.unmount()
+})
+
+test('the add-rule Input sends add_rule and remounts after success', async ($, on) => {
+  calls = []
+  engine(on, withEdit(done))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  await ui.input({ key: 'add-R1-0', text: '新规则' })
+  expect(editCalls().length).toBe(1)
+  expect(JSON.stringify(editCalls()[0])).toContain('add_rule')
+  // 成功后 key 换成 add-R1-1，旧的输入框已卸载
+  expect(await ui.find({ type: 'Input', key: 'add-R1-1' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a second press is ignored while an edit is running', async ($, on) => {
+  calls = []
+  engine(on, withEdit(async () => {
+    await new Promise(r => setTimeout(r, 100))
+    return done()
+  }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  await Promise.all([ui.press({ key: 'd-R1-0' }), ui.press({ key: 'd-R1-0' })])
+  expect(editCalls().length).toBe(1)
+  await ui.unmount()
+})
+
+test('a failed edit keeps the typing open and shows the notice under its own node', async ($, on) => {
+  calls = []
+  engine(on, withEdit(() => ({ value: ok(JSON.stringify({ ok: true, result: 'nochange', message: '这条规则已经变了，请重新看一下再改' })) })))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  await ui.press({ key: 'e-R1-0' })
+  await ui.input({ key: 'edit-R1-0', text: '改过的' })
+  expect(await ui.find({ type: 'Text', text: /已经变了/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Input', key: 'edit-R1-0' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a timeout is not reported as missing Node', async ($, on) => {
+  calls = []
+  engine(on, withEdit(() => ({ deny: 'command timed out after 30000ms' })))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  await ui.press({ key: 'd-R1-0' })
+  expect(await ui.find({ type: 'Text', text: /timed out/ })).toBeTruthy()
+  await ui.unmount()
+})

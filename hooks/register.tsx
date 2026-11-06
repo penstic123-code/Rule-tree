@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Snapshot } from '../types'
-import { paneTree, locate, NODE_URL } from './pane'
+import { paneTree, locate, describeRunError } from './pane'
 
 const PANE = 'ruletree-map'
 const ACTIVE_FOR_MS = 180000
@@ -17,9 +17,14 @@ const lastEdit = atom({ plugin: 'ruletree', key: 'lastEdit' } as const, { file: 
 // 刷新序号：刷新可能乱序完成，旧的不能盖掉新的
 const seq = atom({ plugin: 'ruletree', key: 'seq' } as const, 0, { shape: 'seq-1' })
 // 编辑或撤销没完全成功时的话；决定规则等第二次按下；正在改哪条规则
-const notice = atom({ plugin: 'ruletree', key: 'notice' } as const, '', { shape: 'notice-1' })
+// notice / editing 带上需求编号：结果回来时用户可能已换了一格，只在它所属的需求下显示、只清它自己的
+const notice = atom({ plugin: 'ruletree', key: 'notice' } as const, { node: '', text: '' }, { shape: 'notice-2' })
 const armed = atom({ plugin: 'ruletree', key: 'armed' } as const, '', { shape: 'armed-1' })
-const editing = atom({ plugin: 'ruletree', key: 'editing' } as const, '', { shape: 'editing-1' })
+const editing = atom({ plugin: 'ruletree', key: 'editing' } as const, { node: '', text: '' }, { shape: 'editing-2' })
+// 正在跑的编辑个数：非 0 时再按一次直接忽略，免得连按两次发两遍、第二遍报假失败
+const inflight = atom({ plugin: 'ruletree', key: 'inflight' } as const, 0, { shape: 'inflight-1' })
+// 加规则成功的次数：Input 没有清空的办法，换 key 让它重新挂载
+const addSeq = atom({ plugin: 'ruletree', key: 'addSeq' } as const, 0, { shape: 'addSeq-1' })
 const error = atom({ plugin: 'ruletree', key: 'error' } as const, '', { shape: 'error-1' })
 
 // Top level on purpose: the validator rejects passing `$` to a local function.
@@ -39,8 +44,8 @@ export async function refresh($: any, file?: string) {
     if (file) argv.push('--file', file)
     r = await $.process.run(argv)
   } catch (err) {
-    // process.run 自己被拒，多半是机器上没有 node
-    await update($, error, () => `需要 Node.js 才能读需求树，请先安装（${NODE_URL}）。${String(err).slice(0, 120)}`)
+    // process.run 自己被拒：没装 node 或超时，describeRunError 分开说
+    await update($, error, () => describeRunError(err, '读需求树'))
     return
   }
   try {
@@ -59,21 +64,36 @@ export async function refresh($: any, file?: string) {
 
 // 改规则或撤销：同样放在顶层，因为校验器不让把 `$` 交给本地函数。
 // JSON 走标准输入（$.process.run 的 stdin），不放进命令行，免得引号和中文出问题。
-// 不管结果如何都刷新；不是 done 就把 message 给用户看。
-export async function runEdit($: any, input: { ops: any[] } | { undo: string }) {
-  let message = ''
-  try {
-    const cwd = await $.session.cwd()
-    const r = await $.process.run(['node', `${$.plugin.root}/bin/ruletree.js`, 'edit', cwd, '--json'], { stdin: JSON.stringify(input) })
-    let out: any = null
-    try { out = JSON.parse(r.stdout) } catch {}
-    if (!(out && out.result === 'done')) message = (out && out.message) || String(r.stderr).slice(0, 200) || `edit exited ${r.exitCode}`
-  } catch (err) {
-    message = `需要 Node.js 才能改需求树（${NODE_URL}）。${String(err).slice(0, 120)}`
+// node 是这次编辑所属的需求：结果回来时用户可能已选了别的格，话只挂在它名下。
+// 不管结果如何都刷新；不是 done 就把 message 给用户看，并保留正在改的输入，别丢用户打的字。
+export async function runEdit($: any, input: { ops: any[] } | { undo: string }, node: string) {
+  // update 返回新值：大于 1 说明已有一次在跑，这次忽略
+  if ((await update($, inflight, n => n + 1)) > 1) {
+    await update($, inflight, n => n - 1)
+    return
   }
-  await update($, notice, () => message)
-  await update($, armed, () => '')
-  await update($, editing, () => '')
+  try {
+    let message = ''
+    let isDone = false
+    try {
+      const cwd = await $.session.cwd()
+      const r = await $.process.run(['node', `${$.plugin.root}/bin/ruletree.js`, 'edit', cwd, '--json'], { stdin: JSON.stringify(input) })
+      let out: any = null
+      try { out = JSON.parse(r.stdout) } catch {}
+      isDone = !!(out && out.result === 'done')
+      if (!isDone) message = (out && out.message) || String(r.stderr).slice(0, 200) || `edit exited ${r.exitCode}`
+    } catch (err) {
+      message = describeRunError(err, '改需求树')
+    }
+    await update($, notice, () => ({ node, text: message }))
+    await update($, armed, () => '')
+    if (isDone) {
+      await update($, editing, e => (e.node === node ? { node: '', text: '' } : e))
+      if ('ops' in input && input.ops.some(o => o.op === 'add_rule')) await update($, addSeq, n => n + 1)
+    }
+  } finally {
+    await update($, inflight, n => n - 1)
+  }
   await refresh($)
 }
 
@@ -119,24 +139,25 @@ export const register: Register = on => {
       armed: await read($, armed),
       editing: await read($, editing),
       notice: await read($, notice),
+      addSeq: await read($, addSeq),
       surface: String((e as any).surface),
     }
     return paneTree(els, state, {
       onTile: async tile => {
         await update($, selected, () => tile.id)
-        await update($, notice, () => '')
+        await update($, notice, () => ({ node: '', text: '' }))
         await update($, armed, () => '')
-        await update($, editing, () => '')
+        await update($, editing, () => ({ node: '', text: '' }))
         if (tile.hasChildren) await update($, level, () => tile.id)
       },
       onBack: async to => {
         await update($, level, () => to)
       },
-      onEdit: async ops => { await runEdit($, { ops }) },
-      onUndo: async id => { await runEdit($, { undo: id }) },
+      onEdit: async (node, ops) => { await runEdit($, { ops }, node) },
+      onUndo: async (node, id) => { await runEdit($, { undo: id }, node) },
       onArm: async text => { await update($, armed, () => text) },
-      onEditing: async text => {
-        await update($, editing, () => text)
+      onEditing: async (node, text) => {
+        await update($, editing, () => ({ node: text ? node : '', text }))
         await update($, armed, () => '')
       },
     })

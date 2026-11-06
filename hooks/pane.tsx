@@ -2,6 +2,16 @@ import type { Snapshot, SnapshotNode, SnapshotChange, OverviewTile } from '../ty
 
 export const NODE_URL = 'https://nodejs.org'
 
+// process.run 被拒有两种：命令起不来（多半没装 Node），或到点还没跑完（超时）。
+// 类型里没有区分它们的字段，只能看错误文字：只有像「找不到可执行文件」的才说需要 Node.js，其余照实显示。
+export function describeRunError(err: unknown, what: string): string {
+  const msg = String((err as any)?.message ?? err)
+  if (/ENOENT|not found|no such file|cannot find|找不到|无法启动|failed to (start|spawn)|cannot (start|spawn)/i.test(msg)) {
+    return `需要 Node.js 才能${what}，请先安装（${NODE_URL}）。${msg.slice(0, 120)}`
+  }
+  return `${what}没成功：${msg.slice(0, 200)}`
+}
+
 function flatten(list: SnapshotNode[], depth = 0): { n: SnapshotNode; depth: number }[] {
   return list.flatMap(n => [{ n, depth }, ...flatten(n.children, depth + 1)])
 }
@@ -41,18 +51,21 @@ export type PaneState = {
   surface: string
   // 等第二次按下才删的决定规则；正在改的规则；上一次编辑没完全成功时的话
   armed: string
-  editing: string
-  notice: string
+  // 正在改哪个需求的哪条规则；上一次编辑没完全成功时的话（只在它所属的需求下显示）
+  editing: { node: string; text: string }
+  notice: { node: string; text: string }
+  // 每成功加一条规则加一，用来换掉「加规则」输入框的 key，让它清空
+  addSeq: number
 }
 export type PaneActions = {
   // 按下一格：记住选中；有下一层就进到那一层
   onTile: (tile: { id: string; hasChildren: boolean }) => void
   onBack: (to: string) => void
   // 改规则或状态；撤销一条改动；记下「再按一次才删」的决定规则；记下正在改的规则（空串取消）
-  onEdit: (ops: any[]) => void
-  onUndo: (id: string) => void
+  onEdit: (node: string, ops: any[]) => void
+  onUndo: (node: string, id: string) => void
   onArm: (text: string) => void
-  onEditing: (text: string) => void
+  onEditing: (node: string, text: string) => void
 }
 
 // 决定类规则：用户拍板的，删它要按两次
@@ -69,7 +82,8 @@ const RECENT_CHANGES = 3
 // 详情：按下一格后画在地图下面。规则分组里自己的可以改、删；上级的只读
 function detailView(els: any, node: SnapshotNode, st: PaneState, changes: SnapshotChange[], act: PaneActions) {
   const { Box, Text, Button, Select, Input } = els
-  const { armed, editing, notice } = st
+  const { armed, editing, addSeq } = st
+  const notice = st.notice.node === node.id ? st.notice.text : ''
   const undoable = changes.filter(c => c.undoable).slice(0, RECENT_CHANGES)
   return (
     <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="inactive" paddingX={1}>
@@ -80,7 +94,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
         label="状态："
         options={STATUS_OPTIONS}
         value={node.status ?? ''}
-        onSelect={v => act.onEdit([{ op: 'set_status', node: node.id, status: v || null }])}
+        onSelect={v => act.onEdit(node.id, [{ op: 'set_status', node: node.id, status: v || null }])}
       />
       <Text dimColor>{node.files.length ? `管：${node.files.join('、')}` : '没写管哪些文件（每次都会加载）'}</Text>
       {node.docs.length ? (
@@ -93,7 +107,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
             const k = `${g.ownerId}-${i}`
             const decision = isDecision(r.text)
             const asking = armed === r.text
-            if (g.self && editing === r.text) {
+            if (g.self && editing.node === node.id && editing.text === r.text) {
               return (
                 <Box key={k} flexDirection="row">
                   <Input
@@ -102,11 +116,11 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
                     submitLabel="保存"
                     onSubmit={v => {
                       const text = v.trim()
-                      if (text && text !== r.text) act.onEdit([{ op: 'replace_rule', node: node.id, old: r.text, text }])
-                      else act.onEditing('')
+                      if (text && text !== r.text) act.onEdit(node.id, [{ op: 'replace_rule', node: node.id, old: r.text, text }])
+                      else act.onEditing(node.id, '')
                     }}
                   />
-                  <Button key={`cancel-${k}`} onPress={() => act.onEditing('')}>{'取消'}</Button>
+                  <Button key={`cancel-${k}`} onPress={() => act.onEditing(node.id, '')}>{'取消'}</Button>
                 </Box>
               )
             }
@@ -116,7 +130,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
                 {decision ? <Text color="claude">{' [决定]'}</Text> : null}
                 {g.self ? (
                   <Box flexDirection="row" marginLeft={1}>
-                    <Button key={`e-${k}`} plain onPress={() => act.onEditing(r.text)}>{'改'}</Button>
+                    <Button key={`e-${k}`} plain onPress={() => act.onEditing(node.id, r.text)}>{'改'}</Button>
                     <Text>{' '}</Text>
                     <Button
                       key={`d-${k}`}
@@ -124,7 +138,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
                       onPress={() =>
                         decision && !asking
                           ? act.onArm(r.text)
-                          : act.onEdit([{ op: 'remove_rule', node: node.id, text: r.text }])
+                          : act.onEdit(node.id, [{ op: 'remove_rule', node: node.id, text: r.text }])
                       }
                     >
                       {asking ? '再按一次确认删除这条决定' : '删'}
@@ -137,13 +151,13 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
         </Box>
       ))}
       <Input
-        key={`add-${node.id}`}
+        key={`add-${node.id}-${addSeq}`}
         label="加一条规则："
         placeholder="写完按 Enter"
         submitLabel="添加"
         onSubmit={v => {
           const text = v.trim()
-          if (text) act.onEdit([{ op: 'add_rule', node: node.id, text }])
+          if (text) act.onEdit(node.id, [{ op: 'add_rule', node: node.id, text }])
         }}
       />
       {undoable.length ? (
@@ -152,7 +166,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
           {undoable.map(c => (
             <Box key={c.id} flexDirection="row">
               <Text dimColor>{c.summary.join('；')}</Text>
-              <Button key={`undo-${c.id}`} plain onPress={() => act.onUndo(c.id)}>{' 撤销'}</Button>
+              <Button key={`undo-${c.id}`} plain onPress={() => act.onUndo(node.id, c.id)}>{' 撤销'}</Button>
             </Box>
           ))}
         </Box>
