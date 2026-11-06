@@ -1,0 +1,8 @@
+{
+  "lang": "zh",
+  "requirements": [
+    { "id": "R1", "title": "服务端", "paths": ["src/server.js", "src/routes/**"] },
+    { "id": "R1.1", "title": "路由", "paths": ["src/routes/**"], "rules": ["所有路由返回 JSON"] },
+    { "id": "R2", "title": "存储", "paths": ["src/db.js", "src/cache.js"] }
+  ]
+}

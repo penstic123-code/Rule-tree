@@ -300,11 +300,11 @@ const nodeForFile = (root, rel) => nodesForFile(root, rel).pop() || null;
 const fileName = (id, title) => `${id}-${String(title).trim().replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || id}.md`;
 
 // 新需求的文件内容
-function newFile({ id, title, status = null, globs = [], parent = null, docs = [] }) {
+function newFile({ id, title, status = null, globs = [], parent = null, docs = [], lang = null }) {
   const lines = [];
   if (globs.length) lines.push('---', 'paths:', ...globs.map(g => `  - ${JSON.stringify(g)}`), '---');
   lines.push(`# ${id} ${title.trim()}${status ? ' ' + STATUS_EMOJI[status] : ''}`);
-  const zh = CJK.test(title + (parent ? parent.title : ''));
+  const zh = lang ? lang === 'zh' : CJK.test(title + (parent ? parent.title : '')); // lang：项目语言，写明时不再靠标题猜
   if (parent) lines.push(label('parent', zh) + `${parent.id} ${parent.title}`);
   if (docs.length) lines.push(label('docs', zh) + docs.join(', '));
   return lines.join('\n') + '\n';

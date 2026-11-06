@@ -1,0 +1,7 @@
+{
+  "requirements": [
+    { "id": "R1", "title": "Server", "paths": ["src/server.js"] },
+    { "id": "R1.1", "title": "Routes", "paths": ["src/routes/**"] },
+    { "id": "R2", "title": "Tests", "paths": ["test/**"] }
+  ]
+}

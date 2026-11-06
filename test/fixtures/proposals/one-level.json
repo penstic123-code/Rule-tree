@@ -1,0 +1,6 @@
+{
+  "requirements": [
+    { "id": "R1", "title": "Source", "paths": ["src/**"] },
+    { "id": "R2", "title": "Tests", "paths": ["test/**"] }
+  ]
+}

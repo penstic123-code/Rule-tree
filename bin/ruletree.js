@@ -135,7 +135,7 @@ function installAllowOnly(dir, log) {
 
 // 在项目里启用：复制运行时副本、装 hook、忽略 .ruletree/；旧版的 需求树.md 拆成规则文件，没有就按文件夹建第一批需求；写说明书。
 // 重复运行无副作用。命令行和插件共用（插件传 log 收集输出）；出错抛异常，不退出进程
-function init(dir, { log = console.log, plugin = false } = {}) {
+function init(dir, { log = console.log, plugin = false, lang = 'zh' } = {}) {
   dir = path.resolve(dir);
   if (!fs.statSync(dir).isDirectory()) throw new Error(`不是文件夹：${dir}`);
   const have = runtimeVersion();
@@ -151,7 +151,7 @@ function init(dir, { log = console.log, plugin = false } = {}) {
     store.replaceAll(dir, store.initialFiles(dir), { source: '新建' });
     log(`✓ 已在 ${store.RULES_DIR} 按项目的文件夹建好第一批需求`);
   }
-  ensureGuide(dir, { lang: 'zh' }); // VS Code 路线的 init：没有规则可看时保持原来的中文说明书
+  ensureGuide(dir, { lang }); // 默认中文：VS Code 路线的 init 没有规则可看时保持原来的中文说明书；setup 传项目选定的语言
   store.syncFiles(dir, null, '其他'); // 第一次：建快照
   store.ensureTracking(dir);
   const gs = require('../src/files').rulesGitState(dir, store.RULES_DIR);
@@ -177,6 +177,7 @@ function disable(dir) {
 
 const USAGE = `用法（目录默认是当前目录）：
   ruletree init    [目录]        在项目里启用：装 hook、忽略 .ruletree/；旧版的 需求树.md 拆成规则文件，没有就按文件夹建第一批需求
+  ruletree setup   [目录] --json  从标准输入读 AI 提出的第一棵树，检查后写成规则文件并启用（给 Claude 插件的 /ruletree:setup 用；已有规则的项目不动）
   ruletree disable [目录]        停用：去掉 hook（规则文件留着）
   ruletree snapshot [目录] [--file <路径>] --json  打印项目现状（给 Claude 插件的面板读），--file 是正在改的文件
   ruletree edit    [目录] --json  从标准输入读 {"ops":[...]} 或 {"undo":"id"}，改规则或撤销（给 Claude 插件的面板用）
@@ -204,7 +205,9 @@ function printRules(dir, id) {
 async function main(argv) {
   const [cmd, ...rest] = argv;
   const fi = rest.indexOf('--file'), file = fi >= 0 ? rest[fi + 1] : undefined; // --file 后面跟着路径，不当作目录参数
-  const own = fi >= 0 ? rest.filter((_, i) => i !== fi && i !== fi + 1) : rest;
+  const pi = rest.indexOf('--proposal'), proposalFile = pi >= 0 ? rest[pi + 1] : undefined; // setup 的提案也可以从文件读（PowerShell 没有 < 重定向）
+  const skip = new Set([fi, fi + 1, pi, pi + 1].filter((_, k) => (k < 2 ? fi : pi) >= 0)); // 带值的选项连值一起不当作目录参数
+  const own = rest.filter((_, i) => !skip.has(i));
   const flags = own.filter(a => a.startsWith('--')), args = own.filter(a => !a.startsWith('--'));
   const dirArg = i => path.resolve(args[i] || process.cwd());
   if (cmd === 'init') { init(dirArg(0)); return 0; }
@@ -223,6 +226,23 @@ async function main(argv) {
     let input;
     try { input = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { out({ ok: false, result: 'failed', message: '标准输入不是 JSON' }); return 1; }
     try { out(await require('../src/edit').run(dir, input)); } catch (e) { out({ ok: false, result: 'failed', message: e.message }); return 1; }
+    return 0;
+  }
+  if (cmd === 'setup') {
+    // 从标准输入读 AI 提出的第一棵树（见 src/propose.js），检查通过才写；已有规则的项目不动。结果打印成一行 JSON，不合规矩退出码 1
+    const dir = dirArg(0);
+    const out = r => console.log(JSON.stringify(r));
+    let proposal;
+    try { proposal = JSON.parse(fs.readFileSync(proposalFile || 0, 'utf8')); } catch { out({ ok: false, problems: [proposalFile ? `cannot read JSON from ${proposalFile}` : 'standard input is not JSON'] }); return 1; }
+    const P = require('../src/propose');
+    const v = P.validate(dir, proposal);
+    if (!v.ok) { out(v); return 1; }
+    try {
+      const { lang, files } = P.apply(dir, proposal);
+      init(dir, { plugin: true, lang, log: () => {} }); // 插件路线：只写允许规则、说明书、.gitignore，hook 由插件带
+      const snap = require('../src/snapshot').snapshot(dir);
+      out({ ok: true, problems: [], lang, files: files.length, blocks: snap.overview.blocks.length });
+    } catch (e) { out({ ok: false, problems: [e.message] }); return 1; }
     return 0;
   }
   if (cmd === 'tree') { printTree(dirArg(0)); return 0; }

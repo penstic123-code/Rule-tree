@@ -1,0 +1,8 @@
+{
+  "requirements": [
+    { "id": "R1", "title": "Server", "status": "doing", "paths": ["src/server.js", "src/routes/**"] },
+    { "id": "R1.1", "title": "Routes", "paths": ["src/routes/**"], "parent": "R1", "rules": ["Every route returns JSON"] },
+    { "id": "R2", "title": "Storage", "paths": ["src/db.js", "src/cache.js"] },
+    { "id": "R3", "title": "Tests", "paths": ["test/**"] }
+  ]
+}
