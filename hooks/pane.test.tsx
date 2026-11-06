@@ -10,8 +10,9 @@ const PANE = {
 const tile = (id: string, title: string, status: string | null, state: string | null = null) => ({
   id, title, status, state, hasChildren: false,
 })
-const snap = (working: string | null) => ({
+const snap = (working: string | null, lang: 'zh' | 'en' = 'zh') => ({
   enabled: true,
+  lang,
   dir: 'C:/p/.claude/rules/ruletree',
   name: 'P',
   nodes: [
@@ -268,5 +269,25 @@ test('a timeout is not reported as missing Node', async ($, on) => {
   await ui.press({ key: 'b-R1' })
   await ui.press({ key: 'd-R1-0' })
   expect(await ui.find({ type: 'Text', text: /timed out/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+// 英文项目：固定文字用英文画；项目自己的标题和规则原样
+test('the pane draws its fixed strings in English for an English project', async ($, on) => {
+  engine(on, () => ({ value: ok(JSON.stringify(snap('R1', 'en'))) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 100))
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Done 0 · In progress 1 · To do 0/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', text: /editing/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a project without rules gets the English not-enabled message', async ($, on) => {
+  engine(on, () => ({ value: ok(JSON.stringify({ enabled: false, dir: null, name: 'p', nodes: [], changes: [], unmapped: [], problems: [], working: null, overview: null, lang: 'en' })) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 100))
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /does not use a requirement tree yet/ })).toBeTruthy()
   await ui.unmount()
 })

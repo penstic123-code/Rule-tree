@@ -211,3 +211,16 @@ test('文档找不到时带上当前分支；不在 git 里就不带', () => {
   assert.doesNotMatch(C.noteText({ k: 'docGone', id: 'C2', doc: 'x.md' }), /分支/);
   assert.match(C.noteText({ k: 'docGone', id: 'C2', doc: 'x.md', branch: 'dev' }), /当前分支：dev，可能是分支不同/);
 });
+
+test('体检报告跟着项目的语言走：英文项目的报告里没有汉字', async () => {
+  const dir = fs.mkdtempSync(path.join(H.SANDBOX, 'en-ck-'));
+  fs.mkdirSync(store.rulesDir(dir), { recursive: true });
+  fs.writeFileSync(path.join(store.rulesDir(dir), '_root.md'), '# P Project\n- Keep it short\n');
+  fs.writeFileSync(path.join(store.rulesDir(dir), 'R1-Gone.md'), '---\npaths:\n  - "nowhere/**"\n---\n# R1 Gone ⏳\nDocs: docs/missing.md\n- One rule\n');
+  const r = await C.runCheckup(dir, { model: false });
+  assert.ok(r.notes.length, '程序检查应该有发现');
+  assert.ok(!/[一-鿿]/.test(r.report), r.report);
+  assert.match(r.report, /checkup/i);
+  const zh = await C.runCheckup(project(), { model: false });
+  assert.match(zh.report, /体检/, '中文项目不变');
+});

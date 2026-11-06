@@ -2,14 +2,88 @@ import type { Snapshot, SnapshotNode, SnapshotChange, OverviewTile } from '../ty
 
 export const NODE_URL = 'https://nodejs.org'
 
+export type Lang = 'zh' | 'en'
+
+// 面板上所有固定文字都在这一张表里：按项目语言（snapshot.lang）取。没有项目或没有规则时用英文。
+// 规则本身、需求标题、文件名是项目自己的字，不在这里。
+const STR = {
+  zh: {
+    sep: '、',
+    needNode: (what: string, url: string, msg: string) => `需要 Node.js 才能${what}，请先安装（${url}）。${msg}`,
+    failed: (what: string, msg: string) => `${what}没成功：${msg}`,
+    whatRead: '读需求树',
+    whatEdit: '改需求树',
+    refreshFailed: (msg: string) => `刷新失败，下面是上一次的地图：${msg}`,
+    working: ' ● 在改',
+    done: '完成', doing: '进行中', todo: '待做', none: '未标',
+    totals: (name: string, d: number, g: number, t: number, n: string) => `${name} · 完成 ${d} · 进行中 ${g} · 待做 ${t}${n}`,
+    noneTotal: (n: number) => ` · 未标 ${n}`,
+    selected: (id: string, title: string) => `已选：${id} ${title}`,
+    statusLabel: '状态：',
+    covers: (files: string) => `管：${files}`,
+    coversNothing: '没写管哪些文件（每次都会加载）',
+    docs: (list: string) => `文档：${list}`,
+    docGone: '（找不到）',
+    rules: '规则',
+    from: (id: string, title: string) => `来自 ${id} ${title}`,
+    decisionTag: ' [决定]',
+    save: '保存', cancel: '取消', edit: '改', del: '删',
+    confirmDel: '再按一次确认删除这条决定',
+    addLabel: '加一条规则：',
+    addPlaceholder: '写完按 Enter',
+    add: '添加',
+    recent: '最近的改动',
+    undo: ' 撤销',
+    more: (n: number) => `还有 ${n} 个`,
+    back: '‹ 返回',
+    notEnabled: '这个项目还没有启用需求树。',
+    enableHint: '在输入框里输入 /ruletree:setup，让 AI 读一遍项目并提议一棵树，你确认后启用。',
+  },
+  en: {
+    sep: ', ',
+    needNode: (what: string, url: string, msg: string) => `Node.js is needed to ${what}. Please install it first (${url}). ${msg}`,
+    failed: (what: string, msg: string) => `Could not ${what}: ${msg}`,
+    whatRead: 'read the requirement tree',
+    whatEdit: 'edit the requirement tree',
+    refreshFailed: (msg: string) => `Refresh failed; showing the last good map: ${msg}`,
+    working: ' ● editing',
+    done: 'Done', doing: 'In progress', todo: 'To do', none: 'No status',
+    totals: (name: string, d: number, g: number, t: number, n: string) => `${name} · Done ${d} · In progress ${g} · To do ${t}${n}`,
+    noneTotal: (n: number) => ` · No status ${n}`,
+    selected: (id: string, title: string) => `Selected: ${id} ${title}`,
+    statusLabel: 'Status: ',
+    covers: (files: string) => `Covers: ${files}`,
+    coversNothing: 'No paths set (its rules load every time)',
+    docs: (list: string) => `Docs: ${list}`,
+    docGone: ' (not found)',
+    rules: 'Rules',
+    from: (id: string, title: string) => `From ${id} ${title}`,
+    decisionTag: ' [Decision]',
+    save: 'Save', cancel: 'Cancel', edit: 'Edit', del: 'Delete',
+    confirmDel: 'Press again to delete this decision',
+    addLabel: 'Add a rule: ',
+    addPlaceholder: 'Press Enter when done',
+    add: 'Add',
+    recent: 'Recent changes',
+    undo: ' Undo',
+    more: (n: number) => `${n} more`,
+    back: '‹ Back',
+    notEnabled: 'This project does not use a requirement tree yet.',
+    enableHint: 'Type /ruletree:setup in the input box. The AI reads the project and proposes a tree, and it is enabled once you approve.',
+  },
+}
+export const strings = (lang?: string | null) => (lang === 'zh' ? STR.zh : STR.en)
+
 // process.run 被拒有两种：命令起不来（多半没装 Node），或到点还没跑完（超时）。
 // 类型里没有区分它们的字段，只能看错误文字：只有像「找不到可执行文件」的才说需要 Node.js，其余照实显示。
-export function describeRunError(err: unknown, what: string): string {
+export function describeRunError(err: unknown, what: 'read' | 'edit', lang?: string | null): string {
+  const t = strings(lang)
+  const w = what === 'read' ? t.whatRead : t.whatEdit
   const msg = String((err as any)?.message ?? err)
   if (/ENOENT|not found|no such file|cannot find|找不到|无法启动|failed to (start|spawn)|cannot (start|spawn)/i.test(msg)) {
-    return `需要 Node.js 才能${what}，请先安装（${NODE_URL}）。${msg.slice(0, 120)}`
+    return t.needNode(w, NODE_URL, msg.slice(0, 120))
   }
-  return `${what}没成功：${msg.slice(0, 200)}`
+  return t.failed(w, msg.slice(0, 200))
 }
 
 function flatten(list: SnapshotNode[], depth = 0): { n: SnapshotNode; depth: number }[] {
@@ -41,7 +115,6 @@ const contains = (n: SnapshotNode, id: string | null): boolean =>
 // 状态色：用主题色名，跟着应用的深浅色走
 const STATUS_COLOR: Record<string, string> = { done: 'success', doing: 'warning', todo: 'inactive' }
 const colorOf = (s: string | null) => STATUS_COLOR[s ?? ''] ?? 'inactive'
-const STATUS_WORD: Record<string, string> = { done: '完成', doing: '进行中', todo: '待做' }
 
 export type PaneState = {
   snap: Snapshot | null
@@ -71,38 +144,39 @@ export type PaneActions = {
 // 决定类规则：用户拍板的，删它要按两次
 export const isDecision = (text: string) => /^\s*(决定[：:]|decision\s*:)/i.test(text)
 
-const STATUS_OPTIONS = [
-  { value: '', label: '未标' },
-  { value: 'todo', label: '待做' },
-  { value: 'doing', label: '进行中' },
-  { value: 'done', label: '完成' },
+const statusOptions = (t: ReturnType<typeof strings>) => [
+  { value: '', label: t.none },
+  { value: 'todo', label: t.todo },
+  { value: 'doing', label: t.doing },
+  { value: 'done', label: t.done },
 ]
 const RECENT_CHANGES = 3
 
 // 详情：按下一格后画在地图下面。规则分组里自己的可以改、删；上级的只读
 function detailView(els: any, node: SnapshotNode, st: PaneState, changes: SnapshotChange[], act: PaneActions) {
+  const t = strings(st.snap?.lang)
   const { Box, Text, Button, Select, Input } = els
   const { armed, editing, addSeq } = st
   const notice = st.notice.node === node.id ? st.notice.text : ''
   const undoable = changes.filter(c => c.undoable).slice(0, RECENT_CHANGES)
   return (
     <Box flexDirection="column" marginTop={1} borderStyle="single" borderColor="inactive" paddingX={1}>
-      <Text bold>{`已选：${node.id} ${node.title}`}</Text>
+      <Text bold>{t.selected(node.id, node.title)}</Text>
       {notice ? <Text color="warning">{notice}</Text> : null}
       <Select
         key={`status-${node.id}`}
-        label="状态："
-        options={STATUS_OPTIONS}
+        label={t.statusLabel}
+        options={statusOptions(t)}
         value={node.status ?? ''}
         onSelect={v => act.onEdit(node.id, [{ op: 'set_status', node: node.id, status: v || null }])}
       />
-      <Text dimColor>{node.files.length ? `管：${node.files.join('、')}` : '没写管哪些文件（每次都会加载）'}</Text>
+      <Text dimColor>{node.files.length ? t.covers(node.files.join(t.sep)) : t.coversNothing}</Text>
       {node.docs.length ? (
-        <Text dimColor>{`文档：${node.docs.map(d => d.path + (d.ok ? '' : '（找不到）')).join('、')}`}</Text>
+        <Text dimColor>{t.docs(node.docs.map(d => d.path + (d.ok ? '' : t.docGone)).join(t.sep))}</Text>
       ) : null}
       {node.groups.map(g => (
         <Box key={g.ownerId} flexDirection="column" marginTop={1}>
-          <Text bold dimColor={!g.self}>{g.self ? '规则' : `来自 ${g.ownerId} ${g.ownerTitle}`}</Text>
+          <Text bold dimColor={!g.self}>{g.self ? t.rules : t.from(g.ownerId, g.ownerTitle)}</Text>
           {g.rules.map((r, i) => {
             const k = `${g.ownerId}-${i}`
             const decision = isDecision(r.text)
@@ -113,24 +187,24 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
                   <Input
                     key={`edit-${k}`}
                     value={r.text}
-                    submitLabel="保存"
+                    submitLabel={t.save}
                     onSubmit={v => {
                       const text = v.trim()
                       if (text && text !== r.text) act.onEdit(node.id, [{ op: 'replace_rule', node: node.id, old: r.text, text }])
                       else act.onEditing(node.id, '')
                     }}
                   />
-                  <Button key={`cancel-${k}`} onPress={() => act.onEditing(node.id, '')}>{'取消'}</Button>
+                  <Button key={`cancel-${k}`} onPress={() => act.onEditing(node.id, '')}>{t.cancel}</Button>
                 </Box>
               )
             }
             return (
               <Box key={k} flexDirection="row">
                 <Text dimColor={!g.self} bold={decision}>{`- ${r.shown}`}</Text>
-                {decision ? <Text color="claude">{' [决定]'}</Text> : null}
+                {decision ? <Text color="claude">{t.decisionTag}</Text> : null}
                 {g.self ? (
                   <Box flexDirection="row" marginLeft={1}>
-                    <Button key={`e-${k}`} plain onPress={() => act.onEditing(node.id, r.text)}>{'改'}</Button>
+                    <Button key={`e-${k}`} plain onPress={() => act.onEditing(node.id, r.text)}>{t.edit}</Button>
                     <Text>{' '}</Text>
                     <Button
                       key={`d-${k}`}
@@ -141,7 +215,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
                           : act.onEdit(node.id, [{ op: 'remove_rule', node: node.id, text: r.text }])
                       }
                     >
-                      {asking ? '再按一次确认删除这条决定' : '删'}
+                      {asking ? t.confirmDel : t.del}
                     </Button>
                   </Box>
                 ) : null}
@@ -152,9 +226,9 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
       ))}
       <Input
         key={`add-${node.id}-${addSeq}`}
-        label="加一条规则："
-        placeholder="写完按 Enter"
-        submitLabel="添加"
+        label={t.addLabel}
+        placeholder={t.addPlaceholder}
+        submitLabel={t.add}
         onSubmit={v => {
           const text = v.trim()
           if (text) act.onEdit(node.id, [{ op: 'add_rule', node: node.id, text }])
@@ -162,11 +236,11 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
       />
       {undoable.length ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold>{'最近的改动'}</Text>
+          <Text bold>{t.recent}</Text>
           {undoable.map(c => (
             <Box key={c.id} flexDirection="row">
               <Text dimColor>{c.summary.join('；')}</Text>
-              <Button key={`undo-${c.id}`} plain onPress={() => act.onUndo(node.id, c.id)}>{' 撤销'}</Button>
+              <Button key={`undo-${c.id}`} plain onPress={() => act.onUndo(node.id, c.id)}>{t.undo}</Button>
             </Box>
           ))}
         </Box>
@@ -179,15 +253,13 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
 function header(Text: any, snap: Snapshot) {
   const t = snap.overview?.totals
   if (!t) return <Text bold>{snap.name}</Text>
-  const none = t.none > 0 ? ` · 未标 ${t.none}` : ''
-  return (
-    <Text bold>{`${snap.name} · 完成 ${t.done} · 进行中 ${t.doing} · 待做 ${t.todo}${none}`}</Text>
-  )
+  const w = strings(snap.lang)
+  return <Text bold>{w.totals(snap.name, t.done, t.doing, t.todo, t.none > 0 ? w.noneTotal(t.none) : '')}</Text>
 }
 
 // 一格：外面的 Box 管边框和颜色，里面的 Button 管点击。
 // 在改的用粗双线边框加「● 在改」，最近改过的用虚线，其余是圆角线。
-function Tile(els: any, tile: OverviewTile, selected: string, act: PaneActions) {
+function Tile(els: any, tile: OverviewTile, selected: string, act: PaneActions, lang?: string) {
   const { Box, Text, Button } = els
   const working = tile.state === 'working'
   const mark = tile.id === selected ? '▶ ' : ''
@@ -201,7 +273,7 @@ function Tile(els: any, tile: OverviewTile, selected: string, act: PaneActions) 
     >
       <Button key={`b-${tile.id}`} plain onPress={() => act.onTile(tile)}>
         <Text bold={working} color={colorOf(tile.status)}>{`${mark}${tile.id} ${tile.title}`}</Text>
-        {working ? <Text color="claude" bold>{' ● 在改'}</Text> : null}
+        {working ? <Text color="claude" bold>{strings(lang).working}</Text> : null}
         {tile.hasChildren ? <Text dimColor>{' ›'}</Text> : null}
       </Button>
     </Box>
@@ -218,6 +290,7 @@ export const TEXT_ROWS = 40
 // 终端：缩进的文字树，没有按钮
 function textTree(els: any, snap: Snapshot, selected: string) {
   const { Box, Text } = els
+  const tr = strings(snap.lang)
   const all = flatten(snap.nodes)
   const rows = all.slice(0, TEXT_ROWS)
   const w = all.findIndex(r => r.n.id === snap.working)
@@ -228,10 +301,10 @@ function textTree(els: any, snap: Snapshot, selected: string) {
       {header(Text, snap)}
       {rows.map(({ n, depth }) => (
         <Text key={n.id} color={colorOf(n.status)} bold={n.id === snap.working}>
-          {`${'  '.repeat(depth)}${n.id === selected ? '▶ ' : ''}${n.id} ${n.title}${n.status ? ` [${STATUS_WORD[n.status] ?? n.status}]` : ''}${n.id === snap.working ? ' ● 在改' : ''}`}
+          {`${'  '.repeat(depth)}${n.id === selected ? '▶ ' : ''}${n.id} ${n.title}${n.status ? ` [${(tr as any)[n.status] ?? n.status}]` : ''}${n.id === snap.working ? tr.working : ''}`}
         </Text>
       ))}
-      {more > 0 ? <Text dimColor>{`还有 ${more} 个`}</Text> : null}
+      {more > 0 ? <Text dimColor>{tr.more(more)}</Text> : null}
     </Box>
   )
 }
@@ -248,7 +321,7 @@ function overviewView(els: any, snap: Snapshot, selected: string, act: PaneActio
           <Box key={b.id} flexDirection="column" flexGrow={b.span} marginRight={2} marginBottom={1}>
             <Text bold color={colorOf(b.status)}>{`${b.id} ${b.title}`}</Text>
             <Box flexDirection="row" flexWrap="wrap">
-              {b.tiles.map(t => Tile(els, t, selected, act))}
+              {b.tiles.map(t => Tile(els, t, selected, act, snap.lang))}
               {b.hidden > 0 ? <Text dimColor>{`+${b.hidden}`}</Text> : null}
             </Box>
           </Box>
@@ -276,11 +349,11 @@ function levelView(els: any, snap: Snapshot, level: string, selected: string, ac
   return (
     <Box flexDirection="column">
       <Box flexDirection="row">
-        <Button key="back" onPress={() => act.onBack(back)}>{'‹ 返回'}</Button>
+        <Button key="back" onPress={() => act.onBack(back)}>{strings(snap.lang).back}</Button>
         <Text bold color={colorOf(hit.node.status)}>{`  ${hit.node.id} ${hit.node.title}`}</Text>
       </Box>
       <Box flexDirection="row" flexWrap="wrap" marginTop={1}>
-        {tiles.map(t => Tile(els, t, selected, act))}
+        {tiles.map(t => Tile(els, t, selected, act, snap.lang))}
       </Box>
     </Box>
   )
@@ -296,8 +369,8 @@ export function paneTree(els: { Box: any; Text: any; Button: any; Select: any; I
     return (
       <Box flexDirection="column">
         {reason}
-        <Text>这个项目还没有启用需求树。</Text>
-        <Text>在输入框里输入 /ruletree:setup，让 AI 读一遍项目并提议一棵树，你确认后启用。</Text>
+        <Text>{strings(snap.lang).notEnabled}</Text>
+        <Text>{strings(snap.lang).enableHint}</Text>
       </Box>
     )
   }
@@ -315,7 +388,7 @@ export function paneTree(els: { Box: any; Text: any; Button: any; Select: any; I
           </Box>
         </Box>
       )}
-      {picked ? (surface === 'terminal' ? <Text>{`已选：${picked.id} ${picked.title}`}</Text> : detailView(els, picked, st, snap.changes, act)) : null}
+      {picked ? (surface === 'terminal' ? <Text>{strings(snap.lang).selected(picked.id, picked.title)}</Text> : detailView(els, picked, st, snap.changes, act)) : null}
     </Box>
   )
 }

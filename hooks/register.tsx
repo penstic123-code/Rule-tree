@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Snapshot } from '../types'
-import { paneTree, locate, describeRunError } from './pane'
+import { paneTree, locate, describeRunError, strings } from './pane'
 
 const PANE = 'ruletree-map'
 const ACTIVE_FOR_MS = 180000
@@ -45,7 +45,8 @@ export async function refresh($: any, file?: string) {
     r = await $.process.run(argv)
   } catch (err) {
     // process.run 自己被拒：没装 node 或超时，describeRunError 分开说
-    await update($, error, () => describeRunError(err, '读需求树'))
+    const lang = (await read($, snapshot))?.lang
+    await update($, error, () => describeRunError(err, 'read', lang))
     return
   }
   try {
@@ -58,7 +59,8 @@ export async function refresh($: any, file?: string) {
     const lv = await read($, level)
     if (lv && !locate(data.nodes, lv)) await update($, level, () => '')
   } catch (err) {
-    await update($, error, () => `刷新失败，下面是上一次的地图：${String(err).slice(0, 300)}`)
+    const lang = (await read($, snapshot))?.lang
+    await update($, error, () => strings(lang).refreshFailed(String(err).slice(0, 300)))
   }
 }
 
@@ -83,7 +85,7 @@ export async function runEdit($: any, input: { ops: any[] } | { undo: string }, 
       isDone = !!(out && out.result === 'done')
       if (!isDone) message = (out && out.message) || String(r.stderr).slice(0, 200) || `edit exited ${r.exitCode}`
     } catch (err) {
-      message = describeRunError(err, '改需求树')
+      message = describeRunError(err, 'edit', (await read($, snapshot))?.lang)
     }
     await update($, notice, () => ({ node, text: message }))
     await update($, armed, () => '')

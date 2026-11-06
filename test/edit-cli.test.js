@@ -77,3 +77,15 @@ test('undo of an unknown id fails with a message', () => {
   assert.strictEqual(r.out.result, 'failed');
   assert.ok(r.out.message);
 });
+
+test('edit messages follow the project language', () => {
+  const dir = path.join(base, 'english project');
+  const rules = path.join(dir, '.claude', 'rules', 'ruletree');
+  fs.mkdirSync(rules, { recursive: true });
+  fs.writeFileSync(path.join(rules, 'R1-Src.md'), '---\npaths:\n  - "src/**"\n---\n# R1 Src 🔨\n- Write tests first\n');
+  const r = edit(dir, { ops: [{ op: 'add_rule', node: 'R1', text: 'Write tests first' }] });
+  assert.strictEqual(r.out.result, 'nochange');
+  assert.ok(!/[一-鿿]/.test(r.out.message), r.out.message);
+  const z = project();
+  assert.match(edit(z.dir, { ops: [{ op: 'add_rule', node: 'R1', text: '先写测试' }] }).out.message, /同样的规则/);
+});

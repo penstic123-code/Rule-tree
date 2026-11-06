@@ -271,7 +271,8 @@ async function callModel(job, ask) {
 // 返回 { notes, applied, ask, categorized, skippedModel, failed, error, report, entry }
 // failed：[{ ids, group, error }] 没问成的块；error：所有检查都没问成时的第一个错误
 async function runCheckup(dir, { model = true, ask, T: tr, full = false } = {}) {
-  const t = make(tr);
+  // 没指定报告语言时跟着项目走（英文项目的报告不该是中文）
+  const t = tr ? make(tr) : STRINGS.make(require('./lang').detectLang(dir, 'en'));
   const files = require('./files').listFiles(dir);
   const res = { notes: programChecks(dir, { files }), applied: [], ask: [], categorized: [], skippedModel: false, failed: [], error: null, entry: null };
   const ops = duplicateOps(store.readTree(dir));

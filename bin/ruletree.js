@@ -151,7 +151,7 @@ function init(dir, { log = console.log, plugin = false } = {}) {
     store.replaceAll(dir, store.initialFiles(dir), { source: '新建' });
     log(`✓ 已在 ${store.RULES_DIR} 按项目的文件夹建好第一批需求`);
   }
-  ensureGuide(dir);
+  ensureGuide(dir, { lang: 'zh' }); // VS Code 路线的 init：没有规则可看时保持原来的中文说明书
   store.syncFiles(dir, null, '其他'); // 第一次：建快照
   store.ensureTracking(dir);
   const gs = require('../src/files').rulesGitState(dir, store.RULES_DIR);

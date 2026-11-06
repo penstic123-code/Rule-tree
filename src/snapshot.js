@@ -33,8 +33,9 @@ function loadTree(dir, now = Date.now()) {
 function snapshot(cwd, { file, now = Date.now() } = {}) {
   cwd = path.resolve(cwd);
   const dir = findProjectUp(cwd);
-  const snap = { enabled: !!dir, dir, name: path.basename(dir || cwd), nodes: [], changes: [], unmapped: [], problems: [], working: null, overview: null };
+  const snap = { enabled: !!dir, dir, name: path.basename(dir || cwd), nodes: [], changes: [], unmapped: [], problems: [], working: null, overview: null, lang: 'en' };
   if (!dir) return snap;
+  snap.lang = require('./lang').detectLang(dir, 'en');
   const tree = loadTree(dir, now);
   const view = viewData([{ ...tree, uri: dir }], now).files[0];
   Object.assign(snap, { nodes: view.nodes, changes: view.changes, unmapped: view.unmapped, problems: view.problems });

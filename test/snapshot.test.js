@@ -47,3 +47,16 @@ test('the CLI exits 0 with a JSON object when not enabled', () => {
   const out = JSON.parse(execFileSync('node', [BIN, 'snapshot', emptyDir, '--json'], { encoding: 'utf8' }));
   assert.strictEqual(out.enabled, false);
 });
+
+test('snapshot carries the project language; a project without rules is English', () => {
+  const fs = require('fs'), os = require('os'), path = require('path');
+  const none = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-nolang-'));
+  assert.strictEqual(require('../src/snapshot').snapshot(none).lang, 'en');
+  const en = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-enlang-'));
+  const rules = path.join(en, '.claude', 'rules', 'ruletree');
+  fs.mkdirSync(rules, { recursive: true });
+  fs.writeFileSync(path.join(rules, 'R1-Src.md'), '# R1 Src 🔨\n- Write tests first\n');
+  assert.strictEqual(require('../src/snapshot').snapshot(en).lang, 'en');
+  fs.writeFileSync(path.join(rules, 'R2-文档.md'), '# R2 文档 🔨\n- 写短句\n- 先写测试\n');
+  assert.strictEqual(require('../src/snapshot').snapshot(en).lang, 'zh');
+});

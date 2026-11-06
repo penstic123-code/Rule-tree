@@ -65,6 +65,8 @@ export type Snapshot = {
   problems: unknown[]
   // 正在改的文件所属的需求编号；没有就是 null
   working: string | null
+  // 项目的语言：说明书、面板文字跟着它走。没有规则的项目是 'en'
+  lang: 'zh' | 'en'
   // 项目没启用时核心给 null
   overview: Overview | null
 }

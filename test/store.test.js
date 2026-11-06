@@ -176,3 +176,81 @@ test('审查回归：hook 知道改之前的样子时，快照和它对不上的
   assert.ok(store.undoChange(dir, ai.id));
   assert.strictEqual(H.readRule(dir, 'C9-拉下来的.md'), prior, '撤销 AI 那次只去掉 AI 加的');
 });
+
+// ---------- 语言：英文项目和中文项目（src/lang.js、src/guide.js） ----------
+const guideMod = require('../src/guide');
+const { detectLang } = require('../src/lang');
+const ENGLISH = {
+  '_root.md': '# P Writing project\n- Keep paragraphs under four lines\n- Decision: write in English, because the readers are English speakers\n',
+  'R1-Voice.md': '---\npaths:\n  - "chapters/**"\n---\n# R1 Voice 🔨\nDocs: docs/voice.md#Tone\n- No questions as openers\n',
+  'R1.1-Titles.md': '---\npaths:\n  - "chapters/titles/**"\n---\n# R1.1 Titles ⏳\nParent: R1 Voice\n- Titles stay short\n',
+};
+const englishProject = () => {
+  const dir = fs.mkdtempSync(path.join(H.SANDBOX, 'en-'));
+  fs.mkdirSync(store.rulesDir(dir), { recursive: true });
+  for (const [n, t] of Object.entries(ENGLISH)) fs.writeFileSync(path.join(store.rulesDir(dir), n), t);
+  return dir;
+};
+const CJK = /[一-鿿]/;
+const guideOf = dir => fs.readFileSync(path.join(store.rulesDir(dir), '_guide.md'), 'utf8');
+
+test('说明书版本是 3：旧版本的插件不会把新说明书改回去', () => {
+  assert.strictEqual(guideMod.VERSION, 3);
+  assert.match(guideMod.guideText('zh'), /^<!-- ruletree:guide 3/);
+  assert.match(guideMod.guideText('en'), /^<!-- ruletree:guide 3/);
+});
+
+test('已有的中文项目保持中文，哪怕默认语言是英文', () => {
+  const dir = H.project();
+  assert.strictEqual(detectLang(dir, 'en'), 'zh');
+  assert.strictEqual(guideMod.ensureGuide(dir, { lang: 'en' }), true);
+  assert.strictEqual(guideOf(dir), guideMod.guideText('zh'));
+});
+
+test('新的英文项目得到英文说明书：没有汉字，用 Decision: Docs: Parent:', () => {
+  const dir = englishProject();
+  assert.strictEqual(detectLang(dir, 'zh'), 'en');
+  guideMod.ensureGuide(dir, { lang: 'zh' });
+  const g = guideOf(dir);
+  assert.ok(!CJK.test(g), '英文说明书里不能有汉字');
+  for (const w of ['Decision:', 'Docs:', 'Parent:']) assert.ok(g.includes(w), w);
+  assert.strictEqual(g, guideMod.guideText('en'));
+  assert.strictEqual(guideMod.ensureGuide(dir, { lang: 'zh' }), false, '再来一次不重写');
+});
+
+test('没有规则可看、也没有说明书时，用传进来的默认语言', () => {
+  const dir = fs.mkdtempSync(path.join(H.SANDBOX, 'empty-'));
+  assert.strictEqual(detectLang(dir), 'en');
+  assert.strictEqual(detectLang(dir, 'zh'), 'zh');
+});
+
+test('一种语言的说明书不会被改写成另一种', () => {
+  const zh = H.project();
+  fs.writeFileSync(path.join(store.rulesDir(zh), '_guide.md'), guideMod.guideText('en'));
+  assert.strictEqual(detectLang(zh, 'zh'), 'en', '说明书的语言排在规则前面');
+  assert.strictEqual(guideMod.ensureGuide(zh, { lang: 'zh' }), false);
+  assert.strictEqual(guideOf(zh), guideMod.guideText('en'));
+  const en = englishProject();
+  fs.writeFileSync(path.join(store.rulesDir(en), '_guide.md'), guideMod.guideText('zh'));
+  assert.strictEqual(guideMod.ensureGuide(en, { lang: 'en' }), false);
+  assert.strictEqual(guideOf(en), guideMod.guideText('zh'));
+});
+
+test('旧版本的英文说明书会升级成这一版，同一种语言', () => {
+  const dir = englishProject();
+  fs.writeFileSync(path.join(store.rulesDir(dir), '_guide.md'), '<!-- ruletree:guide 2 (old) -->\nOld guide\n');
+  assert.strictEqual(guideMod.ensureGuide(dir, { lang: 'zh' }), true);
+  assert.strictEqual(guideOf(dir), guideMod.guideText('en'));
+});
+
+test('英文规则文件：Decision: Docs: Parent: 和中文标签读出来一样', () => {
+  const dir = englishProject();
+  const root = store.readTree(dir);
+  const r1 = T.findById(root, 'R1');
+  assert.deepStrictEqual(r1.docs, ['docs/voice.md#Tone']);
+  assert.strictEqual(r1.status, 'doing');
+  assert.strictEqual(T.findById(root, 'R1.1').parent.id, 'R1');
+  const rules = [root, ...T.walk(root)].flatMap(n => n.rules);
+  assert.ok(rules.find(r => /write in English/.test(r.text)).decision);
+  assert.ok(!rules.find(r => /under four lines/.test(r.text)).decision);
+});

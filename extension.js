@@ -89,7 +89,7 @@ class Panel {
   load() {
     this.trees = findProjects().map(dir => {
       upgradeIfOld(dir);
-      try { ensureGuide(dir); } catch (e) { console.error(e); }
+      try { ensureGuide(dir, { lang: 'zh' }); } catch (e) { console.error(e); }
       // 别的途径（命令行、git、手动在别处改）改了规则文件：补记成「其他」的改动。最近 5 秒内改的先不记：可能是 AI 刚改的，hook 马上以「AI」记
       store.syncFilesAsync(dir, null, '其他', { minAgeMs: 5000 }).catch(e => console.error(e));
       try { store.ensureTracking(dir); } catch (e) { console.error(e); }
