@@ -94,6 +94,20 @@ Codex 的支持先不做，等其他事做完再做；改到一半的代码已�
 | 规则一句话，细节放文档 | 规则每次都要读，所以要短；文档只在需要时读 |
 | hook 只读 Claude Code 公开的字段，不读对话记录文件 | 对话记录的格式没有公开，随时可能变 |
 
+## 在 Claude 应用里的另一条路
+
+同一份核心代码也能作为 Claude 应用的插件装（仓库根目录就是插件，`.claude-plugin/` 里是市场文件和插件清单）。界面换成对话旁边的窗格，其余沿用。设计见 [design-claude-app-plugin.md](design-claude-app-plugin.md)。
+
+| 部分 | 做什么 | 代码 |
+|---|---|---|
+| 注册 | 声明状态、事件、`/ruletree:setup` 命令和窗格；写状态都在这里 | `hooks/register.tsx` |
+| 画窗格 | 只放纯函数：把项目现状画成格子，不碰 Node | `hooks/pane.tsx`、`hooks/pane.test.tsx` |
+| 核心的命令行 | 窗格不直接读规则文件，而是调命令行：`snapshot` 取项目现状，`edit` 改规则，`setup` 把 AI 提出的第一棵树检查后写成规则文件，`checkup` 体检 | `bin/ruletree.js` |
+| 技能 | `/ruletree:setup` 的说明：怎么读项目、怎么提第一棵树 | `skills/setup/` |
+| hook | 插件自带 hook；项目里已经装了自己的 hook 时，插件那份让路，免得一次改动记两遍（靠 `CLAUDE_PLUGIN_ROOT` 认出自己） | `hooks/hook.js` |
+
+插件的体检分两步，因为核心在另一个进程里，调用不了插件的模型接口：先用 `checkup --jobs` 取出要问模型的提示词（什么都不改），由窗格最多三块同时问模型，再用 `checkup --answers` 把答案交回去，由核心检查、改规则、写报告。失败时快照不动，地图还在。
+
 ## 改代码前
 
 - 设计笔记见 [design-info-architecture.md](design-info-architecture.md)（0.20 以前的设计，部分已过时），每次测试和测量的原始数据见 [test-log.md](test-log.md)。

@@ -80,14 +80,29 @@ RuleTree 先用程序查一遍：哪些需求管的文件一个也找不到（�
 
 侧栏里可以改名、改状态、加规则、改文件范围，都写回对应的规则文件；也可以直接在编辑器里打开规则文件改，保存后同样记进「最近改动」。
 
+## 在 Claude 应用里用
+
+Claude 应用的 Code 标签页可以装插件，RuleTree 装上以后，对话旁边会多出一个窗格，把整个项目画成一张图：每个需求是一格，AI 正在改的那一格会亮。不用 VS Code，也不用手写配置。Chat 标签页不支持，要用 Code 标签页。需要 Node.js 18 以上。
+
+在终端里依次运行这两条命令：
+
+```bash
+claude plugin marketplace add penstic123-code/Vibe-Friend
+claude plugin install ruletree@ruletree
+```
+
+装好后，在项目里开一个新的 Code 对话，输入 `/ruletree:setup`。AI 会读一遍项目，提出第一批需求，检查通过后写成规则文件。已经有规则的项目不会被改动。
+
+这条路线目前只在作者自己的电脑上试过：窗格能在 Claude 应用里画出来，`/ruletree:setup` 在一个小应用上跑通过。格子在真实应用里长什么样、AI 改文件时格子怎么亮，还没有在真实应用里看过，所以这里先不放截图。详情见 [dev/test-log.md](dev/test-log.md)。
+
 ## 怎么装
 
 需要 Node.js 18 以上、VS Code 和 Claude Code。最省事的是在项目里开一个 Claude Code 对话，把这段话发给它：
 
 ```text
-帮我在这个项目里装上 RuleTree（https://github.com/penstic123-code/Rule-tree）：
-1. 运行 npx github:penstic123-code/Rule-tree init .
-2. 从 https://github.com/penstic123-code/Rule-tree/releases/latest 下载最新的 ruletree-*.vsix，放到项目文件夹外面，告诉我放在哪
+帮我在这个项目里装上 RuleTree（https://github.com/penstic123-code/Vibe-Friend）：
+1. 运行 npx github:penstic123-code/Vibe-Friend init .
+2. 从 https://github.com/penstic123-code/Vibe-Friend/releases/latest 下载最新的 ruletree-*.vsix，放到项目文件夹外面，告诉我放在哪
 3. 不要自己运行 code --install-extension，告诉我怎么在 VS Code 里从 VSIX 安装它
 ```
 

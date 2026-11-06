@@ -81,14 +81,29 @@ RuleTree first runs program checks: requirements whose files match nothing (thei
 
 The sidebar can rename, change status, add rules and change a requirement's files, all written back to the requirement's file. You can also open a rule file in the editor and change it there; saving logs the change under Recent changes too.
 
+## In the Claude app
+
+The Code tab of the Claude app accepts plugins. With RuleTree installed, a pane appears beside the chat and draws the whole project as a map: each requirement is a tile, and the tile the AI is editing lights up. It needs no VS Code and no hand-written config. The Chat tab is not supported; use the Code tab. Node.js 18 or newer is required.
+
+Run these two commands in a terminal:
+
+```bash
+claude plugin marketplace add penstic123-code/Vibe-Friend
+claude plugin install ruletree@ruletree
+```
+
+Then start a new Code chat in your project and type `/ruletree:setup`. The AI reads the project, proposes a first set of requirements, and writes them as rule files once they pass the checks. A project that already has rules is left alone.
+
+So far this route has been tried only on the author's own machine. The pane has drawn in the real app, and `/ruletree:setup` has run on one small app. How the tiles look in the real app and how they light up during an edit have not been seen there yet, so there is no screenshot here. The details are in [dev/test-log.md](dev/test-log.md).
+
 ## Install
 
 You need Node.js 18+, VS Code and Claude Code. The easiest way is to open a Claude Code chat in your project and send it this:
 
 ```text
-Install RuleTree (https://github.com/penstic123-code/Rule-tree) in this project:
-1. Run npx github:penstic123-code/Rule-tree init .
-2. Download the latest ruletree-*.vsix from https://github.com/penstic123-code/Rule-tree/releases/latest, put it outside the project folder, and tell me where
+Install RuleTree (https://github.com/penstic123-code/Vibe-Friend) in this project:
+1. Run npx github:penstic123-code/Vibe-Friend init .
+2. Download the latest ruletree-*.vsix from https://github.com/penstic123-code/Vibe-Friend/releases/latest, put it outside the project folder, and tell me where
 3. Don't run code --install-extension yourself; tell me how to install it from VSIX in VS Code
 ```
 

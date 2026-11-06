@@ -1,6 +1,11 @@
 ---
 paths:
   - ".claude-plugin/**"
+  - "hooks/register.tsx"
+  - "hooks/pane.tsx"
+  - "hooks/pane.test.tsx"
+  - "types/**"
+  - "skills/**"
 ---
 # R6 Claude 应用插件 🔨
 文档：dev/design-claude-app-plugin.md
