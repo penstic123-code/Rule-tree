@@ -8,7 +8,8 @@ const { spawnSync } = require('child_process');
 const MAX_FILES = 50000;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', '.next', 'dist', 'target', 'Library', '.godot', '.gradle']);
 
-function listFiles(dir) {
+// dotDirs: true 时遍历也进隐藏文件夹（.git 和 SKIP_DIRS 仍跳过）；只给检查路径用，其他调用方保持原样
+function listFiles(dir, { dotDirs = false } = {}) {
   const r = spawnSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], { cwd: dir, encoding: 'utf8', windowsHide: true, maxBuffer: 256 << 20, timeout: 20000 });
   let files = r.status === 0 && typeof r.stdout === 'string' ? r.stdout.split('\0').filter(Boolean) : null;
   if (!files) {
@@ -20,7 +21,7 @@ function listFiles(dir) {
       try { ents = fs.readdirSync(path.join(dir, rel), { withFileTypes: true }); } catch { continue; }
       for (const e of ents) {
         const p = rel ? `${rel}/${e.name}` : e.name;
-        if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name) && !e.name.startsWith('.')) stack.push(p); } else files.push(p);
+        if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name) && (dotDirs || !e.name.startsWith('.'))) stack.push(p); } else files.push(p);
       }
     }
   }

@@ -8,10 +8,8 @@ const path = require('path');
 const store = require('./store');
 const T = require('./tree');
 const guide = require('./guide');
-const { detectLang } = require('./lang');
 
 const STATUSES = ['done', 'doing', 'todo', 'question'];
-const SKIP_TOP = /^(node_modules|dist|build|out|target|coverage|vendor)$/i;
 const ID_RE = /^[A-Z][A-Z0-9]*(?:\.\d+)*$/;
 const ROOT_INTRO = {
   zh: store.ROOT_INTRO,
@@ -19,18 +17,35 @@ const ROOT_INTRO = {
 };
 
 const parentId = id => (id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : null);
-const projectFiles = dir => { try { return require('./files').listFiles(dir); } catch { return []; } };
+// 检查路径时连 .github 这类隐藏文件夹也算（非 git 项目的遍历默认跳过它们）
+const projectFiles = dir => { try { return require('./files').listFiles(dir, { dotDirs: true }); } catch { return []; } };
 const matched = (globs, files) => files.filter(f => T.matchesAny(globs, f));
 
-// 项目里有几块「地方」：每个顶层文件夹算一块，根目录下的零散文件合起来算一块
-function areaCount(files) {
-  const areas = new Set();
-  for (const f of files) {
-    const i = f.indexOf('/');
-    if (i < 0) areas.add('');
-    else if (!f.startsWith('.') && !SKIP_TOP.test(f.slice(0, i))) areas.add(f.slice(0, i));
+// 一个需求匹配到的文件里，在它自己的公共文件夹之下分属几个不同子文件夹（直接放在公共文件夹里的零散文件不算）。
+// 2 个以上说明里面还有可拆的东西；平铺的 monorepo、src/ 加根目录文件都是 0 或 1，不该被挡
+function subfolders(files) {
+  if (!files.length) return [];
+  const dirs = files.map(f => f.split('/').slice(0, -1));
+  let common = dirs[0];
+  for (const d of dirs) { let i = 0; while (i < common.length && i < d.length && common[i] === d[i]) i++; common = common.slice(0, i); }
+  const subs = new Set();
+  for (const d of dirs) if (d.length > common.length) subs.add(d[common.length]);
+  return [...subs];
+}
+
+// 提案用的语言：标题和规则里含中文的条数 vs 不含中文但有字母的条数
+function textLangCounts(reqs) {
+  let zh = 0, en = 0;
+  for (const r of reqs) for (const t of [r && r.title, ...((r && Array.isArray(r.rules)) ? r.rules : [])]) {
+    if (typeof t !== 'string') continue;
+    if (/[一-鿿]/.test(t)) zh++; else if (/[A-Za-z]/.test(t)) en++;
   }
-  return areas.size;
+  return { zh, en };
+}
+// 没写 lang 时从文字推：有中文且不比英文少就是 zh
+function deriveLang(proposal) {
+  const { zh, en } = textLangCounts(proposal.requirements || []);
+  return zh > 0 && zh >= en ? 'zh' : 'en';
 }
 
 function validate(dir, proposal) {
@@ -38,7 +53,12 @@ function validate(dir, proposal) {
   const reqs = proposal && Array.isArray(proposal.requirements) ? proposal.requirements : null;
   if (!reqs || !reqs.length) return { ok: false, problems: ['proposal.requirements must be a non-empty list'] };
   if (store.hasRules(dir)) problems.push('this project already has rules; setup never overwrites them (edit the rule files instead)');
+  else if (store.isProject(dir)) problems.push('this project already has an old-style tree file (需求树.md or *.tree.md); run "ruletree init" to convert it instead of running setup');
   if (proposal.lang !== undefined && proposal.lang !== 'zh' && proposal.lang !== 'en') problems.push('lang must be "zh" or "en"');
+  else if (proposal.lang) {
+    const { zh, en } = textLangCounts(reqs);
+    if ((proposal.lang === 'en' && zh > en) || (proposal.lang === 'zh' && en > zh)) problems.push(`lang is "${proposal.lang}" but most titles and rules are written in ${proposal.lang === 'en' ? 'Chinese' : 'English'}; make them agree`);
+  }
   const files = projectFiles(dir);
   const ids = new Set();
   const byId = new Map();
@@ -49,6 +69,7 @@ function validate(dir, proposal) {
     if (ids.has(at)) { problems.push(`${at}: id is used twice`); continue; }
     ids.add(at); byId.set(at, r);
     if (typeof r.title !== 'string' || !r.title.trim()) problems.push(`${at}: title is empty`);
+    else if (/[\r\n]/.test(r.title)) problems.push(`${at}: title must be a single line`);
     if (r.status != null && !STATUSES.includes(r.status)) problems.push(`${at}: status must be one of ${STATUSES.join(', ')}`);
     if (r.rules != null && (!Array.isArray(r.rules) || r.rules.some(x => typeof x !== 'string' || !x.trim() || /[\r\n]/.test(x)))) problems.push(`${at}: rules must be single-line, non-empty strings`);
     if (!Array.isArray(r.paths) || !r.paths.length || r.paths.some(g => typeof g !== 'string' || !g.trim())) { problems.push(`${at}: paths must be a non-empty list of globs`); continue; }
@@ -67,19 +88,27 @@ function validate(dir, proposal) {
     const outside = matched(r.paths, files).filter(f => !T.matchesAny(p.paths, f));
     if (outside.length) problems.push(`${r.id}: paths reach outside its parent ${want} (e.g. ${outside[0]}); a child must stay inside its parent's paths`);
   }
-  if (!problems.length && areaCount(files) > 1 && reqs.every(r => !parentId(r.id)))
-    problems.push('the tree has only one level but the project has more than one area; split the big requirements into sub-requirements (R1.1, R1.2 ...) as deep as the content needs');
+  // 只挂一层：只有当某个需求里面确实还有 2 个以上子文件夹可拆时才挡（R1.3：深度跟着内容走，不按顶层文件夹个数）
+  if (!problems.length && reqs.every(r => !parentId(r.id))) {
+    for (const r of reqs) {
+      const subs = subfolders(matched(r.paths, files));
+      if (subs.length > 1) {
+        problems.push(`the tree has only one level, but ${r.id} ${r.title} covers ${subs.length} separate subfolders (${subs.slice(0, 4).join(', ')}); split it into sub-requirements (${r.id}.1, ${r.id}.2 ...) as deep as the content needs`);
+        break;
+      }
+    }
+  }
   return { ok: problems.length === 0, problems };
 }
 
 // 把提案写成规则文件。调用前应已通过 validate；这里再查一遍，因为覆盖已有规则是不可恢复的
 function apply(dir, proposal) {
   dir = path.resolve(dir);
-  if (store.hasRules(dir)) throw new Error('this project already has rules; setup never overwrites them');
+  if (store.isProject(dir)) throw new Error('this project already has rules or an old-style tree file; setup never overwrites them');
   const v = validate(dir, proposal);
   if (!v.ok) throw new Error('invalid proposal:\n- ' + v.problems.join('\n- '));
-  // 语言：提案写明的 > 项目里已有的 > 英文（这时项目里没有规则，所以只有说明书可看）
-  const lang = proposal.lang || detectLang(dir, 'en');
+  // 语言：提案写明的 > 从标题和规则里的文字推（没有规则可看，说明书也还没写）
+  const lang = proposal.lang || deriveLang(proposal);
   const byId = new Map(proposal.requirements.map(r => [r.id, r]));
   const files = new Map([[T.ROOT_FILE, `# P ${path.basename(dir)}\n${ROOT_INTRO[lang]}\n`]]);
   for (const r of proposal.requirements) {
@@ -89,8 +118,10 @@ function apply(dir, proposal) {
     files.set(T.fileName(r.id, r.title), text);
   }
   store.replaceAll(dir, files, { source: lang === 'zh' ? '新建' : 'created' });
-  store.atomicWrite(guide.guidePath(dir), guide.guideText(lang)); // 先按选定语言写说明书：之后的 detectLang 以它为准
-  return { lang, files: [...files.keys()] };
+  const gp = guide.guidePath(dir); // 已有说明书（可能是别的版本写的）不覆盖
+  let wroteGuide = false;
+  if (!fs.existsSync(gp)) { store.atomicWrite(gp, guide.guideText(lang)); wroteGuide = true; } // 按选定语言写：之后的 detectLang 以它为准
+  return { lang, files: [...files.keys()], guide: wroteGuide ? gp : null };
 }
 
-module.exports = { validate, apply, areaCount };
+module.exports = { validate, apply, deriveLang, subfolders };

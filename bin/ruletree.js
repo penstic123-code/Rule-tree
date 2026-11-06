@@ -239,12 +239,19 @@ async function main(argv) {
     const P = require('../src/propose');
     const v = P.validate(dir, proposal);
     if (!v.ok) { out(v); return 1; }
+    let wrote = null;
     try {
-      const { lang, files } = P.apply(dir, proposal);
-      init(dir, { plugin: true, lang, log: () => {} }); // 插件路线：只写允许规则、说明书、.gitignore，hook 由插件带
+      wrote = P.apply(dir, proposal);
+      init(dir, { plugin: true, lang: wrote.lang, log: () => {} }); // 插件路线：只写允许规则、说明书、.gitignore，hook 由插件带
       const snap = require('../src/snapshot').snapshot(dir);
-      out({ ok: true, problems: [], lang, files: files.length, blocks: snap.overview.blocks.length });
-    } catch (e) { out({ ok: false, problems: [e.message] }); return 1; }
+      out({ ok: true, problems: [], lang: wrote.lang, files: wrote.files.length, blocks: snap.overview.blocks.length });
+    } catch (e) {
+      // 失败要能重来：检查通过时项目里本来没有规则，把这次写下的规则文件和说明书撤掉，修好原因（比如坏掉的 settings.local.json）后可以重跑
+      const rd = store.rulesDir(dir);
+      for (const n of [...(wrote ? wrote.files : []), ...(wrote && wrote.guide ? ['_guide.md'] : [])]) { try { fs.rmSync(path.join(rd, n), { force: true }); } catch {} }
+      try { fs.rmdirSync(rd); } catch {}
+      out({ ok: false, problems: [e.message] }); return 1;
+    }
     return 0;
   }
   if (cmd === 'tree') { printTree(dirArg(0)); return 0; }
