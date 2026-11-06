@@ -155,7 +155,7 @@ AI 不用找。每个需求写明了管哪些文件，Claude Code 在 AI 读写�
 
 ## 给开发者
 
-设计说明见 [docs/architecture.md](docs/architecture.md)，每次实验的条件和逐次结果见 [docs/test-log.md](docs/test-log.md)。
+设计说明见 [dev/architecture.md](dev/architecture.md)，每次实验的条件和逐次结果见 [dev/test-log.md](dev/test-log.md)。
 
 ```bash
 node --test test/*.test.js             # 全部自动测试

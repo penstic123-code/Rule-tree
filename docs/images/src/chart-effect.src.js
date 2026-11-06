@@ -3,13 +3,13 @@ const T = EN ? {
   sub: ['Copies of two real projects, 2 tasks each, 8 edits per setup; another model', 'counted the rules each edit broke. Short tasks that end after one file'],
   series: ['Rules in CLAUDE.md', 'RuleTree', 'RuleTree + code map'], left: 'Rules broken per edit', right: 'Rules and notes read (characters)',
   groups: ['Project A', 'Project B'], fmt: v => (v ? (v / 1000).toFixed(1) + 'k' : '0'),
-  src: 'Data: docs/test-log.md',
+  src: 'Data: dev/test-log.md',
 } : {
   title: '装与不装：让 AI 真改文件',
   sub: ['两个真实项目的副本，各 2 个任务，每种装法改 8 次，另一个模型逐条对照规则判违反；', '都是改一个文件就结束的短任务'],
   series: ['规则都写进 CLAUDE.md', '需求树', '需求树 + 代码地图'], left: '每次违反的规则', right: '要读的规则和说明（字）',
   groups: ['项目 A', '项目 B'], fmt: v => (v ? (v / 10000).toFixed(1) + ' 万' : '0'),
-  src: '数据：docs/test-log.md',
+  src: '数据：dev/test-log.md',
 };
 sketch(800, EN ? 486 : 470, g => {
   chTitle(g, T.title, T.sub);

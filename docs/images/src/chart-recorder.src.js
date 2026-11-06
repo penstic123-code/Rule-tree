@@ -5,7 +5,7 @@ const T = EN ? {
     ['Chapter decisions · 3 cases', 'Content decisions for one chapter ×2 · a one-off edit inside a chapter', '15/15'],
     ['Catch-up review · 4 cases', 'Adds a missed rule ×1 · leaves things alone when nothing is missing ×3', '20/20'],
   ],
-  src: 'Data: docs/test-log.md, section 1',
+  src: 'Data: dev/test-log.md, section 1',
 } : {
   title: '记录员判断得对不对？65 次全对', sub: '真实 Haiku，13 个用例，每个跑 5 遍',
   groups: [
@@ -13,7 +13,7 @@ const T = EN ? {
     ['章节内容 · 3 个用例', '章节内容决定 ×2 · 章节内一次性修改', '15/15'],
     ['补漏复查 · 4 个用例', '补上漏记的要求 ×1 · 没漏时不乱改 ×3', '20/20'],
   ],
-  src: '数据：docs/test-log.md 第一节',
+  src: '数据：dev/test-log.md 第一节',
 };
 sketch(800, EN ? 424 : 400, g => {
   chTitle(g, T.title, T.sub);

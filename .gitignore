@@ -3,11 +3,11 @@ node_modules/
 test/out/
 .reqtree/
 .ruletree/
-_review/
-项目进度与交接.md
-早安汇总.md
+dev/_review/
+dev/项目进度与交接.md
+dev/早安汇总.md
 推广/
-设计-需求树与记忆.md
+dev/设计-需求树与记忆.md
 
 # README 配图的渲染中间产物（源码在 docs/images/src/*.src.js，node mk.js 生成）
 docs/images/src/*.html

@@ -156,7 +156,7 @@ That hasn't been shown yet. What has been shown is 40–60% less for the AI to r
 
 ## For developers
 
-The design is described in [docs/architecture.md](docs/architecture.md) (Chinese); the conditions and run-by-run results of every experiment are in [docs/test-log.md](docs/test-log.md).
+The design is described in [dev/architecture.md](dev/architecture.md) (Chinese); the conditions and run-by-run results of every experiment are in [dev/test-log.md](dev/test-log.md).
 
 ```bash
 node --test test/*.test.js             # all automated tests

@@ -3,13 +3,13 @@ const T = EN ? {
   sub: ['The author\'s real conversations replayed in order (12 sessions); a stronger model wrote the answer key.', 'The two rounds drew their answer keys separately (88 and 102 rules), so compare the shares'],
   series: ['Without RuleTree', 'RuleTree, earlier version', 'RuleTree, now'], left: 'Share of the answer key', right: 'General requests filed\nunder the current part',
   groups: ['Missed', 'Recorded wrong\n(wrong place or old wording)'], pct: v => v + '%',
-  src: 'Data: docs/test-log.md',
+  src: 'Data: dev/test-log.md',
 } : {
   title: '回放真实对话：规则记得怎么样？',
   sub: ['作者 12 个真实对话按时间重放给记录员，另一个更强的模型列出该记下的规则当标准答案；', '旧版和现在各列了一次（88 条、102 条），所以比百分比'],
   series: ['不装需求树', '需求树（旧版）', '需求树（现在）'], left: '占标准答案的比例', right: '通用要求被挂到\n当时在做的那块下',
   groups: ['漏记', '记错\n（挂错地方、记了旧说法）'], pct: v => v + '%',
-  src: '数据：docs/test-log.md',
+  src: '数据：dev/test-log.md',
 };
 sketch(800, EN ? 500 : 486, g => {
   chTitle(g, T.title, T.sub);

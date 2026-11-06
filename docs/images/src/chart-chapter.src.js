@@ -3,13 +3,13 @@ const T = EN ? {
   sub: ['A project with six interactive web courses: rules all in CLAUDE.md and guide docs, vs. filed in the tree'],
   series: ['All in CLAUDE.md and guides', 'Filed in the tree'], x: 'characters',
   rows: ['AI', 'Data science', 'Anthropology', 'Twelve Apostles', 'Education', 'Game design'],
-  src: 'Data: docs/test-log.md',
+  src: 'Data: dev/test-log.md',
 } : {
   title: '做一门课的一章，AI 要读多少字的规则和说明？',
   sub: ['一个有六门网页课程的项目：规则全写在 CLAUDE.md 和规范文档里，对比挂进需求树之后'],
   series: ['全写在 CLAUDE.md 和规范里', '挂进需求树之后'], x: '字数',
   rows: ['AI 课', '数据科学', '人类学', '十二门徒', '教育', '游戏设计'],
-  src: '数据：docs/test-log.md',
+  src: '数据：dev/test-log.md',
 };
 sketch(800, 596, g => {
   chTitle(g, T.title, T.sub);

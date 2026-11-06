@@ -3,13 +3,13 @@ const T = EN ? {
   sub: ['A copy of project A, reorganized 3 times (averages);', 'not one rule lost or reworded'],
   series: ['Before', 'After'], left: 'Project A (number of rules)',
   groups: ['At the top\n(sent with every file)', 'Received when\nediting one file'],
-  src: 'Data: docs/test-log.md',
+  src: 'Data: dev/test-log.md',
 } : {
   title: '树长歪了，重新整理前后',
   sub: ['项目 A 的副本，整理 3 次取平均；规则一条没丢、原文没改'],
   series: ['整理前', '整理后'], left: '项目 A（规则条数）',
   groups: ['最顶上的规则\n（改什么都送）', '改一个文件\n收到的规则'],
-  src: '数据：docs/test-log.md',
+  src: '数据：dev/test-log.md',
 };
 sketch(800, EN ? 510 : 490, g => {
   chTitle(g, T.title, T.sub);

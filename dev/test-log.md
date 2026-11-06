@@ -414,7 +414,7 @@ Vibelearning 副本两份：A 不装（同样的规则全写进 CLAUDE.md，每�
 
 ## 十六、0.20 的合格测试（2026-10-25）
 
-改了什么见 `docs/design-info-architecture.md` 第五、七、十、十一节。测法：单元测试免费全跑；花钱的都在项目副本上做（只复制文本文件和 `.reqtree`，不复制 `.git`），真实项目不动。合格分两种：硬标准一次都不能错（规则不丢、原文不改、「决定：」不少、能撤销）；软标准看多次的比例。脚本：`test/eval-ia.js`（结构和体检）、`test/eval-effect.js`（让 AI 真改文件）、`test/eval-recorder.js`、`test/eval-replay.js`。
+改了什么见 `dev/design-info-architecture.md` 第五、七、十、十一节。测法：单元测试免费全跑；花钱的都在项目副本上做（只复制文本文件和 `.reqtree`，不复制 `.git`），真实项目不动。合格分两种：硬标准一次都不能错（规则不丢、原文不改、「决定：」不少、能撤销）；软标准看多次的比例。脚本：`test/eval-ia.js`（结构和体检）、`test/eval-effect.js`（让 AI 真改文件）、`test/eval-recorder.js`、`test/eval-replay.js`。
 
 ### 1. 结构和体检（照「装上新版、第一次点体检」走：自动重新整理（Sonnet）→ 体检（Haiku））
 
@@ -525,7 +525,7 @@ Vibelearning（数据科学第 1 章加「本章小结」、机器学习梯度�
 
 ## 十七、重构成「规则文件就是需求树」（2026-10-26）
 
-改了什么见 `docs/architecture.md`。这一轮只跑了免费的自动测试，没跑真实模型。
+改了什么见 `dev/architecture.md`。这一轮只跑了免费的自动测试，没跑真实模型。
 
 | 测试 | 数量 | 结果 | 测什么 |
 |---|---|---|---|
