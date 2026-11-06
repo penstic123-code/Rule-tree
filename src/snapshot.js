@@ -13,6 +13,31 @@ function unmappedFiles(dir, root) {
   return [...files].filter(f => !T.nodeForFile(root, f)).slice(-8);
 }
 
+// 改动记录里存的说明是中文（store.describeOp，VS Code 面板和中文项目照旧用它）。
+// 非中文项目的面板按 ops 用文字表重写一遍，认不出的操作就整条用存下来的
+const STATUS_EN = { done: 'Done', doing: 'In progress', todo: 'To do', question: 'Open question' };
+function localSummary(c, lang) {
+  if (lang === 'zh' || !Array.isArray(c.ops) || !c.ops.length) return c.summary;
+  const t = require('../media/strings').make(lang);
+  const g = a => (a || []).join(', ');
+  const lines = c.ops.map(o => {
+    switch (o && o.op) {
+      case 'add_rule': return t('op.add_rule', o.node, o.text);
+      case 'replace_rule': return t('op.replace_rule', o.node, o.old, o.text);
+      case 'remove_rule': return t('op.remove_rule', o.node, o.text);
+      case 'add_node': return t('op.add_node', `${o.id} ${o.title}`);
+      case 'set_files': return (o.globs || []).length ? t('op.set_files', o.node, g(o.globs)) : t('op.clear_files', o.node);
+      case 'set_docs': return (o.docs || []).length ? t('op.set_docs', o.node, g(o.docs)) : t('op.clear_docs', o.node);
+      case 'set_status': return t('op.set_status', o.node, o.status ? STATUS_EN[o.status] || o.status : t('op.noStatus'));
+      case 'rename_node': return t('op.rename_node', o.node, o.title);
+      case 'delete_node': return t('op.delete_node', o.node);
+      case 'edit_file': return t('op.edit_file', o.node);
+      default: return null;
+    }
+  });
+  return lines.every(Boolean) ? lines : c.summary;
+}
+
 // 项目的需求树和近期动静，viewData 的输入（插件另加 uri）
 function loadTree(dir, now = Date.now()) {
   const files = store.readFiles(dir);
@@ -38,7 +63,7 @@ function snapshot(cwd, { file, now = Date.now() } = {}) {
   snap.lang = require('./lang').detectLang(dir, 'en');
   const tree = loadTree(dir, now);
   const view = viewData([{ ...tree, uri: dir }], now).files[0];
-  Object.assign(snap, { nodes: view.nodes, changes: view.changes, unmapped: view.unmapped, problems: view.problems });
+  Object.assign(snap, { nodes: view.nodes, changes: view.changes.map(c => ({ ...c, summary: localSummary(c, snap.lang) })), unmapped: view.unmapped, problems: view.problems });
   if (file) {
     const rel = projectRel(dir, path.resolve(cwd, file));
     const node = rel.startsWith('..') ? null : T.nodeForFile(T.build(tree.files), rel);

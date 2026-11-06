@@ -273,6 +273,7 @@
     'm.spawn': m => `调用模型失败：${m}`,
     'm.error': m => `模型返回错误：${m}`,
     'm.noJson': m => `模型没有返回 JSON：${m}`,
+    'm.noAnswer': "这一块没有拿到模型的答案",
   };
 
   const en = {
@@ -546,6 +547,7 @@
     'm.spawn': m => `Couldn't call the model: ${m}`,
     'm.error': m => `The model returned an error: ${m}`,
     'm.noJson': m => `The model didn't return JSON: ${m}`,
+    'm.noAnswer': "No answer came back for this part",
   };
 
   // 'zh' | 'en'。setting：'auto' | 'zh' | 'en'；display：VS Code 的显示语言（vscode.env.language）

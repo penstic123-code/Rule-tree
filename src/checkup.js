@@ -103,18 +103,20 @@ const day = t => new Date(t).toISOString().slice(0, 10);
 
 // 给模型看的规则清单：每条带编号 R1#3，「决定：」标出来，知道时间的写上日期；规则里提到却找不到的文件写在后面。
 // nodes 是这一块要检查的需求；context 是它们的上级，只用来对照
-function listing(times, files, nodes, context = []) {
+function listing(times, files, nodes, context = [], lang = 'zh') {
+  const zh = lang === 'zh';
   const lines = [];
   const part = (n, tag) => {
     if (!n.rules.length) return;
-    lines.push(`${n.id} ${n.title}（${T.isRoot(n) ? '全项目' : n.files.length ? '管 ' + n.files.join(', ') : '没写范围'}）${tag}`);
+    const scope = T.isRoot(n) ? (zh ? '全项目' : 'whole project') : n.files.length ? (zh ? '管 ' : 'covers ') + n.files.join(', ') : (zh ? '没写范围' : 'no paths set');
+    lines.push(zh ? `${n.id} ${n.title}（${scope}）${tag}` : `${n.id} ${n.title} (${scope})${tag}`);
     n.rules.forEach((r, i) => {
       const when = times.get(`${n.id}|${T.norm(r.text)}`);
       const gone = goneMentions(r.text, files);
-      lines.push(`  ${n.id}#${i + 1}${when ? ` [${day(when)}]` : ''} ${r.text}${gone.length ? `  ←项目里找不到：${gone.join('、')}` : ''}`);
+      lines.push(`  ${n.id}#${i + 1}${when ? ` [${day(when)}]` : ''} ${r.text}${gone.length ? (zh ? `  ←项目里找不到：${gone.join('、')}` : `  <- not found in the project: ${gone.join(', ')}`) : ''}`);
     });
   };
-  context.forEach(n => part(n, '【上级，只用来对照，不要改】'));
+  context.forEach(n => part(n, zh ? '【上级，只用来对照，不要改】' : ' [PARENT: for comparison only, do not change]'));
   nodes.forEach(n => part(n, ''));
   return lines.join('\n');
 }
@@ -144,7 +146,20 @@ function batches(root) {
   return out;
 }
 
-function buildPrompt(root, times, files, batch) {
+function buildPrompt(root, times, files, batch, lang = 'zh') {
+  if (lang !== 'zh') return `You are checking the rules of a project. Rules are grouped by requirement. Each requirement covers a set of files, and when those files are edited its rules and its parents' rules are handed to the AI doing the work.
+Find the three kinds of problems below. Where you can fix one, give the fix (change only rules of requirements not marked PARENT; PARENT ones are for comparison only):
+1. Duplicate: two rules say the same thing (rewording counts). Remove one, or merge them (reword the one you keep). Within one requirement keep the later one; when a child repeats its parent, remove the child's.
+2. Contradiction: two rules ask for opposite things and will be delivered together (same requirement, parent and child, or requirements with overlapping paths). The later one wins (use the dates; without dates, the one written lower in the same requirement is later). Remove or reword the earlier one. A deliberate exception a child makes to its parent is not a contradiction.
+3. Outdated: the rule is about something that no longer exists (a file marked "not found in the project"), or it reads like progress or a plan rather than a requirement that holds from now on. Remove it. If it only names a file that has been renamed, reword it with the new name (only when you are sure of the new name).
+Rules that start with "Decision:" were decided by the user: never remove or reword them. When one conflicts with another rule, change the other one; if unsure, put it in "ask" for the user to decide.
+Do not change anything you are not sure about; put it in "ask". Do not reword rules just to improve the wording. Write every "why" and rewritten rule in the language the rules use.
+
+Rules:
+${listing(times, files, batch.nodes, batch.context, lang)}
+
+Output JSON only, no other text; output empty arrays when there is nothing to fix:
+{"fixes":[{"op":"remove","rule":"R1#3","why":"duplicate of R1#5"},{"op":"replace","rule":"R2#1","text":"the reworded rule","why":"merged R2#4"}],"ask":[{"rules":["R1#2","R3#1"],"why":"one says ..., the other says ..., unclear which wins"}]}`;
   return `你在给一个项目的规则做体检。规则按需求分组，每个需求管一批文件，改到这些文件时它和它上级的规则会一起交给干活的 AI。
 找出下面三类问题，能改的直接给出改法（只改没标「上级」的需求里的规则；标了「上级」的只用来对照）：
 1. 重复：两条说的是同一件事（换了说法也算）。删掉一条，或者合成一条（改写留下的那条）。同一个需求里留后写的；下级重复上级的删下级的。
@@ -154,7 +169,7 @@ function buildPrompt(root, times, files, batch) {
 没有把握的不要改，写进 ask。不要为了措辞好看改写规则。
 
 规则：
-${listing(times, files, batch.nodes, batch.context)}
+${listing(times, files, batch.nodes, batch.context, lang)}
 
 只输出 JSON，不要别的文字；没有问题就输出空数组：
 {"fixes":[{"op":"remove","rule":"R1#3","why":"和 R1#5 重复"},{"op":"replace","rule":"R2#1","text":"改写后的规则","why":"合并了 R2#4"}],"ask":[{"rules":["R1#2","R3#1"],"why":"一个说……，一个说……，不知道以哪个为准"}]}`;
@@ -171,7 +186,18 @@ function treeRules(root) {
   for (const n of T.walk(root)) n.rules.forEach((r, i) => lines.push(`${n.id}#${i + 1} ${r.text}`));
   return lines.join('\n');
 }
-function buildClaudePrompt(root, claudeMd) {
+function buildClaudePrompt(root, claudeMd, lang = 'zh') {
+  if (lang !== 'zh') return `Below are a project's CLAUDE.md (loaded in full every session) and its rule tree (all rules, each with an id).
+Find the rules in CLAUDE.md that a rule in the tree already covers: same meaning, or the tree's version is more complete. List only real duplicates; things that are merely related, or not in the tree, do not count. Do not reword or comment.
+
+CLAUDE.md:
+${claudeMd}
+
+Rule tree:
+${treeRules(root)}
+
+Output JSON only, no other text; output an empty array when there are no duplicates. "line" is the original sentence from CLAUDE.md (the one that identifies it best, at most 60 characters):
+{"dups":[{"line":"...","rule":"R4#2"}]}`;
   return `下面是一个项目的 CLAUDE.md（每次会话都会全文加载）和项目的规则树（所有规则，每条有编号）。
 找出 CLAUDE.md 里已经被规则树某条规则覆盖的规矩：意思一样，或规则树里的说得更完整。只列确实重复的，只是相关、规则树里没有的不要列；不要改写、不要评价。
 
@@ -198,7 +224,14 @@ function planClaudeDups(root, out) {
 }
 
 // 给规则多的需求分组（只改界面显示）
-function buildGroupPrompt(groupNodes) {
+function buildGroupPrompt(groupNodes, lang = 'zh') {
+  if (lang !== 'zh') return `Group the rules of each requirement below (this only changes how they are displayed, not the rules): split each requirement into 2-${Cats.MAX_GROUPS} groups. Group names are one short word of at most 8 letters (for example: Style, Writing, Flow), in the language the rules use, and the same meaning gets the same name across the whole project. Put every rule in one group; in "rules" write only the number (which rule in the requirement, counting from 1). Requirements to group: ${groupNodes.map(n => n.id).join(', ')}.
+
+${groupNodes.map(n => `${n.id} ${n.title}
+${n.rules.map((r, i) => `  ${i + 1}. ${r.text}`).join('\n')}`).join('\n')}
+
+Output JSON only, no other text:
+{"categories":[{"node":"R1","groups":[{"name":"Writing","rules":[1,2,5]}]}]}`;
   return `给下面每个需求的规则分组（只改界面显示，不改规则）：每个需求分 2–${Cats.MAX_GROUPS} 组，组名 2–4 个字（例：画风、写作、互动、工作流），用规则的语言，同一个意思全项目用同一个组名；每条规则都放进一组，rules 里只写序号（需求里第几条，从 1 起）。要分组的：${groupNodes.map(n => n.id).join('、')}。
 
 ${groupNodes.map(n => `${n.id} ${n.title}
@@ -267,33 +300,59 @@ async function callModel(job, ask) {
   } catch (error) { return { error }; }
 }
 
+// 这次体检要问模型的活：[{ kind, nodes, rules, prompt }]，不写任何文件。runCheckup 用它，插件也用它（bin 的 --jobs）：
+// 插件在另一个进程里体检，自己调用不了 $.model.complete，所以先取提示词、问完再把答案交回来。
+// 返回的数组上另挂 ctx（root、旧记录等，runCheckup 接着用）
+function planJobs(dir, { full = false, lang } = {}) {
+  lang = lang || require('./lang').detectLang(dir, 'en');
+  const files = require('./files').listFiles(dir);
+  const root = store.readTree(dir);
+  const old = store.readJson(store.metaFile(dir, SEEN), {});
+  const seenN = (!full && old.nodes) || {}, seenG = (!full && old.groups) || {};
+  const times = ruleTimes(dir), cats = Cats.read(dir);
+  const regroup = new Set([...T.walk(root)].filter(n => seenG[n.id] !== groupFp(n)).map(n => n.id));
+  const groupNodes = new Set(Cats.needGroups(root, cats, full ? null : regroup));
+  const jobs = [];
+  for (const b of batches(root)) {
+    if (full || !b.nodes.every(n => seenN[n.id] === nodeFp(n))) jobs.push({ kind: 'check', batch: b, nodes: b.nodes, rules: b.rules + ruleCount(b.context), prompt: buildPrompt(root, times, files, b, lang) });
+    const gn = b.nodes.filter(n => groupNodes.has(n));
+    if (gn.length) jobs.push({ kind: 'group', nodes: gn, rules: ruleCount(gn), prompt: buildGroupPrompt(gn, lang) });
+  }
+  const claudeMd = readClaudeMd(dir);
+  const claudeFp = claudeMd && md5(claudeMd + '\0' + treeRules(root));
+  let claudeOld = null;
+  if (claudeMd && !full && old.claudeFp === claudeFp) claudeOld = old.claudeDups || []; // 都没变：沿用上次的结果
+  else if (claudeMd) jobs.push({ kind: 'claude', nodes: [], rules: ruleCount([...T.walk(root)]), prompt: buildClaudePrompt(root, claudeMd, lang) });
+  Object.defineProperty(jobs, 'ctx', { value: { root, old, seenN, seenG, claudeMd, claudeFp, claudeOld } });
+  return jobs;
+}
+
+// 插件把问好的答案交回来（[{ prompt, text }]）→ runCheckup 的 ask：按提示词原文找答案。
+// 找不到（规则在两次调用之间变了，或这一块没问成）就抛错，那一块算没问成、下次重问
+function answerLookup(answers, lang = 'en') {
+  const byPrompt = new Map((Array.isArray(answers) ? answers : []).filter(a => a && typeof a.prompt === 'string').map(a => [a.prompt, a.text]));
+  const M = require('./model');
+  return async prompt => {
+    if (!byPrompt.has(prompt) || byPrompt.get(prompt) == null) throw M.fail(STRINGS.make(lang)('m.noAnswer'), 'm.noAnswer');
+    return M.parseAnswer(byPrompt.get(prompt));
+  };
+}
+
 // 跑一次体检。opts：model（false 只用程序查）、ask（换掉调用模型的函数，测试用）、T（报告用哪种语言的文字表）、full（规则没变也问模型）
 // 返回 { notes, applied, ask, categorized, skippedModel, failed, error, report, entry }
 // failed：[{ ids, group, error }] 没问成的块；error：所有检查都没问成时的第一个错误
 async function runCheckup(dir, { model = true, ask, T: tr, full = false } = {}) {
-  // 没指定报告语言时跟着项目走（英文项目的报告不该是中文）
-  const t = tr ? make(tr) : STRINGS.make(require('./lang').detectLang(dir, 'en'));
+  // 没指定报告语言时跟着项目走（英文项目的报告、给模型的提示词、改动记录的来源都不该是中文）
+  const lang = (tr && tr.lang) || require('./lang').detectLang(dir, 'en');
+  const t = tr ? make(tr) : STRINGS.make(lang);
   const files = require('./files').listFiles(dir);
   const res = { notes: programChecks(dir, { files }), applied: [], ask: [], categorized: [], skippedModel: false, failed: [], error: null, entry: null };
   const ops = duplicateOps(store.readTree(dir));
   let seen = null, dups = null;
   if (model) {
-    const root = store.readTree(dir);
-    const old = store.readJson(store.metaFile(dir, SEEN), {});
-    const seenN = (!full && old.nodes) || {}, seenG = (!full && old.groups) || {};
-    const times = ruleTimes(dir), cats = Cats.read(dir);
-    const regroup = new Set([...T.walk(root)].filter(n => seenG[n.id] !== groupFp(n)).map(n => n.id));
-    const groupNodes = new Set(Cats.needGroups(root, cats, full ? null : regroup));
-    const jobs = [];
-    for (const b of batches(root)) {
-      if (full || !b.nodes.every(n => seenN[n.id] === nodeFp(n))) jobs.push({ kind: 'check', batch: b, nodes: b.nodes, rules: b.rules + ruleCount(b.context), prompt: buildPrompt(root, times, files, b) });
-      const gn = b.nodes.filter(n => groupNodes.has(n));
-      if (gn.length) jobs.push({ kind: 'group', nodes: gn, rules: ruleCount(gn), prompt: buildGroupPrompt(gn) });
-    }
-    const claudeMd = readClaudeMd(dir);
-    const claudeFp = claudeMd && md5(claudeMd + '\0' + treeRules(root));
-    if (claudeMd && !full && old.claudeFp === claudeFp) res.notes.push(...(old.claudeDups || [])); // 都没变：沿用上次的结果
-    else if (claudeMd) jobs.push({ kind: 'claude', nodes: [], rules: ruleCount([...T.walk(root)]), prompt: buildClaudePrompt(root, claudeMd) });
+    const jobs = planJobs(dir, { full, lang });
+    const { root, old, seenN, seenG, claudeMd, claudeFp, claudeOld } = jobs.ctx;
+    if (claudeOld) res.notes.push(...claudeOld);
     res.skippedModel = !jobs.length;
     const results = await pool(jobs, JOBS, job => callModel(job, ask));
     const mine = new Set(ops.map(opKey));
@@ -331,7 +390,7 @@ async function runCheckup(dir, { model = true, ask, T: tr, full = false } = {}) 
   }
   if (ops.length) {
     const why = new Map(ops.map(o => [opKey(o), o.why]));
-    const done = await store.commitAsync(dir, ops.map(({ why: _, ...o }) => o), { source: '体检' });
+    const done = await store.commitAsync(dir, ops.map(({ why: _, ...o }) => o), { source: lang === 'zh' ? '体检' : 'Checkup' });
     res.applied = done.map(o => ({ ...o, why: why.get(opKey(o)) || '' }));
     res.entry = done.entry;
   }
@@ -349,11 +408,13 @@ async function runCheckup(dir, { model = true, ask, T: tr, full = false } = {}) 
 }
 
 function report(res, t) {
+  // 模型出错的话：有结构化的 t 就按报告的语言写，没有就用 message
+  const errText = e => (e && e.t && e.t.k ? t(e.t.k, ...(e.t.a || [])) : e && e.message);
   const whyText = w => (w && typeof w === 'object' ? t(w.k, ...(w.a || [])) : w || '');
   const one = o => (o.op === 'replace_rule' ? t('ck.replaced', o.node, o.old, o.text) : t('ck.removed', o.node, o.text)) + (whyText(o.why) ? `（${whyText(o.why)}）` : '');
   const out = [`# ${t('ck.title')}`, '', new Date().toLocaleString(), '', t('ck.summary', res.applied.length, res.ask.length, res.notes.length), ''];
-  if (res.error) out.push(t('ck.modelFail', res.error.message), '');
-  else for (const f of res.failed) out.push(t('ck.partFail', f.ids.map(id => id + (f.group ? t('ck.groupTag') : '')).join('、'), f.error.message), '');
+  if (res.error) out.push(t('ck.modelFail', errText(res.error)), '');
+  else for (const f of res.failed) out.push(t('ck.partFail', f.ids.map(id => id + (f.group ? t('ck.groupTag') : '')).join('、'), errText(f.error)), '');
   if (res.skippedModel) out.push(t('ck.sameRules'), '');
   if (res.ask.length) out.push(`## ${t('ck.askHead')}`, '', ...res.ask.map(a => `- ${a.rules.map((r, i) => `${r}「${a.texts[i]}」`).join(' / ')}${a.why ? `：${a.why}` : ''}`), '');
   if (res.notes.length) out.push(`## ${t('ck.notesHead')}`, '', ...res.notes.map(n => `- ${noteText(n, t)}`), '');
@@ -363,4 +424,4 @@ function report(res, t) {
   return out.join('\n');
 }
 
-module.exports = { programChecks, noteText, duplicateOps, goneMentions, buildPrompt, buildGroupPrompt, batches, planFixes, runCheckup, ruleTimes, REPORT, MANY_RULES };
+module.exports = { planJobs, answerLookup, programChecks, noteText, duplicateOps, goneMentions, buildPrompt, buildGroupPrompt, batches, planFixes, runCheckup, ruleTimes, REPORT, MANY_RULES };

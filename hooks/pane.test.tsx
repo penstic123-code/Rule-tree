@@ -59,11 +59,12 @@ const SNAPSHOT = JSON.stringify(snap(null))
 const ok = (out: string) => ({ exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 
 // process.run 只能注册一次，所以让每个测试改这个变量来换回答
+const openTitles: string[] = []
 let run: (e?: any) => any = () => ({ value: ok(SNAPSHOT) })
 const engine = (on: any, answer: (e?: any) => any = () => ({ value: ok(SNAPSHOT) })) => {
   run = answer
   on('command.register', () => ({ value: { command: 'ruletree' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', (_: any, e: any) => { openTitles.push(e.title); return { value: { isPlaced: true } } })
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: 'C:/p' }))
   on('process.run', (_: any, e: any) => run(e))
@@ -289,5 +290,132 @@ test('a project without rules gets the English not-enabled message', async ($, o
   await new Promise(r => setTimeout(r, 100))
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /does not use a requirement tree yet/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+// ---- 体检：按钮、运行中、报告、失败原因；用会话的模型，最多 3 个同时，超时重试一次 ----
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+const reply = (text: string) => ({ value: { isAnswered: true, text, usage: {} } })
+const REPORT = '# 需求树体检报告\n\n2026-11-06\n\n需求树体检：直接改了 1 处\n\n## 直接改了的\n\n- 删掉了一条重复的规则\n'
+let answered: any[] = []
+// jobs：每个 { prompt, rules }；answers 命令收到的 stdin 记在 answered 里
+const checkupCli = (jobs: any[], outcome: any = { ok: true, report: REPORT, applied: 1, error: null, failed: [] }) => (e: any) => {
+  const s = JSON.stringify(e)
+  if (s.includes('--jobs')) return { value: ok(JSON.stringify(jobs)) }
+  if (s.includes('--answers')) { answered = JSON.parse(e.init.stdin); return { value: ok(JSON.stringify(outcome)) } }
+  return { value: ok(SNAPSHOT) }
+}
+const jobsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ prompt: `prompt ${i}`, rules: 10 }))
+
+test('the checkup button runs the session model and shows the report', async ($, on) => {
+  answered = []
+  engine(on, checkupCli(jobsOf(2)))
+  const asked: any[] = []
+  on('model.complete', (_: any, e: any) => { asked.push(e); return reply('{"fixes":[]}') })
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'checkup' })
+  expect(asked.map(a => a.model)).toEqual(['haiku', 'haiku'])
+  expect(answered.map(a => a.prompt).sort()).toEqual(['prompt 0', 'prompt 1'])
+  expect(await ui.find({ type: 'Text', text: /删掉了一条重复的规则/ })).toBeTruthy()
+  // 报告里没有原始数字：标题、日期、带数字的总结行都不画
+  expect(await ui.find({ type: 'Text', text: /直接改了 1 处/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('while the checkup runs the button says so, and a second press is ignored', async ($, on) => {
+  answered = []
+  engine(on, checkupCli(jobsOf(1)))
+  let calls = 0
+  on('model.complete', async () => { calls++; await sleep(150); return reply('{"fixes":[]}') })
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const first = ui.press({ key: 'checkup' })
+  await sleep(50)
+  expect(await ui.find({ type: 'Button', text: /体检中/ })).toBeTruthy()
+  await ui.press({ key: 'checkup' })
+  await first
+  expect(calls).toBe(1)
+  expect(await ui.find({ type: 'Button', text: /^体检$/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('the checkup runs at most 3 model calls at once', async ($, on) => {
+  answered = []
+  engine(on, checkupCli(jobsOf(7)))
+  let live = 0, peak = 0, total = 0
+  on('model.complete', async () => { total++; live++; peak = Math.max(peak, live); await sleep(40); live--; return reply('{"fixes":[]}') })
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'checkup' })
+  expect(total).toBe(7)
+  expect(peak).toBe(3)
+  expect(answered.length).toBe(7)
+  await ui.unmount()
+})
+
+test('a timed-out block is retried once, with more time', async ($, on) => {
+  answered = []
+  engine(on, checkupCli([{ prompt: 'slow', rules: 10 }, { prompt: 'dead', rules: 10 }, { prompt: 'fine', rules: 10 }]))
+  const seen: Record<string, number[]> = {}
+  on('model.complete', (_: any, e: any) => {
+    ;(seen[e.prompt] = seen[e.prompt] || []).push(e.timeoutMs)
+    if (e.prompt === 'dead' || (e.prompt === 'slow' && seen.slow.length === 1)) return { value: { isAnswered: false, reason: 'aborted', usage: {} } }
+    return reply('{"fixes":[]}')
+  })
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'checkup' })
+  expect(seen.slow.length).toBe(2)
+  expect(seen.slow[1]).toBe(Math.round(seen.slow[0] * 1.5))
+  expect(seen.dead.length).toBe(2) // 再试一次就停，不无限重试
+  expect(seen.fine.length).toBe(1)
+  // 问不到答案的那块不送答案，核心把它记成没问成
+  expect(answered.map(a => a.prompt).sort()).toEqual(['fine', 'slow'])
+  await ui.unmount()
+})
+
+test('a checkup that cannot start shows its reason and keeps the map', async ($, on) => {
+  engine(on, (e: any) => (JSON.stringify(e).includes('--jobs') ? { value: { ...ok(''), exitCode: 1, stderr: 'no rules here' } } : { value: ok(SNAPSHOT) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'checkup' })
+  expect(await ui.find({ type: 'Text', text: /体检没成功.*no rules here/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /规则记录/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Button', text: /^体检$/ })).toBeTruthy() // 可以再按
+  await ui.unmount()
+})
+
+test('a checkup the model could not answer shows the reason above the report', async ($, on) => {
+  engine(on, checkupCli(jobsOf(1), { ok: true, report: REPORT, applied: 0, error: 'No answer came back for this part', failed: [] }))
+  on('model.complete', () => ({ value: { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} } }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'checkup' })
+  expect(answered).toEqual([])
+  expect(await ui.find({ type: 'Text', text: /No answer came back/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('an English project sees English in the checkup button and the pane title', async ($, on) => {
+  engine(on, (e: any) => (JSON.stringify(e).includes('--jobs') ? { value: ok('[]') } : { value: ok(JSON.stringify(snap(null, 'en'))) }))
+  openTitles.length = 0
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  expect(openTitles).toEqual(['Requirement map'])
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Button', text: /^Checkup$/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('recent changes join with the language separator', async ($, on) => {
+  const s: any = snap(null, 'en')
+  s.changes = [{ id: 'c1', time: 1, source: 'You', summary: ['Added rule "a" to R1', 'Removed rule "b" from R1'], undone: false, undoable: true }]
+  engine(on, () => ({ value: ok(JSON.stringify(s)) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  expect(await ui.find({ type: 'Text', text: /Added rule "a" to R1; Removed rule "b" from R1/ })).toBeTruthy()
   await ui.unmount()
 })

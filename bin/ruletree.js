@@ -184,7 +184,9 @@ const USAGE = `用法（目录默认是当前目录）：
   ruletree tree    [目录]        打印整棵树
   ruletree rules   <编号> [目录]  打印某个需求实际要守的规则（含上级的）
   ruletree check   [目录]        只用程序检查（不调用模型、不改文件）：重复、送不到、提到的文件不在、文档不在、规则太多
-  ruletree checkup [目录] [--no-model]  体检：程序检查 + 分块调用模型找重复、矛盾、过时的规则并直接改（可在面板上撤销），写报告`;
+  ruletree checkup [目录] [--no-model]  体检：程序检查 + 分块调用模型找重复、矛盾、过时的规则并直接改（可在面板上撤销），写报告
+  ruletree checkup [目录] --jobs --json     只打印要问模型的提示词 [{ prompt, rules }]，什么都不改（给 Claude 插件用）
+  ruletree checkup [目录] --answers --json  从标准输入读 [{ prompt, text }]，照答案体检（给 Claude 插件用）`;
 
 function printTree(dir) {
   const label = n => `${n.id} ${n.title}${n.status ? ' ' + T.STATUS_EMOJI[n.status] : ''}`;
@@ -256,6 +258,20 @@ async function main(argv) {
       notes.forEach(n => console.log('- ' + C.noteText(n)));
       console.log(notes.length ? `共 ${notes.length} 处要看` : '没有发现问题');
       return notes.length ? 1 : 0;
+    }
+    // 给 Claude 插件用：插件在会话里用自己的模型调用，进程里不再起 claude。
+    // --jobs 只取要问的提示词，什么都不写；--answers 从标准输入读 [{ prompt, text }]，照答案体检并改规则，结果打印成一行 JSON
+    if (flags.includes('--jobs')) {
+      console.log(JSON.stringify(C.planJobs(dir, { full: flags.includes('--full') }).map(j => ({ prompt: j.prompt, rules: j.rules }))));
+      return 0;
+    }
+    if (flags.includes('--answers')) {
+      let answers;
+      try { answers = JSON.parse(fs.readFileSync(0, 'utf8')); if (!Array.isArray(answers)) throw 0; } catch { console.log(JSON.stringify({ ok: false, message: 'standard input is not a JSON array of { prompt, text }' })); return 1; }
+      const r = await C.runCheckup(dir, { ask: C.answerLookup(answers, require('../src/lang').detectLang(dir, 'en')), full: flags.includes('--full') });
+      const msg = e => (e && e.message) || '';
+      console.log(JSON.stringify({ ok: true, report: r.report, applied: r.applied.length, error: r.error ? msg(r.error) : null, failed: r.failed.map(f => ({ ids: f.ids, group: !!f.group, message: msg(f.error) })) }));
+      return 0;
     }
     console.log(flags.includes('--no-model') ? '体检（只用程序检查）…' : '体检：程序检查 + 分块调用模型（并行，通常一两分钟）…');
     const r = await C.runCheckup(dir, { model: !flags.includes('--no-model') });

@@ -231,7 +231,7 @@
   }
 
   // 改动是谁做的（store 里记的是中文）
-  const SOURCE = { 你: 'x.you', AI: 'x.aiName', 体检: 'x.checkupName', 其他: 'x.otherName', 升级: 'x.upgradeName', 新建: 'x.newName' };
+  const SOURCE = { 你: 'x.you', You: 'x.you', Checkup: 'x.checkupName', AI: 'x.aiName', 体检: 'x.checkupName', 其他: 'x.otherName', 升级: 'x.upgradeName', 新建: 'x.newName' };
   // 最近改动：AI、体检和你的改动都在这里，记错了点「撤销」。
   // undoable === false 是旧版本留下、反操作已经翻译不了的改动：不给撤销按钮，免得点了没反应
   function recentHtml(file, now, showIds, data = {}) {

@@ -74,11 +74,17 @@ async function askJson(prompt, { timeoutMs = TIMEOUT_MS, cmd = CLAUDE } = {}) {
     const out = (res.stderr || res.stdout || '').trim().slice(0, 200);
     throw fail(`模型返回错误：${out || '退出码 ' + res.status}`, 'm.error', out || String(res.status));
   }
-  const m = (res.stdout || '').match(/\{[\s\S]*\}/);
+  return parseAnswer(res.stdout);
+}
+
+// 模型的回答文字 → 里面的 JSON 对象；claude -p 和插件里的 model.complete 共用，取不出来就抛 m.noJson
+function parseAnswer(text) {
+  const s = String(text || '');
+  const m = s.match(/\{[\s\S]*\}/);
   let out = null;
   try { out = m && JSON.parse(m[0]); } catch {}
-  if (!out || typeof out !== 'object') throw fail(`模型没有返回 JSON：${(res.stdout || '').slice(0, 120)}`, 'm.noJson', (res.stdout || '').slice(0, 120));
+  if (!out || typeof out !== 'object' || Array.isArray(out)) throw fail(`模型没有返回 JSON：${s.slice(0, 120)}`, 'm.noJson', s.slice(0, 120));
   return out;
 }
 
-module.exports = { askJson, runModel, splitCommand, fail, timeoutFor };
+module.exports = { askJson, parseAnswer, runModel, splitCommand, fail, timeoutFor };

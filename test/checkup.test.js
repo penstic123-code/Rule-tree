@@ -224,3 +224,107 @@ test('体检报告跟着项目的语言走：英文项目的报告里没有汉�
   const zh = await C.runCheckup(project(), { model: false });
   assert.match(zh.report, /体检/, '中文项目不变');
 });
+
+// ---- 不经过 claude 命令：先取提示词（--jobs），问完把答案送回来（--answers）----
+const { spawnSync } = require('child_process');
+const BIN = path.join(H.ROOT, 'bin', 'ruletree.js');
+const cli = (dir, flag, input) => {
+  const r = spawnSync(process.execPath, [BIN, 'checkup', dir, flag, '--json'], { input: input === undefined ? '' : JSON.stringify(input), encoding: 'utf8' });
+  return { code: r.status, out: JSON.parse(r.stdout), err: r.stderr };
+};
+// 目录里所有文件的内容（含 .ruletree/），看有没有被动过
+const dump = dir => {
+  const out = {};
+  const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out[path.relative(dir, p)] = fs.readFileSync(p, 'utf8'); } };
+  walk(dir);
+  return out;
+};
+
+test('jobs 只取提示词，磁盘上什么都不变；每项有 prompt 和 rules', () => {
+  const dir = project();
+  const before = dump(dir);
+  const { code, out } = cli(dir, '--jobs');
+  assert.strictEqual(code, 0);
+  assert.ok(Array.isArray(out) && out.length >= 1);
+  for (const j of out) assert.ok(typeof j.prompt === 'string' && Number.isInteger(j.rules), JSON.stringify(j));
+  assert.ok(out.some(j => /"fixes"/.test(j.prompt)));
+  assert.deepStrictEqual(dump(dir), before);
+  assert.deepStrictEqual(C.planJobs(dir, {}).map(j => j.prompt), out.map(j => j.prompt), 'planJobs 就是 jobs 命令的内容');
+});
+
+test('answers 照答案改规则，一条改动可以撤销；报告带在结果里', () => {
+  const dir = project();
+  const before = store.readFiles(dir);
+  const { out: jobs } = cli(dir, '--jobs');
+  const answers = jobs.map(j => ({ prompt: j.prompt, text: '好的：' + JSON.stringify(/"fixes"/.test(j.prompt) ? { fixes: [{ op: 'remove', rule: 'C2#2', why: '提到的文件不在了' }] } : { categories: [] }) }));
+  const { code, out } = cli(dir, '--answers', answers);
+  assert.strictEqual(code, 0);
+  assert.strictEqual(out.error, null);
+  assert.match(out.report, /体检/);
+  assert.ok(!T.findById(store.readTree(dir), 'C2').rules.some(r => /gone\.js/.test(r.text)));
+  const entry = store.readChanges(dir)[0];
+  assert.strictEqual(entry.source, '体检');
+  assert.ok(store.undoChange(dir, entry.id));
+  assert.deepStrictEqual(store.readFiles(dir), before);
+});
+
+test('answers 少一个答案只让那一块失败，其余照常生效', () => {
+  const dir = H.project(SPLIT, { files: ['a1/x', 'b1/x', 'c1/x'] });
+  const { out: jobs } = cli(dir, '--jobs');
+  const checksOnly = jobs.filter(j => /"fixes"/.test(j.prompt));
+  assert.strictEqual(checksOnly.length, 2);
+  const mine = checksOnly.find(j => j.prompt.includes('A1#1'));
+  const { out } = cli(dir, '--answers', [{ prompt: mine.prompt, text: JSON.stringify({ fixes: [{ op: 'remove', rule: 'A1#1', why: 'x' }] }) }]);
+  assert.strictEqual(out.error, null, '只有一块没问成不算全失败');
+  assert.deepStrictEqual(out.failed.filter(f => !f.group).map(f => f.ids.join('+')), ['B1+C1']);
+  assert.strictEqual(T.findById(store.readTree(dir), 'A1').rules.length, 19);
+  // 没问成的下次重问
+  assert.ok(cli(dir, '--jobs').out.some(j => j.prompt.includes('B1#1')));
+});
+
+test('答案对不上提示词（规则中途变了）和答案不是 JSON：那一块算失败，不改任何东西', () => {
+  const dir = project();
+  const { out: jobs } = cli(dir, '--jobs');
+  const { out } = cli(dir, '--answers', jobs.map(j => ({ prompt: j.prompt + ' ', text: '{"fixes":[]}' })));
+  assert.ok(out.error && out.failed.length);
+  const bad = cli(dir, '--answers', jobs.map(j => ({ prompt: j.prompt, text: '没有 JSON' })));
+  assert.ok(bad.out.error);
+  assert.strictEqual(T.findById(store.readTree(dir), 'C2').rules.length, 2, '模型没改任何规则（只有程序查出的重复被删）');
+});
+
+const EN_TREE = (dir) => {
+  fs.mkdirSync(store.rulesDir(dir), { recursive: true });
+  fs.writeFileSync(path.join(store.rulesDir(dir), '_root.md'), '# P Project\n- Keep it short\n- Always keep it short\n');
+  fs.writeFileSync(path.join(store.rulesDir(dir), 'R1-Code.md'), '---\npaths:\n  - "src/**"\n---\n# R1 Code 🔨\n- Write tests first\n');
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'a.js'), '');
+  store.syncFiles(dir, null, 'Other');
+  return dir;
+};
+
+test('英文项目：给模型的提示词没有汉字，答案要求用同一种语言；中文项目的提示词不变', () => {
+  const dir = EN_TREE(fs.mkdtempSync(path.join(H.SANDBOX, 'en-jobs-')));
+  const jobs = C.planJobs(dir, { full: true });
+  assert.ok(jobs.length);
+  for (const j of jobs) assert.ok(!/[一-鿿]/.test(j.prompt), j.prompt);
+  assert.match(jobs[0].prompt, /"fixes"/);
+  const zh = C.planJobs(project(), { full: true }).find(j => /"fixes"/.test(j.prompt));
+  assert.ok(zh.prompt.startsWith('你在给一个项目的规则做体检。'));
+  assert.match(zh.prompt, /C2#2 .*←项目里找不到：old\/gone\.js/);
+});
+
+test('英文项目：体检的改动来源是 Checkup，面板上的最近改动没有汉字；中文项目照旧', async () => {
+  const dir = EN_TREE(fs.mkdtempSync(path.join(H.SANDBOX, 'en-src-')));
+  const r = await C.runCheckup(dir, { ask: async () => ({ fixes: [] }) });
+  assert.ok(r.applied.length, '重复的那条被删了');
+  const e = store.readChanges(dir)[0];
+  assert.strictEqual(e.source, 'Checkup');
+  const snap = require('../src/snapshot').snapshot(dir);
+  const text = snap.changes.map(c => c.summary.join(' ')).join('\n');
+  assert.ok(text && !/[一-鿿]/.test(text), text);
+  assert.match(text, /Removed rule/);
+  // 中文项目：面板上的说明还是存下来的中文
+  const zhDir = project();
+  await run(zhDir, { fixes: [] });
+  assert.match(require('../src/snapshot').snapshot(zhDir).changes[0].summary[0], /删掉/);
+});

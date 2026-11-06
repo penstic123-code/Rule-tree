@@ -9,6 +9,7 @@ export type Lang = 'zh' | 'en'
 const STR = {
   zh: {
     sep: '、',
+    sep2: '；',
     needNode: (what: string, url: string, msg: string) => `需要 Node.js 才能${what}，请先安装（${url}）。${msg}`,
     failed: (what: string, msg: string) => `${what}没成功：${msg}`,
     whatRead: '读需求树',
@@ -38,9 +39,15 @@ const STR = {
     back: '‹ 返回',
     notEnabled: '这个项目还没有启用需求树。',
     enableHint: '在输入框里输入 /ruletree:setup，让 AI 读一遍项目并提议一棵树，你确认后启用。',
+    paneTitle: '需求树',
+    checkup: '体检',
+    checking: '体检中…',
+    checkupFailed: (msg: string) => `体检没成功：${msg}`,
+    closeReport: '收起',
   },
   en: {
     sep: ', ',
+    sep2: '; ',
     needNode: (what: string, url: string, msg: string) => `Node.js is needed to ${what}. Please install it first (${url}). ${msg}`,
     failed: (what: string, msg: string) => `Could not ${what}: ${msg}`,
     whatRead: 'read the requirement tree',
@@ -70,6 +77,11 @@ const STR = {
     back: '‹ Back',
     notEnabled: 'This project does not use a requirement tree yet.',
     enableHint: 'Type /ruletree:setup in the input box. The AI reads the project and proposes a tree, and it is enabled once you approve.',
+    paneTitle: 'Requirement map',
+    checkup: 'Checkup',
+    checking: 'Checking…',
+    checkupFailed: (msg: string) => `The checkup did not work: ${msg}`,
+    closeReport: 'Hide',
   },
 }
 export const strings = (lang?: string | null) => (lang === 'zh' ? STR.zh : STR.en)
@@ -129,6 +141,8 @@ export type PaneState = {
   notice: { node: string; text: string }
   // 每成功加一条规则加一，用来换掉「加规则」输入框的 key，让它清空
   addSeq: number
+  // 体检：idle 没在跑；running 在跑；done 有报告；failed 没跑成（reason 是原因，text 可能是报告）
+  checkup: { phase: 'idle' | 'running' | 'done' | 'failed'; text: string; reason: string }
 }
 export type PaneActions = {
   // 按下一格：记住选中；有下一层就进到那一层
@@ -139,6 +153,9 @@ export type PaneActions = {
   onUndo: (node: string, id: string) => void
   onArm: (text: string) => void
   onEditing: (node: string, text: string) => void
+  // 按体检；收起报告
+  onCheckup: () => void
+  onCheckupClose: () => void
 }
 
 // 决定类规则：用户拍板的，删它要按两次
@@ -239,7 +256,7 @@ function detailView(els: any, node: SnapshotNode, st: PaneState, changes: Snapsh
           <Text bold>{t.recent}</Text>
           {undoable.map(c => (
             <Box key={c.id} flexDirection="row">
-              <Text dimColor>{c.summary.join('；')}</Text>
+              <Text dimColor>{c.summary.join(t.sep2)}</Text>
               <Button key={`undo-${c.id}`} plain onPress={() => act.onUndo(node.id, c.id)}>{t.undo}</Button>
             </Box>
           ))}
@@ -359,6 +376,28 @@ function levelView(els: any, snap: Snapshot, level: string, selected: string, ac
   )
 }
 
+// 体检按钮和报告。报告是核心写的 markdown：去掉标题、日期、总结行（带数字，R1.2 不列原始数字），小标题加粗，其余原样
+function checkupView(els: any, st: PaneState, act: PaneActions) {
+  const { Box, Text, Button } = els
+  const t = strings(st.snap?.lang)
+  const { phase, text, reason } = st.checkup
+  const lines = text.split('\n').filter(l => l.trim()).slice(3)
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Box flexDirection="row">
+        <Button key="checkup" onPress={() => act.onCheckup()}>{phase === 'running' ? t.checking : t.checkup}</Button>
+        {phase === 'done' || phase === 'failed' ? (
+          <Button key="checkup-close" plain onPress={() => act.onCheckupClose()}>{`  ${t.closeReport}`}</Button>
+        ) : null}
+      </Box>
+      {reason ? <Text color="error">{t.checkupFailed(reason)}</Text> : null}
+      {lines.map((l, i) =>
+        l.startsWith('#') ? <Text key={`ck-${i}`} bold>{l.replace(/^#+\s*/, '')}</Text> : <Text key={`ck-${i}`}>{l}</Text>
+      )}
+    </Box>
+  )
+}
+
 export function paneTree(els: { Box: any; Text: any; Button: any; Select: any; Input: any }, st: PaneState, act: PaneActions) {
   const { Box, Text } = els
   const { snap, err, selected, level, surface } = st
@@ -386,6 +425,7 @@ export function paneTree(els: { Box: any; Text: any; Button: any; Select: any; I
           <Box marginTop={1} flexDirection="column">
             {level ? levelView(els, snap, level, selected, act) : overviewView(els, snap, selected, act)}
           </Box>
+          {checkupView(els, st, act)}
         </Box>
       )}
       {picked ? (surface === 'terminal' ? <Text>{strings(snap.lang).selected(picked.id, picked.title)}</Text> : detailView(els, picked, st, snap.changes, act)) : null}

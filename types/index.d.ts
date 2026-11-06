@@ -90,6 +90,9 @@ declare module 'claude-code' {
       addSeq: Shaped<number>
       lastEdit: Shaped<{ file: string; at: number }>
       seq: Shaped<number>
+      // 体检的阶段、报告、没跑成的原因；正在跑的体检个数（防连按）
+      checkup: Shaped<{ phase: 'idle' | 'running' | 'done' | 'failed'; text: string; reason: string }>
+      checkupBusy: Shaped<number>
     }
   }
 }
