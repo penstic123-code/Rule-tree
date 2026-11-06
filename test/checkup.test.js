@@ -313,6 +313,51 @@ test('英文项目：给模型的提示词没有汉字，答案要求用同一�
   assert.match(zh.prompt, /C2#2 .*←项目里找不到：old\/gone\.js/);
 });
 
+test('中文规则的项目开在英文界面的 VS Code：提示词和改动来源跟项目走，报告才用界面语言', async () => {
+  const STRINGS = require('../media/strings');
+  const dir = project();
+  const r = await run(dir, { fixes: [{ op: 'remove', rule: 'C2#1', why: 'x' }], ask: [] }, { T: STRINGS.make('en') });
+  assert.ok(run.prompts.length, '问了模型');
+  assert.ok(run.prompts.some(p => p.startsWith('你在给一个项目的规则做体检。')), '提示词是中文');
+  assert.ok(r.applied.length, '有改动才有来源');
+  assert.strictEqual(store.readChanges(dir)[0].source, '体检');
+  assert.match(r.report, /checkup/i, '报告给人看，跟界面语言');
+});
+
+test('英文项目开在中文界面：提示词和来源还是英文；项目看不出语言时才用界面语言', async () => {
+  const STRINGS = require('../media/strings');
+  const dir = EN_TREE(fs.mkdtempSync(path.join(H.SANDBOX, 'en-zh-ui-')));
+  await run(dir, { fixes: [] }, { T: STRINGS.make('zh') });
+  assert.ok(run.prompts.length && run.prompts.every(p => !p.startsWith('你')), '提示词是英文');
+  assert.strictEqual(store.readChanges(dir)[0].source, 'Checkup');
+  const blank = fs.mkdtempSync(path.join(H.SANDBOX, 'no-lang-'));
+  fs.mkdirSync(store.rulesDir(blank), { recursive: true });
+  assert.strictEqual(require('../src/lang').detectLang(blank, STRINGS.make('zh').lang), 'zh');
+});
+
+// 面板（hooks/pane.tsx 的 reportBody）去掉报告的前三行，靠的就是这个顺序。改报告开头时两边一起改
+test('报告去掉空行后前三行是标题、日期、总结，正文从第四行起；面板去掉的正好是这三行', async () => {
+  const STRINGS = require('../media/strings');
+  const t = STRINGS.make('zh');
+  const r = await run(project(), new Error('坏了'));
+  const lines = r.report.split('\n').filter(l => l.trim());
+  assert.strictEqual(lines[0], `# ${t('ck.title')}`);
+  assert.match(lines[1], /\d{4}|\d+\/\d+/, '第二行是日期');
+  assert.strictEqual(lines[2], t('ck.summary', r.applied.length, r.ask.length, r.notes.length));
+  assert.match(lines[3], /调用模型出错|没检查成功/, '第四行起是正文：失败原因要留给面板画');
+  assert.match(fs.readFileSync(path.join(H.ROOT, 'hooks', 'pane.tsx'), 'utf8'), /REPORT_HEAD_LINES = 3\b/);
+});
+
+test('报告正文不列原始数字：规则条数、文件个数、超时秒数（R1.2）', () => {
+  const STRINGS = require('../media/strings');
+  for (const lang of ['zh', 'en']) {
+    const t = STRINGS.make(lang);
+    assert.doesNotMatch(t('ck.many', 'R1', 987), /987/);
+    assert.doesNotMatch(t('ck.outside', 'R1', 'R2', 'a.js', 987), /98[67]/);
+    assert.doesNotMatch(t('m.timeout', 987), /987/);
+  }
+});
+
 test('英文项目：体检的改动来源是 Checkup，面板上的最近改动没有汉字；中文项目照旧', async () => {
   const dir = EN_TREE(fs.mkdtempSync(path.join(H.SANDBOX, 'en-src-')));
   const r = await C.runCheckup(dir, { ask: async () => ({ fixes: [] }) });

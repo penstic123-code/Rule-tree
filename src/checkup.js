@@ -342,8 +342,9 @@ function answerLookup(answers, lang = 'en') {
 // 返回 { notes, applied, ask, categorized, skippedModel, failed, error, report, entry }
 // failed：[{ ids, group, error }] 没问成的块；error：所有检查都没问成时的第一个错误
 async function runCheckup(dir, { model = true, ask, T: tr, full = false } = {}) {
-  // 没指定报告语言时跟着项目走（英文项目的报告、给模型的提示词、改动记录的来源都不该是中文）
-  const lang = (tr && tr.lang) || require('./lang').detectLang(dir, 'en');
+  // 提示词和改动记录的来源是写进项目的东西，跟项目的语言走；tr 只管报告这段给人看的话（VS Code 按界面语言传）。
+  // 中文规则的项目开在英文界面的 VS Code 里，提示词还是中文、来源还是「体检」。项目看不出语言时才用 tr 的语言
+  const lang = require('./lang').detectLang(dir, (tr && tr.lang) || 'en');
   const t = tr ? make(tr) : STRINGS.make(lang);
   const files = require('./files').listFiles(dir);
   const res = { notes: programChecks(dir, { files }), applied: [], ask: [], categorized: [], skippedModel: false, failed: [], error: null, entry: null };

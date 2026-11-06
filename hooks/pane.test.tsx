@@ -1,5 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+import { cellsOf, fit, mapRows, reportBody, tileColumns } from './pane'
+
 const PANE = {
   plugin: 'ruletree',
   component: 'Pane',
@@ -279,7 +281,7 @@ test('the pane draws its fixed strings in English for an English project', async
   await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
   await new Promise(r => setTimeout(r, 100))
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await ui.find({ type: 'Text', text: /Done 0 · In progress 1 · To do 0/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /✓ Done 0 · ◐ In progress 1 · ○ To do 0/ })).toBeTruthy()
   expect(await ui.find({ type: 'Button', text: /editing/ })).toBeTruthy()
   await ui.unmount()
 })
@@ -386,14 +388,63 @@ test('a checkup that cannot start shows its reason and keeps the map', async ($,
   await ui.unmount()
 })
 
-test('a checkup the model could not answer shows the reason above the report', async ($, on) => {
-  engine(on, checkupCli(jobsOf(1), { ok: true, report: REPORT, applied: 0, error: 'No answer came back for this part', failed: [] }))
+test('a checkup the model could not answer says why exactly once', async ($, on) => {
+  // 真实的报告里已经写了原因，核心又把它放进 error：只画一遍
+  const report = '# Checkup\n\n11/6/2026\n\nCheckup: changed 0\n\nThe model failed (No answer came back for this part), so only the program checks ran\n'
+  engine(on, checkupCli(jobsOf(1), { ok: true, report, applied: 0, error: 'No answer came back for this part', failed: [] }))
   on('model.complete', () => ({ value: { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} } }))
   await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'checkup' })
   expect(answered).toEqual([])
-  expect(await ui.find({ type: 'Text', text: /No answer came back/ })).toBeTruthy()
+  expect(await ui.findAll({ type: 'Text', text: /No answer came back/ })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a checkup that timed out says so in words, with no milliseconds', async ($, on) => {
+  engine(on, (e: any) => (JSON.stringify(e).includes('--jobs') ? { deny: 'command timed out after 120000ms' } : { value: ok(SNAPSHOT) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'checkup' })
+  expect(await ui.find({ type: 'Text', text: /等太久了/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /120000/ })).toBeFalsy()
+  await ui.unmount()
+})
+
+// 和 src/checkup.js 的 report() 的约定：去掉空行后的前三行是标题、日期、总结，第四行起才是正文。
+// test/checkup.test.js 从核心那边钉同一件事
+test('the pane drops exactly the report title, date and summary', () => {
+  expect(reportBody(REPORT)).toEqual(['## 直接改了的', '- 删掉了一条重复的规则'])
+  expect(reportBody('# 标题\n\n日期\n\n总结 3 处\n')).toEqual([])
+})
+
+test('a new session frees the buttons a reload left busy', async ($, on) => {
+  calls = []
+  let release: (v: any) => void = () => {}
+  let asked = 0
+  engine(on, withEdit(() => new Promise(r => { release = r })))
+  const cli = checkupCli(jobsOf(1))
+  const edits = run
+  run = e => (JSON.stringify(e).includes('checkup') ? cli(e) : edits(e))
+  on('model.complete', () => { asked++; return asked === 1 ? new Promise(() => {}) : reply('{"fixes":[]}') })
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'b-R1' })
+  // 两件活都跑到一半、永远不回来，就像插件在这时重载了
+  void ui.press({ key: 'checkup' })
+  void ui.press({ key: 'd-R1-0' })
+  await sleep(50)
+  expect(editCalls().length).toBe(1)
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  expect(await ui.find({ type: 'Button', text: /^体检$/ })).toBeTruthy()
+  await ui.press({ key: 'checkup' })
+  expect(asked).toBe(2)
+  release(done())
+  await sleep(50)
+  void ui.press({ key: 'd-R1-0' })
+  await sleep(50)
+  expect(editCalls().length).toBe(2)
+  release(done())
   await ui.unmount()
 })
 
@@ -417,5 +468,122 @@ test('recent changes join with the language separator', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'b-R1' })
   expect(await ui.find({ type: 'Text', text: /Added rule "a" to R1; Removed rule "b" from R1/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+// ---- 一屏看全：8 块约 48 格，60 列 ----
+const bigSnap = (lang: 'zh' | 'en' = 'zh') => {
+  const s: any = snap(null, lang)
+  const long = '这是一个标题特别特别特别特别特别特别长的需求用来试截断'
+  const leaf = (id: string, title: string, status: string | null) => ({ id, title, status, files: [], docs: [], groups: [], children: [] })
+  const blocks = Array.from({ length: 8 }, (_, b) => {
+    const id = `R${b + 1}`
+    const kids = Array.from({ length: 6 }, (_, k) => leaf(`${id}.${k + 1}`, k === 0 ? long : `第${k + 1}格`, k < 2 ? 'done' : k === 2 ? 'doing' : 'todo'))
+    return { ...leaf(id, `第${b + 1}块`, 'doing'), children: kids }
+  })
+  s.nodes[0].children = blocks
+  s.working = 'R3.4'
+  s.overview = {
+    totals: { done: 16, doing: 16, todo: 24, none: 0 },
+    blocks: blocks.map(b => ({
+      id: b.id, title: b.title, status: b.status, span: 1, hidden: 0,
+      tiles: b.children.map(c => tile(c.id, c.title, c.status, c.id === s.working ? 'working' : null)),
+    })),
+  }
+  return s
+}
+
+test('a big project fits one screen at 60 columns', async ($, on) => {
+  const s = bigSnap()
+  engine(on, () => ({ value: ok(JSON.stringify(s)) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  expect(tileColumns(60)).toBe(2)
+  // 8 个块标题 + 24 行格子，加上总数、在改、体检，还在 40 行以内
+  expect(mapRows(s.overview.blocks, 60)).toBe(32)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.findAll({ type: 'Button', text: /第\d格|标题/ })).length).toBe(48)
+  await ui.unmount()
+})
+
+test('the working tile stands out in words, not only colour, and the status line names it', async ($, on) => {
+  engine(on, () => ({ value: ok(JSON.stringify(bigSnap())) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /● AI 在改：R3\.4 第4格/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /○ R3\.4 第4格 ● 在改/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /✓ R1\.2 第2格/ })).toBeTruthy() // 状态有记号，不只靠颜色
+  expect(await ui.find({ type: 'Text', text: /◐ R1\.3 第3格/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('each block shows how many of its parts are done', async ($, on) => {
+  engine(on, () => ({ value: ok(JSON.stringify(bigSnap())) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.findAll({ type: 'Text', text: /^2\/6$/ })).toHaveLength(8)
+  await ui.unmount()
+})
+
+test('long titles stop at the tile edge, counting wide characters as two cells', async ($, on) => {
+  expect(cellsOf('体检 ab')).toBe(7)
+  expect(fit('体检与整理', 7)).toBe('体检与…')
+  expect(cellsOf(fit('体检与整理', 6))).toBe(5) // 半个字放不下时宁可留空，不撑破
+  expect(fit('short', 7)).toBe('short')
+  engine(on, () => ({ value: ok(JSON.stringify(bigSnap())) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const cut = await ui.find({ type: 'Text', text: /R1\.1 这是/ })
+  expect(cut?.text.endsWith('…')).toBe(true)
+  expect(cellsOf(String(cut?.text))).toBeLessThanOrEqual(29)
+  await ui.unmount()
+})
+
+test('a block without children draws one tile, not its title twice', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.findAll({ type: 'Text', text: /规则记录/ })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('not enabled gives the setup command a line of its own', async ($, on) => {
+  engine(on, () => ({ value: ok(JSON.stringify({ ...snap(null), enabled: false, nodes: [], overview: null })) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /ruletree:setup/ }))?.text).toBe('/ruletree:setup')
+  await ui.unmount()
+})
+
+test('an empty tree says what to do next', async ($, on) => {
+  const s: any = snap(null)
+  s.nodes[0].children = []
+  s.overview = { totals: { done: 0, doing: 0, todo: 0, none: 1 }, blocks: [] }
+  engine(on, () => ({ value: ok(JSON.stringify(s)) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /第一批需求/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('before the first snapshot the pane says it is reading', async ($, on) => {
+  engine(on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /Reading the project/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('the terminal stays a plain text tree', async ($, on) => {
+  engine(on, () => ({ value: ok(JSON.stringify(bigSnap())) }))
+  await $.session.start({ cwd: 'C:/p', surface: 'terminal', isInteractive: true })
+  await sleep(50)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+  expect(await ui.find({ type: 'Text', text: /R3\.4 第4格 \[待做\] ● 在改/ })).toBeTruthy()
   await ui.unmount()
 })

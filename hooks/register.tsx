@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Snapshot } from '../types'
-import { paneTree, locate, describeRunError, strings } from './pane'
+import { paneTree, locate, describeRunError, describeCheckupError, strings } from './pane'
 
 const PANE = 'ruletree-map'
 const ACTIVE_FOR_MS = 180000
@@ -32,6 +32,8 @@ const checkupBusy = atom({ plugin: 'ruletree', key: 'checkupBusy' } as const, 0,
 // 体检同时问几块、一块最多等多久（同 R1.2：60 秒 + 每条 2 秒，最多 240 秒，超时按 1.5 倍再试一次）
 const CHECKUP_JOBS = 3
 const timeoutFor = (rules: number) => Math.min(60000 + 2000 * rules, 240000)
+// 计数减一，不到负数：session.start 清零后，上一轮没跑完的活回来还会减一次
+const release = (n: number) => Math.max(0, n - 1)
 
 // Top level on purpose: the validator rejects passing `$` to a local function.
 // 刷新失败时不动 snapshot：地图留着上一次好的，只把原因写进 error。
@@ -77,7 +79,7 @@ export async function refresh($: any, file?: string) {
 export async function runEdit($: any, input: { ops: any[] } | { undo: string }, node: string) {
   // update 返回新值：大于 1 说明已有一次在跑，这次忽略
   if ((await update($, inflight, n => n + 1)) > 1) {
-    await update($, inflight, n => n - 1)
+    await update($, inflight, release)
     return
   }
   try {
@@ -100,7 +102,7 @@ export async function runEdit($: any, input: { ops: any[] } | { undo: string }, 
       if ('ops' in input && input.ops.some(o => o.op === 'add_rule')) await update($, addSeq, n => n + 1)
     }
   } finally {
-    await update($, inflight, n => n - 1)
+    await update($, inflight, release)
   }
   await refresh($)
 }
@@ -125,7 +127,7 @@ export async function askBlock($: any, job: { prompt: string; rules: number }): 
 // 渲染只读 checkup 状态；写状态都在这里。失败时 snapshot 不动，地图还在。
 export async function runCheckup($: any) {
   if ((await update($, checkupBusy, n => n + 1)) > 1) {
-    await update($, checkupBusy, n => n - 1)
+    await update($, checkupBusy, release)
     return
   }
   try {
@@ -153,17 +155,21 @@ export async function runCheckup($: any) {
       if (!out || !out.ok) throw new Error((out && out.message) || String(r.stderr).slice(0, 300) || `checkup exited ${r.exitCode}`)
       next = { phase: out.error ? 'failed' : 'done', text: String(out.report || ''), reason: String(out.error || '') }
     } catch (err) {
-      next = { phase: 'failed', text: '', reason: String((err as any)?.message ?? err).slice(0, 300) }
+      next = { phase: 'failed', text: '', reason: describeCheckupError(err, (await read($, snapshot))?.lang) }
     }
     await update($, checkup, () => next)
   } finally {
-    await update($, checkupBusy, n => n - 1)
+    await update($, checkupBusy, release)
   }
   await refresh($) // 体检可能改了规则
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // 状态能活过插件重载，上一轮跑到一半的活却不会再回来：不清掉，这两个计数卡在非 0，按钮就再也按不动了
+    await update($, inflight, () => 0)
+    await update($, checkupBusy, () => 0)
+    await update($, checkup, c => (c.phase === 'running' ? { phase: 'idle', text: '', reason: '' } : c))
     await $.command.register({ name: 'ruletree', description: 'Open the requirement map' })
     await refresh($)
     // Open unasked only where a pane docks beside the chat; the terminal stays quiet.
@@ -178,7 +184,7 @@ export const register: Register = on => {
   on('command.run', { command: 'ruletree' }, async $ => {
     await refresh($)
     await $.ui.open({ id: PANE, title: strings((await read($, snapshot))?.lang).paneTitle })
-    return { text: 'Requirement map opened.' }
+    return { text: strings((await read($, snapshot))?.lang).opened }
   })
 
   // AI 改文件：先让它改，再在后台刷新，AI 一点不被拖慢
@@ -195,6 +201,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e) as any
+    const props = (e as any).props
     // 渲染只读状态；写状态都在下面的按下回调里
     const state = {
       snap: await read($, snapshot),
@@ -207,6 +214,9 @@ export const register: Register = on => {
       addSeq: await read($, addSeq),
       checkup: await read($, checkup),
       surface: String((e as any).surface),
+      // 哪个面上量不出尺寸时，按 60 列 40 行画，不至于排成一列
+      cols: Number(props?.bodyColumns) || 60,
+      rows: Number(props?.scroll?.bodyRows) || 40,
     }
     return paneTree(els, state, {
       onTile: async tile => {
