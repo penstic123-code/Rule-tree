@@ -1,0 +1,5 @@
+{
+  "name": "ruletree",
+  "owner": { "name": "Shidi Peng" },
+  "plugins": [{ "name": "ruletree", "source": "./" }]
+}

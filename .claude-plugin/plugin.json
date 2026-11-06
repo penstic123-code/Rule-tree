@@ -1,0 +1,7 @@
+{
+  "name": "ruletree",
+  "version": "0.21.2",
+  "author": { "name": "Shidi Peng" },
+  "description": "RuleTree: requirements as a tree of rule files, shown as a live map in a pane",
+  "types": "./types/index.d.ts"
+}
