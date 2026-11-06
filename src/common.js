@@ -79,4 +79,22 @@ function appendTmpLog(name, line) {
   } catch {}
 }
 
-module.exports = { tmpDir, EDIT_TOOLS, findProjectUp, worktreeMain, worktreesOf, checkoutOf, projectRel, appendTmpLog };
+// 认自己装的 hook：命令里有 hooks/hook.js，路径里有 ruletree，或者旧版的 reqtree、Vibe-Friend（升级时一起换掉）。用户自己别的 hook.js 不算
+const isOurs = h => { const c = String((h && h.command) || '').replace(/\\/g, '/'); return /hooks\/+hook\.js/.test(c) && /ruletree|reqtree|vibe(coding)?-friend/i.test(c); };
+const scriptOf = h => { const m = String((h && h.command) || '').match(/"([^"]+)"|'([^']+)'/); return m ? (m[1] || m[2]) : null; };
+
+// 项目的 .claude/settings(.local).json 里有没有满足 pred 的 hook。读不了、格式不对都当没有（这里只读，不报错）
+function settingsHooks(dir, pred) {
+  return ['settings.json', 'settings.local.json'].some(f => {
+    let s = null;
+    try { s = JSON.parse(fs.readFileSync(path.join(dir, '.claude', f), 'utf8').replace(/^﻿/, '')); } catch {}
+    return !!(s && s.hooks && typeof s.hooks === 'object' && Object.values(s.hooks).some(groups =>
+      Array.isArray(groups) && groups.some(g => g && Array.isArray(g.hooks) && g.hooks.some(pred))));
+  });
+}
+
+// 项目自己已经装了能跑的需求树 hook（VS Code 路线 init 装的，脚本文件还在）。
+// 插件的 hook 见到它就让路：两边都记，一次改动会记两遍
+const hasProjectHook = dir => settingsHooks(dir, h => { if (!isOurs(h)) return false; const p = scriptOf(h); return !!p && fs.existsSync(p); });
+
+module.exports = { isOurs, scriptOf, settingsHooks, hasProjectHook, tmpDir, EDIT_TOOLS, findProjectUp, worktreeMain, worktreesOf, checkoutOf, projectRel, appendTmpLog };

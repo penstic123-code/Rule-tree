@@ -1,1 +1,30 @@
-{ "modules": ["./register.tsx"] }
+{
+  "modules": [
+    "./register.tsx"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.js\"",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.js\"",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

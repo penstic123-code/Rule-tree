@@ -63,19 +63,8 @@ function hookCommand(file, platform = process.platform) {
   if (platform === 'win32') return `node "${file.replace(/\\/g, '/')}"`;
   return `node '${file.replace(/'/g, `'\\''`)}'`;
 }
-// 认自己装的 hook：命令里有 hooks/hook.js，路径里有 ruletree，或者旧版的 reqtree、Vibe-Friend（升级时一起换掉）。用户自己别的 hook.js 不算
-const isOurs = h => { const c = String((h && h.command) || '').replace(/\\/g, '/'); return /hooks\/+hook\.js/.test(c) && /ruletree|reqtree|vibe(coding)?-friend/i.test(c); };
+const { isOurs, settingsHooks, scriptOf } = require('../src/common'); // 认 hook 的办法放 src/common.js：hooks/hook.js 够不到 bin/
 const isCurrent = h => isOurs(h) && /ruletree/i.test(String(h.command));
-const scriptOf = h => { const m = String((h && h.command) || '').match(/"([^"]+)"|'([^']+)'/); return m ? (m[1] || m[2]) : null; };
-
-function settingsHooks(dir, pred) {
-  return ['settings.json', 'settings.local.json'].some(f => {
-    let s = null;
-    try { s = readSettings(path.join(dir, '.claude', f), null); } catch {}
-    return !!(s && s.hooks && typeof s.hooks === 'object' && Object.values(s.hooks).some(groups =>
-      Array.isArray(groups) && groups.some(g => g && Array.isArray(g.hooks) && g.hooks.some(pred))));
-  });
-}
 // 装了能用的新版 hook（脚本文件还在）
 const enabledIn = dir => settingsHooks(dir, h => { if (!isCurrent(h)) return false; const p = scriptOf(h); return !!p && fs.existsSync(p); });
 // 还装着旧版（需求树 reqtree）的 hook：要升级
@@ -109,7 +98,8 @@ function stripOurs(s) {
 // 写 Claude Code 的 hook：先去掉旧的（共享的 settings.json 里的也去掉，不然每个事件触发两次），再写进 settings.local.json。
 // 两个都在后台运行（async），不让 AI 等：PostToolUse 记 AI 改了哪个需求的文件、改规则文件时记一条改动；
 // InstructionsLoaded（Claude Code 2.1.69 起）记上下文用量
-function installClaude(dir, { runtime, log }) {
+function installClaude(dir, { runtime, log, plugin }) {
+  if (plugin) return installAllowOnly(dir, log);
   const command = hookCommand(path.join(runtime, 'hooks', 'hook.js'));
   const shared = path.join(dir, '.claude', 'settings.json');
   const sh = readSettings(shared, null);
@@ -130,16 +120,30 @@ function installClaude(dir, { runtime, log }) {
   log(`✓ hook 和「AI 可以直接改规则文件夹」的允许规则已写入 ${settingsPath}`);
 }
 
+// 插件路线：hook 由插件自己带（hooks/hooks.json），项目里不装 hook，免得和插件的重复；只写允许规则。
+// 项目里原有的 hook 不动（VS Code 路线的项目照常用，插件的 hook 见到它会让路）
+function installAllowOnly(dir, log) {
+  const settingsPath = path.join(dir, '.claude', 'settings.local.json');
+  const settings = readSettings(settingsPath, {});
+  settings.permissions = settings.permissions && typeof settings.permissions === 'object' ? settings.permissions : {};
+  const allow = Array.isArray(settings.permissions.allow) ? settings.permissions.allow : [];
+  if (!allow.includes(ALLOW_RULES)) settings.permissions.allow = [...allow, ALLOW_RULES];
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  log(`✓ 「AI 可以直接改规则文件夹」的允许规则已写入 ${settingsPath}（hook 由插件提供）`);
+}
+
 // 在项目里启用：复制运行时副本、装 hook、忽略 .ruletree/；旧版的 需求树.md 拆成规则文件，没有就按文件夹建第一批需求；写说明书。
 // 重复运行无副作用。命令行和插件共用（插件传 log 收集输出）；出错抛异常，不退出进程
-function init(dir, { log = console.log } = {}) {
+function init(dir, { log = console.log, plugin = false } = {}) {
   dir = path.resolve(dir);
   if (!fs.statSync(dir).isDirectory()) throw new Error(`不是文件夹：${dir}`);
   const have = runtimeVersion();
-  let runtime;
-  if (have && isOlder(VERSION, have)) { runtime = runtimeDir(); log(`✓ ${runtime} 里已经是更新的版本 ${have}（这次是 ${VERSION}），不覆盖`); }
+  let runtime = null; // 插件路线不用运行时副本：hook 直接从插件目录跑
+  if (plugin) {}
+  else if (have && isOlder(VERSION, have)) { runtime = runtimeDir(); log(`✓ ${runtime} 里已经是更新的版本 ${have}（这次是 ${VERSION}），不覆盖`); }
   else { runtime = installRuntime(); log(`✓ hook 程序已复制到 ${runtime}（版本 ${VERSION}）`); }
-  installClaude(dir, { runtime, log });
+  installClaude(dir, { runtime, log, plugin });
   if (store.ensureGitignore(dir)) log('✓ .gitignore 已忽略 .ruletree/');
   const up = require('../src/migrate').upgrade(dir);
   if (up) log(`✓ 旧的 ${path.basename(up.legacy)} 已拆成 ${up.count} 个需求文件（原文件挪到 ${path.relative(dir, up.legacy)}）${up.renamed.length ? `；换了编号：${up.renamed.map(r => `${r.from}→${r.to}`).join('、')}` : ''}`);

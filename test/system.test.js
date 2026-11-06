@@ -327,3 +327,44 @@ test('审查回归：项目经过目录联接打开时，hook 照样记', { skip
   H.hook(link, H.edit(link, 'DataScience/index.html'));
   assert.deepStrictEqual(activity(dir).map(e => e.node), ['C2']);
 });
+
+// ---------- 插件里的 hook（任务 6）----------
+// 用户装了插件，老项目里可能还留着 VS Code 路线装的 hook：两边都跑会把一次改动记两遍
+
+const PLUGIN_ENV = { CLAUDE_PLUGIN_ROOT: path.join(__dirname, '..') };
+
+test('插件的 hook 在项目自带旧 hook 时让路：这一次不记', () => {
+  const dir = H.project();
+  cli.init(dir, { log: () => {} }); // 项目里装上 VS Code 路线的 hook
+  assert.ok(require("../src/common").hasProjectHook(dir));
+  H.hook(dir, H.edit(dir, 'DataScience/index.html'), { env: PLUGIN_ENV });
+  assert.strictEqual(activity(dir).length, 0, '插件这一份让路，项目自带的那份照常记');
+  H.hook(dir, H.edit(dir, 'DataScience/index.html')); // 不带插件环境 = 项目自带的那份在跑
+  assert.strictEqual(activity(dir).length, 1);
+  // 没有旧 hook 的项目：插件的 hook 照记
+  const plain = H.project();
+  H.hook(plain, H.edit(plain, 'DataScience/index.html'), { env: PLUGIN_ENV });
+  assert.strictEqual(activity(plain).length, 1);
+});
+
+test('hook 在没有规则的项目里什么都不写', () => {
+  const dir = fs.mkdtempSync(path.join(H.SANDBOX, 'bare-'));
+  fs.writeFileSync(path.join(dir, 'a.js'), '');
+  H.hook(dir, H.edit(dir, 'a.js'), { env: PLUGIN_ENV });
+  H.hook(dir, { hook_event_name: 'InstructionsLoaded', file_path: path.join(dir, 'a.js') }, { env: PLUGIN_ENV });
+  assert.ok(!fs.existsSync(path.join(dir, '.ruletree')));
+});
+
+test('init 带 plugin：不复制运行时、不装项目 hook，只写允许规则', () => {
+  const dir = H.project();
+  const before = fs.existsSync(path.join(runtime(), 'version')) ? fs.readFileSync(path.join(runtime(), 'version'), 'utf8') : null;
+  const stamp = fs.existsSync(runtime()) ? fs.statSync(runtime()).mtimeMs : null;
+  const r = cli.init(dir, { log: () => {}, plugin: true });
+  assert.strictEqual(r.runtime, null);
+  const after = fs.existsSync(path.join(runtime(), 'version')) ? fs.readFileSync(path.join(runtime(), 'version'), 'utf8') : null;
+  assert.strictEqual(after, before);
+  assert.strictEqual(fs.existsSync(runtime()) ? fs.statSync(runtime()).mtimeMs : null, stamp);
+  const s = settingsOf(dir);
+  assert.deepStrictEqual(s.permissions.allow, ['Edit(/.claude/rules/ruletree/**)']);
+  assert.ok(!('hooks' in s));
+});

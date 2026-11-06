@@ -8,7 +8,7 @@ const path = require('path');
 const store = require('../src/store');
 const T = require('../src/tree');
 const { ensureGuide } = require('../src/guide');
-const { EDIT_TOOLS, findProjectUp, projectRel, appendTmpLog } = require('../src/common');
+const { EDIT_TOOLS, findProjectUp, checkoutOf, hasProjectHook, projectRel, appendTmpLog } = require('../src/common');
 
 const RULES_PREFIX = store.RULES_DIR.split(path.sep).join('/') + '/';
 const posix = p => p.split(path.sep).join('/');
@@ -107,12 +107,22 @@ function onLoad(input, dir) {
   }
 }
 
+function fromPlugin() {
+  const root = process.env.CLAUDE_PLUGIN_ROOT;
+  if (!root) return false;
+  const rel = path.relative(realPath(path.resolve(root)), realPath(__dirname));
+  return !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
 function main(input, trace) {
   // 项目目录和改的文件都解析成真实路径，两边才对得上（项目可能经过目录联接、符号链接打开）
   const found = findProjectUp(realPath(input.cwd || process.cwd()));
   const dir = found && realPath(found);
   trace.project = !!dir;
   if (!dir) return;
+  // 这份脚本是插件带的（在 CLAUDE_PLUGIN_ROOT 里），而项目自己也装了 hook：让路，由项目那份记，免得一次改动记两遍。
+  // 按脚本位置判断，不单看环境变量：项目自带的那份不会放在插件目录里
+  if (fromPlugin() && (hasProjectHook(dir) || hasProjectHook(checkoutOf(dir, realPath(input.cwd || process.cwd()))))) { trace.standDown = true; return; }
   if (input.hook_event_name === 'PostToolUse') onEdit(input, dir, trace);
   else if (input.hook_event_name === 'InstructionsLoaded') onLoad(input, dir);
 }
