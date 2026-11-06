@@ -40,15 +40,15 @@ const SNAPSHOT = JSON.stringify(snap(null))
 const ok = (out: string) => ({ exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 
 // process.run 只能注册一次，所以让每个测试改这个变量来换回答
-let run: () => any = () => ({ value: ok(SNAPSHOT) })
-const engine = (on: any, answer: () => any = () => ({ value: ok(SNAPSHOT) })) => {
+let run: (e?: any) => any = () => ({ value: ok(SNAPSHOT) })
+const engine = (on: any, answer: (e?: any) => any = () => ({ value: ok(SNAPSHOT) })) => {
   run = answer
   on('command.register', () => ({ value: { command: 'ruletree' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: 'C:/p' }))
-  on('process.run', () => run())
-  mock.clock(on)
+  on('process.run', (_: any, e: any) => run(e))
+  return mock.clock(on)
 }
 
 test('the pane draws requirement titles on desktop', async ($, on) => {
@@ -67,6 +67,22 @@ test('an edit lights the owning tile', async ($, on) => {
   run = () => ({ value: ok(JSON.stringify(snap('R1'))) })
   await $.tool.call({ tool: 'Edit', file_path: 'C:/p/src/a.js', old_string: 'a', new_string: 'b' })
   await new Promise(r => setTimeout(r, 100)) // 刷新在后台跑，等它落地
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Button', text: /在改/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a timer refresh keeps the tile lit while the edit is recent', async ($, on) => {
+  const clock = engine(on)
+  on('tool.call', () => ({ result: 'ok' }))
+  await $.session.start({ cwd: 'C:/p', surface: 'desktop', isInteractive: true })
+  // 像核心那样：只有带 --file 才算得出 working
+  run = e => ({ value: ok(JSON.stringify(snap(JSON.stringify(e).includes('--file') ? 'R1' : null))) })
+  await $.tool.call({ tool: 'Edit', file_path: 'C:/p/src/a.js', old_string: 'a', new_string: 'b' })
+  await new Promise(r => setTimeout(r, 100))
+  await clock.advance(30000) // 定时刷新，没有文件参数
+  await new Promise(r => setTimeout(r, 100))
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Button', text: /在改/ })).toBeTruthy()

@@ -7,7 +7,7 @@ function flatten(list: SnapshotNode[], depth = 0): { n: SnapshotNode; depth: num
 }
 
 // 找到某个需求和它的上一级编号（根 P 的上一级是 ''）
-function locate(list: SnapshotNode[], id: string, parent = ''): { node: SnapshotNode; parent: string } | null {
+export function locate(list: SnapshotNode[], id: string, parent = ''): { node: SnapshotNode; parent: string } | null {
   for (const n of list) {
     if (n.id === id) return { node: n, parent }
     const hit = locate(n.children, id, n.id)
@@ -83,17 +83,26 @@ function Hint(Text: any, text: string, color?: string) {
   return <Text color={color} dimColor={!color}>{text}</Text>
 }
 
+// 终端文字树最多画几行，免得大项目刷满屏；在改的一行总是留着
+export const TEXT_ROWS = 40
+
 // 终端：缩进的文字树，没有按钮
 function textTree(els: any, snap: Snapshot, selected: string) {
   const { Box, Text } = els
+  const all = flatten(snap.nodes)
+  const rows = all.slice(0, TEXT_ROWS)
+  const w = all.findIndex(r => r.n.id === snap.working)
+  if (w >= TEXT_ROWS) rows[TEXT_ROWS - 1] = all[w]
+  const more = all.length - rows.length
   return (
     <Box flexDirection="column">
       {header(Text, snap)}
-      {flatten(snap.nodes).map(({ n, depth }) => (
+      {rows.map(({ n, depth }) => (
         <Text key={n.id} color={colorOf(n.status)} bold={n.id === snap.working}>
           {`${'  '.repeat(depth)}${n.id === selected ? '▶ ' : ''}${n.id} ${n.title}${n.status ? ` [${STATUS_WORD[n.status] ?? n.status}]` : ''}${n.id === snap.working ? ' ● 在改' : ''}`}
         </Text>
       ))}
+      {more > 0 ? <Text dimColor>{`还有 ${more} 个`}</Text> : null}
     </Box>
   )
 }

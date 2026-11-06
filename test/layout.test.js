@@ -2,7 +2,7 @@
 // overview：一屏需求地图的排布（纯函数）
 const test = require('node:test');
 const assert = require('node:assert');
-const { overview, MAX_TILES, RECENT_MS } = require('../src/layout');
+const { overview, MAX_TILES, TILE_BUDGET, RECENT_MS } = require('../src/layout');
 
 const n = (id, status, children = [], recent = 0) => ({ id, title: id, status, recent, children });
 const root = (...blocks) => [n('P', null, blocks)];
@@ -19,6 +19,23 @@ test('fits a 200-requirement tree', () => {
   const o = overview(makeTree(8, 24), {});
   assert.ok(o.blocks.every(b => b.tiles.length <= MAX_TILES));
   assert.strictEqual(o.blocks.reduce((s, b) => s + b.tiles.length + b.hidden, 0), 192);
+});
+test('a 20x15 tree stays within the total tile budget and counts the rest as hidden', () => {
+  const o = overview(makeTree(20, 15), {});
+  const shown = o.blocks.reduce((s, b) => s + b.tiles.length, 0);
+  assert.ok(shown <= TILE_BUDGET);
+  assert.strictEqual(shown + o.blocks.reduce((s, b) => s + b.hidden, 0), 300);
+  assert.ok(o.blocks.every(b => b.tiles.length > 0)); // 每块都分到名额
+});
+test('the working and recent tiles survive the budget', () => {
+  const now = 10 * RECENT_MS;
+  const t = makeTree(20, 15);
+  t[0].children[19].children[14].recent = now - 1000; // R20.15 最近改过
+  t[0].children[19].children[14].children = [];
+  const o = overview(t, { working: 'R19.15', now });
+  assert.strictEqual(tile(o, 'R19.15').state, 'working');
+  assert.strictEqual(tile(o, 'R20.15').state, 'recent');
+  assert.ok(o.blocks.reduce((s, b) => s + b.tiles.length, 0) <= TILE_BUDGET);
 });
 test('a working requirement deep in the tree lights its visible ancestor tile', () => {
   assert.strictEqual(tile(overview(tree, { working: 'R1.2.3' }), 'R1.2').state, 'working');

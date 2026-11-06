@@ -51,6 +51,8 @@ declare module 'claude-code' {
       // 当前显示哪个需求的下一层；空字符串是总览
       level: Shaped<string>
       error: Shaped<string>
+      lastEdit: Shaped<{ file: string; at: number }>
+      seq: Shaped<number>
     }
   }
 }
